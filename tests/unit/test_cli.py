@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 import paper_harness.entrypoints.cli as cli_module
@@ -14,9 +15,13 @@ from paper_harness.entrypoints.cli import app
 
 
 def test_cli_accepts_string_logical_date_option() -> None:
-    result = CliRunner().invoke(app, ["ingest-arxiv", "--help"])
+    result = CliRunner().invoke(
+        app,
+        ["ingest-arxiv", "--help"],
+        env={"FORCE_COLOR": "1"},
+    )
     assert result.exit_code == 0
-    assert "--logical-date" in result.stdout
+    assert "--logical-date" in unstyle(result.stdout)
 
 
 @pytest.mark.parametrize(
