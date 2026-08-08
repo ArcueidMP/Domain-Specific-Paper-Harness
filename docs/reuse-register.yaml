@@ -1,0 +1,33 @@
+schema_version: 1
+updated_at: "2026-08-08"
+entries:
+  - project: arxiv.py
+    upstream: https://github.com/lukasschwab/arxiv.py
+    revision: "4.0.0"
+    license: MIT
+    integration_mode: pinned-package-dependency
+    copied_files: []
+    local_changes: none
+    reason: Typed arXiv query, pagination, metadata, and PDF URL adapter boundary.
+    update_strategy: Review release notes, API behavior, license, and Python 3.13.13 tests before changing the exact pin.
+    constraints:
+      - Daily discovery remains arXiv-only.
+      - Application code owns cursor overlap, stable identity, versioning, transactions, and idempotency.
+      - Adapter retry count and delay remain explicit, bounded, and mapped to domain errors.
+    python_compatibility: Upstream declares Python 3.10 or newer; repository verification on exact CPython 3.13.13 is required before M1 completion.
+audits:
+  paperqa2:
+    status: pending-m2
+    source_copied: false
+  scholar_qa:
+    status: pending-m3
+    source_copied: false
+  pasa:
+    status: pending-m3
+    source_copied: false
+  specter2:
+    status: pending-m3
+    source_copied: false
+  storm:
+    status: pending-m4
+    source_copied: false

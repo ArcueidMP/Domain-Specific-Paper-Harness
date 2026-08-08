@@ -1,0 +1,32 @@
+schema_version: 1
+topic_id: 4b7db6d4-349c-5c06-bc41-f84091580fcb
+slug: broad-llm-agents
+name: Broad LLM Agents
+description: >-
+  Research on LLM-centered agent planning, reasoning, memory, tool use, web and
+  computer use, multi-agent coordination, evaluation, benchmarks, safety, and security.
+arxiv:
+  categories:
+    - cs.AI
+    - cs.CL
+    - cs.LG
+    - cs.MA
+    - cs.SE
+  include_terms:
+    - LLM agent
+    - language model agent
+    - agentic AI
+    - tool-using language model
+    - web agent
+    - computer-use agent
+    - multi-agent language model
+    - agent benchmark
+  exclude_terms:
+    - agent-based social simulation
+    - chemical agent
+    - biological agent
+discovery:
+  overlap_hours: 48
+  initial_lookback_days: 7
+  max_results: 500
+representative_full_text_count: 100

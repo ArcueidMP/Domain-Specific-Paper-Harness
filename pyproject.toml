@@ -1,0 +1,69 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "domain-specific-paper-harness"
+version = "0.1.0"
+description = "Private research intelligence for broad LLM-agent papers."
+readme = "README.md"
+requires-python = ">=3.13.13,<3.14"
+license = { text = "Proprietary" }
+dependencies = [
+  "alembic>=1.16,<2",
+  "arxiv==4.0.0",
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.11,<3",
+  "pyyaml>=6.0.2,<7",
+  "requests>=2.33,<3",
+  "sqlalchemy>=2.0.41,<3",
+  "typer>=0.16,<1",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.scripts]
+paper-harness = "paper_harness.entrypoints.cli:app"
+paper-harness-api = "paper_harness_api.main:run"
+paper-harness-daily = "paper_harness.entrypoints.daily:main"
+
+[dependency-groups]
+dev = [
+  "pyright>=1.1.403,<2",
+  "pytest>=9.0.3,<10",
+  "ruff>=0.12,<1",
+  "types-pyyaml>=6.0.12.20250516,<7",
+  "types-requests>=2.33,<3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/paper_harness", "apps/api/paper_harness_api"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+markers = [
+  "integration: requires an explicit TEST_DATABASE_URL pointing to PostgreSQL 15+",
+  "live: makes calls to a configured external service",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src", "apps/api", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.format]
+quote-style = "double"
+line-ending = "lf"
+
+[tool.pyright]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+include = ["src", "apps/api", "tests"]
+exclude = [".venv"]
+venvPath = "."
+venv = ".venv"

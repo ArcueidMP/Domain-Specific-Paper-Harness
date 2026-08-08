@@ -1,0 +1,21 @@
+{
+  "name": "domain-specific-paper-harness",
+  "private": true,
+  "packageManager": "pnpm@11.0.9",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @paper-harness/web dev",
+    "lint": "pnpm --filter @paper-harness/web lint",
+    "typecheck": "pnpm --filter @paper-harness/web typecheck",
+    "test": "pnpm --filter @paper-harness/web test",
+    "build": "pnpm --filter @paper-harness/web build",
+    "generate:api": "pnpm --filter @paper-harness/web generate:api",
+    "pretest:e2e": "pnpm build",
+    "test:e2e": "playwright test --config tests/e2e/playwright.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

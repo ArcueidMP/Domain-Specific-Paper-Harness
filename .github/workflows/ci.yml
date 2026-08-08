@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.5-pg17-bookworm
+        env:
+          POSTGRES_DB: paper_harness_ci
+          POSTGRES_USER: paper_harness_ci
+          POSTGRES_PASSWORD: paper_harness_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U paper_harness_ci -d paper_harness_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql+psycopg://paper_harness_ci:paper_harness_ci@localhost:5432/paper_harness_ci
+      TEST_DATABASE_URL: postgresql+psycopg://paper_harness_ci:paper_harness_ci@localhost:5432/paper_harness_ci
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.13.13
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.12.3
+          enable-cache: true
+      - run: uv sync --frozen --python 3.13.13
+      - run: uv run --frozen python -c "import platform; assert platform.python_version() == '3.13.13'"
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+      - run: uv run --frozen pyright
+      - run: uv run --frozen python -m paper_harness.entrypoints.openapi
+      - run: git diff --exit-code -- apps/api/openapi.json
+      - run: uv run --frozen alembic upgrade head
+      - run: uv run --frozen alembic check
+      - run: uv run --frozen alembic current --check-heads
+      - run: uv run --frozen pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.15.0
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.0.9 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm generate:api
+      - run: git diff --exit-code -- apps/web/src/api/schema.d.ts
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec playwright test --config tests/e2e/playwright.config.ts
+
+  infrastructure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.8
+      - run: terraform fmt -check -recursive
+        working-directory: infra/terraform
+      - run: terraform init -backend=false -input=false
+        working-directory: infra/terraform
+      - run: terraform validate
+        working-directory: infra/terraform
+      - run: docker compose config --quiet
+      - run: docker build --file infra/docker/Dockerfile.api --tag paper-harness-api:ci .
+      - run: docker build --file infra/docker/Dockerfile.daily --tag paper-harness-daily:ci .

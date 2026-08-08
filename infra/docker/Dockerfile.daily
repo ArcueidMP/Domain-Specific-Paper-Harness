@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1.7
+
+FROM ghcr.io/astral-sh/uv:0.12.3 AS uv
+
+FROM python:3.13.13-slim-bookworm AS build
+COPY --from=uv /uv /uvx /bin/
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+COPY README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
+COPY src src
+COPY apps/api apps/api
+COPY configs configs
+COPY migrations migrations
+COPY alembic.ini ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+FROM python:3.13.13-slim-bookworm AS runtime
+ENV PATH=/app/.venv/bin:$PATH \
+    PYTHONPATH=/app/apps/api \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+WORKDIR /app
+RUN groupadd --system --gid 10001 paper-harness \
+    && useradd --system --uid 10001 --gid paper-harness --home-dir /nonexistent --shell /usr/sbin/nologin paper-harness
+COPY --from=build --chown=paper-harness:paper-harness /app /app
+USER 10001:10001
+ENTRYPOINT ["paper-harness-daily"]

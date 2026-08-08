@@ -1,0 +1,56 @@
+name: paper-harness
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.5-pg17-bookworm
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-paper_harness}
+      POSTGRES_USER: ${POSTGRES_USER:-paper_harness}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paper_harness_local}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - paper-harness-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  api:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-paper_harness}:${POSTGRES_PASSWORD:-paper_harness_local}@db:5432/${POSTGRES_DB:-paper_harness}
+      TOPIC_CONFIG_PATH: /app/configs/topics/broad-llm-agents.yaml
+    ports:
+      - "${API_PORT:-8000}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    init: true
+
+  daily:
+    profiles: ["job"]
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.daily
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-paper_harness}:${POSTGRES_PASSWORD:-paper_harness_local}@db:5432/${POSTGRES_DB:-paper_harness}
+      TOPIC_CONFIG_PATH: /app/configs/topics/broad-llm-agents.yaml
+    depends_on:
+      db:
+        condition: service_healthy
+    init: true
+
+volumes:
+  paper-harness-postgres:

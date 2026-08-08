@@ -1,0 +1,12 @@
+{
+  "entry_id": "https://arxiv.org/abs/2601.01234v2",
+  "short_id": "2601.01234v2",
+  "title": "A Reliable LLM Agent",
+  "summary": "We evaluate a tool-using language model agent.",
+  "published": "2026-01-02T08:00:00+00:00",
+  "updated": "2026-01-03T09:00:00+00:00",
+  "primary_category": "cs.AI",
+  "categories": ["cs.AI", "cs.CL"],
+  "authors": ["Ada Lovelace", "Alan Turing"],
+  "pdf_url": "https://arxiv.org/pdf/2601.01234v2"
+}

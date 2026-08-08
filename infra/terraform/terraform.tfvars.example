@@ -1,0 +1,10 @@
+project_id  = "your-existing-project-id"
+owner_email = "owner@example.com"
+
+# Foundation-only is the safe default. Runtime deployment additionally requires
+# immutable image digests and an enabled DATABASE_URL secret version.
+deploy_runtime_resources = false
+
+# web_api_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/web-api@sha256:..."
+# daily_image   = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/daily@sha256:..."
+# database_secret_version = "1"
