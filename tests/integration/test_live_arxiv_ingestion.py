@@ -12,7 +12,7 @@ from paper_harness.adapters.arxiv import ArxivClient
 from paper_harness.adapters.postgres import PostgresRepository
 from paper_harness.application.ingest_arxiv import IngestArxiv
 from paper_harness.domain.models import RunStatus, TopicConfig
-from paper_harness.ports.arxiv import ArxivPaperRecord
+from paper_harness.ports.arxiv import ArxivPaperRecord, ArxivPdf
 
 pytestmark = [pytest.mark.integration, pytest.mark.live]
 
@@ -37,6 +37,19 @@ class KnownArxivPaper:
             updated_from=updated_from,
             updated_until=updated_until,
             max_results=min(max_results, 2),
+        )
+
+    def download_pdf(
+        self,
+        *,
+        canonical_arxiv_id: str,
+        version: int,
+        pdf_url: str,
+    ) -> ArxivPdf:
+        return self._client.download_pdf(
+            canonical_arxiv_id=canonical_arxiv_id,
+            version=version,
+            pdf_url=pdf_url,
         )
 
 

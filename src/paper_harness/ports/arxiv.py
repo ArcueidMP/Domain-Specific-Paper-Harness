@@ -32,6 +32,27 @@ class ArxivResultLimitError(ArxivPortError):
     error_code = "ARXIV_RESULT_LIMIT"
 
 
+class ArxivPdfError(ArxivPortError):
+    error_code = "ARXIV_PDF_INVALID"
+
+
+@dataclass(frozen=True, slots=True)
+class ArxivPdf:
+    canonical_arxiv_id: str
+    version: int
+    source_url: str
+    content: bytes
+
+    def __post_init__(self) -> None:
+        validate_canonical_arxiv_id(self.canonical_arxiv_id)
+        if self.version < 1:
+            raise DomainInvariantError("arXiv PDF version must be positive")
+        if not self.source_url.startswith("https://arxiv.org/pdf/"):
+            raise DomainInvariantError("arXiv PDF must use the approved HTTPS host and path")
+        if not self.content.startswith(b"%PDF-"):
+            raise DomainInvariantError("arXiv PDF content is missing its PDF signature")
+
+
 @dataclass(frozen=True, slots=True)
 class ArxivPaperRecord:
     canonical_arxiv_id: str
@@ -72,5 +93,16 @@ class ArxivPort(Protocol):
         max_results: int,
     ) -> tuple[ArxivPaperRecord, ...]:
         """Return a complete bounded UTC window or raise without partial results."""
+
+        ...
+
+    def download_pdf(
+        self,
+        *,
+        canonical_arxiv_id: str,
+        version: int,
+        pdf_url: str,
+    ) -> ArxivPdf:
+        """Download one bounded arXiv-hosted PDF without changing provider."""
 
         ...

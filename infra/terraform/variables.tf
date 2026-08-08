@@ -65,6 +65,17 @@ variable "deploy_runtime_resources" {
   default     = false
 }
 
+variable "deploy_analysis_resources" {
+  description = "Add the M2 DeepSeek configuration and private GROBID service to an enabled runtime deployment."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.deploy_analysis_resources || var.deploy_runtime_resources
+    error_message = "deploy_analysis_resources requires deploy_runtime_resources=true."
+  }
+}
+
 variable "web_api_image" {
   description = "Immutable Artifact Registry image reference for the web/API service."
   type        = string
@@ -89,6 +100,18 @@ variable "daily_image" {
   }
 }
 
+variable "grobid_image" {
+  description = "Immutable Artifact Registry image reference for the verified GROBID 0.9.0-crf wrapper."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = !var.deploy_analysis_resources || (var.grobid_image != null && can(regex("@sha256:[0-9a-f]{64}$", var.grobid_image)))
+    error_message = "grobid_image must be an immutable sha256 digest when analysis deployment is enabled."
+  }
+}
+
 variable "database_secret_version" {
   description = "Existing enabled DATABASE_URL secret version used by Cloud Run."
   type        = string
@@ -98,6 +121,18 @@ variable "database_secret_version" {
   validation {
     condition     = !var.deploy_runtime_resources || (var.database_secret_version != null && can(regex("^[1-9][0-9]*$", var.database_secret_version)))
     error_message = "database_secret_version must be a fixed positive numeric version when runtime deployment is enabled."
+  }
+}
+
+variable "deepseek_secret_version" {
+  description = "Existing enabled DeepSeek API key secret version used only by the M2 Daily Job."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = !var.deploy_analysis_resources || (var.deepseek_secret_version != null && can(regex("^[1-9][0-9]*$", var.deepseek_secret_version)))
+    error_message = "deepseek_secret_version must be a fixed positive numeric version when analysis deployment is enabled."
   }
 }
 

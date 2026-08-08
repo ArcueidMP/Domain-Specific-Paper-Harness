@@ -1,24 +1,50 @@
-"""Synchronous SQLAlchemy/PostgreSQL repository for M1."""
+"""Synchronous SQLAlchemy/PostgreSQL repository for ingestion and M2 analysis."""
 
 from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import date, datetime
+from typing import Any
 from uuid import UUID, uuid4, uuid5
 
 from sqlalchemy import Engine, case, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.orm import Session, sessionmaker
 
-from paper_harness.application.read_models import PaperDetail, RunDetail, StoredTopic
+from paper_harness.application.read_models import (
+    AnalysisDetail,
+    AnalysisTarget,
+    PaperDetail,
+    RunDetail,
+    RunItemDetail,
+    StoredTopic,
+)
+from paper_harness.domain.analysis import (
+    AnalysisBundle,
+    AnalysisClaim,
+    AnalysisScope,
+    CitationContext,
+    ClaimType,
+    Evidence,
+    EvidenceType,
+    ModelUsage,
+    PageCoordinates,
+    PaperAnalysis,
+    ParsedPaper,
+    ParsedPassage,
+    ParsedReference,
+    ParsedSection,
+    VerificationStatus,
+)
 from paper_harness.domain.errors import DuplicateDailyRunError
 from paper_harness.domain.identity import (
     normalize_author_name,
     stable_author_id,
     stable_paper_id,
     stable_paper_version_id,
+    stable_report_id,
     stable_source_identity_id,
 )
 from paper_harness.domain.models import (
@@ -34,27 +60,40 @@ from paper_harness.domain.models import (
     RunStatus,
     TopicConfig,
 )
+from paper_harness.domain.reports import Report, ReportFailure
 from paper_harness.ports.arxiv import ArxivPaperRecord
 from paper_harness.ports.repository import (
     MigrationIncompatibleError,
     RepositoryError,
+    RepositoryIntegrityError,
     RepositoryUnavailableError,
 )
 
 from .models import (
+    AnalysisClaimRow,
     AuthorRow,
+    CitationContextRow,
     DailyRunRow,
+    EvidenceClaimRow,
+    EvidenceRow,
     IngestionCursorRow,
+    PaperAnalysisRow,
     PaperRow,
     PaperSourceIdentityRow,
     PaperVersionAuthorRow,
     PaperVersionRow,
+    ParsedPaperRow,
+    ParsedPassageRow,
+    ParsedReferenceRow,
+    ParsedSectionRow,
+    ReportFailureRow,
+    ReportRow,
     RunItemRow,
     TopicPaperRow,
     TopicRow,
 )
 
-EXPECTED_DATABASE_REVISION = "0001_m1_ingestion"
+EXPECTED_DATABASE_REVISION = "0002_m2_structured_analysis"
 
 
 class PostgresRepository:
@@ -74,12 +113,20 @@ class PostgresRepository:
                     raise DuplicateDailyRunError(
                         f"another daily run holds the lock for {topic_id} on {logical_date}"
                     )
+                # pg_advisory_lock is session-scoped. End the implicit SQLAlchemy
+                # transaction immediately so external PDF/parser/model calls do
+                # not hold an idle database transaction while the connection
+                # continues to own the lock.
+                connection.commit()
                 try:
                     yield
                 finally:
-                    connection.execute(
+                    released = connection.execute(
                         text("SELECT pg_advisory_unlock(:lock_key)"), {"lock_key": key}
-                    )
+                    ).scalar_one()
+                    connection.commit()
+                    if not released:
+                        raise RepositoryError("PostgreSQL advisory lock ownership was lost")
         except OperationalError as error:
             raise RepositoryUnavailableError("PostgreSQL advisory lock is unavailable") from error
 
@@ -112,6 +159,10 @@ class PostgresRepository:
         except OperationalError as error:
             raise RepositoryUnavailableError(
                 "PostgreSQL topic persistence is unavailable"
+            ) from error
+        except IntegrityError as error:
+            raise RepositoryIntegrityError(
+                "PostgreSQL rejected topic identity constraints"
             ) from error
         return StoredTopic(config=topic, created_at=created_at)
 
@@ -153,6 +204,7 @@ class PostgresRepository:
                 topic_id=topic_id,
                 logical_date=logical_date,
                 operation=RunOperation.ARXIV_INGESTION.value,
+                analysis_scope=None,
                 status=RunStatus.RUNNING.value,
                 started_at=started_at,
                 completed_at=None,
@@ -160,6 +212,8 @@ class PostgresRepository:
                 cursor_to=cursor_to,
                 discovered_count=0,
                 normalized_count=0,
+                selected_count=0,
+                completed_count=0,
                 failed_count=0,
                 error_code=None,
                 error_detail=None,
@@ -215,6 +269,8 @@ class PostgresRepository:
                         completed_at=completed_at,
                         discovered_count=len(records),
                         normalized_count=len(items),
+                        selected_count=0,
+                        completed_count=0,
                         failed_count=0,
                         error_code=None,
                         error_detail=None,
@@ -552,6 +608,548 @@ class PostgresRepository:
             topic_slugs=topic_slugs,
         )
 
+    def get_analysis_targets(
+        self, topic_id: UUID, paper_ids: tuple[UUID, ...]
+    ) -> tuple[AnalysisTarget, ...]:
+        if not paper_ids:
+            return ()
+        statement = (
+            select(PaperRow, PaperVersionRow)
+            .join(TopicPaperRow, TopicPaperRow.paper_id == PaperRow.id)
+            .join(
+                PaperVersionRow,
+                (PaperVersionRow.paper_id == PaperRow.id)
+                & (PaperVersionRow.version == PaperRow.current_version),
+            )
+            .where(TopicPaperRow.topic_id == topic_id, PaperRow.id.in_(paper_ids))
+        )
+        try:
+            with self._sessions() as session:
+                rows = tuple(session.execute(statement))
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL analysis-target query is unavailable"
+            ) from error
+        by_paper_id = {
+            paper_row.id: AnalysisTarget(
+                paper=_paper_from_row(paper_row),
+                version=_version_from_row(version_row, paper_row.canonical_arxiv_id),
+            )
+            for paper_row, version_row in rows
+        }
+        return tuple(by_paper_id[paper_id] for paper_id in paper_ids if paper_id in by_paper_id)
+
+    def get_analysis_run_for_date(self, topic_id: UUID, logical_date: date) -> DailyRun | None:
+        statement = select(DailyRunRow).where(
+            DailyRunRow.topic_id == topic_id,
+            DailyRunRow.logical_date == logical_date,
+            DailyRunRow.operation == RunOperation.STRUCTURED_ANALYSIS.value,
+        )
+        try:
+            with self._sessions() as session:
+                row = session.scalars(statement).one_or_none()
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL analysis-run query is unavailable"
+            ) from error
+        return None if row is None else _run_from_row(row)
+
+    def start_analysis_run(
+        self,
+        *,
+        topic_id: UUID,
+        logical_date: date,
+        analysis_scope: AnalysisScope,
+        started_at: datetime,
+        targets: tuple[AnalysisTarget, ...],
+    ) -> DailyRun:
+        if not targets:
+            raise RepositoryError("analysis run requires selected targets")
+        run_id = uuid4()
+        try:
+            with self._sessions.begin() as session:
+                row = session.scalars(
+                    insert(DailyRunRow)
+                    .values(
+                        id=run_id,
+                        topic_id=topic_id,
+                        logical_date=logical_date,
+                        operation=RunOperation.STRUCTURED_ANALYSIS.value,
+                        analysis_scope=analysis_scope.value,
+                        status=RunStatus.RUNNING.value,
+                        started_at=started_at,
+                        completed_at=None,
+                        cursor_from=None,
+                        cursor_to=None,
+                        discovered_count=0,
+                        normalized_count=0,
+                        selected_count=len(targets),
+                        completed_count=0,
+                        failed_count=0,
+                        error_code=None,
+                        error_detail=None,
+                        schema_version=1,
+                        created_at=started_at,
+                    )
+                    .returning(DailyRunRow)
+                ).one()
+                session.add_all(
+                    RunItemRow(
+                        id=uuid5(run_id, f"analysis:{target.version.id}"),
+                        run_id=run_id,
+                        paper_id=target.paper.id,
+                        paper_version_id=target.version.id,
+                        stage=PaperStage.SELECTED.value,
+                        status=RunItemStatus.IN_PROGRESS.value,
+                        failed_stage=None,
+                        error_code=None,
+                        retryable=None,
+                        error_detail=None,
+                        schema_version=1,
+                        created_at=started_at,
+                        updated_at=started_at,
+                    )
+                    for target in targets
+                )
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL analysis-run creation is unavailable"
+            ) from error
+        except IntegrityError as error:
+            raise RepositoryIntegrityError(
+                "PostgreSQL rejected analysis-run ownership constraints"
+            ) from error
+        return _run_from_row(row)
+
+    def advance_analysis_item(
+        self,
+        *,
+        run_id: UUID,
+        paper_version_id: UUID,
+        expected_stage: PaperStage,
+        next_stage: PaperStage,
+        updated_at: datetime,
+    ) -> None:
+        if (expected_stage, next_stage) not in {
+            (PaperStage.SELECTED, PaperStage.PDF_DOWNLOADED),
+            (PaperStage.PDF_DOWNLOADED, PaperStage.PARSED),
+        }:
+            raise RepositoryError("invalid M2 analysis stage transition")
+        statement = (
+            update(RunItemRow)
+            .where(
+                RunItemRow.run_id == run_id,
+                RunItemRow.paper_version_id == paper_version_id,
+                RunItemRow.status == RunItemStatus.IN_PROGRESS.value,
+                RunItemRow.stage == expected_stage.value,
+            )
+            .values(stage=next_stage.value, updated_at=updated_at)
+            .returning(RunItemRow.id)
+        )
+        try:
+            with self._sessions.begin() as session:
+                updated_id = session.scalar(statement)
+                if updated_id is None:
+                    raise RepositoryError("analysis item is missing or has an invalid stage")
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL analysis-stage update is unavailable"
+            ) from error
+
+    def persist_parsed_paper(
+        self,
+        *,
+        run_id: UUID,
+        parsed_paper: ParsedPaper,
+        expected_stage: PaperStage,
+        updated_at: datetime,
+    ) -> ParsedPaper:
+        if expected_stage is not PaperStage.PDF_DOWNLOADED:
+            raise RepositoryError("parsed paper requires a PDF_DOWNLOADED item")
+        try:
+            with self._sessions.begin() as session:
+                item = session.scalars(
+                    select(RunItemRow).where(
+                        RunItemRow.run_id == run_id,
+                        RunItemRow.paper_version_id == parsed_paper.paper_version_id,
+                        RunItemRow.status == RunItemStatus.IN_PROGRESS.value,
+                        RunItemRow.stage == expected_stage.value,
+                    )
+                ).one_or_none()
+                if item is None or item.paper_id != parsed_paper.paper_id:
+                    raise RepositoryError("parsed paper does not match an active analysis item")
+                existing = session.get(ParsedPaperRow, parsed_paper.id)
+                if existing is None:
+                    _add_parsed_paper(session, parsed_paper, created_at=updated_at)
+                    canonical = parsed_paper
+                elif (
+                    existing.paper_id != parsed_paper.paper_id
+                    or existing.paper_version_id != parsed_paper.paper_version_id
+                    or existing.parser_name != parsed_paper.parser_name
+                    or existing.parser_version != parsed_paper.parser_version
+                ):
+                    raise RepositoryError("stable parsed-paper identity conflicts with stored data")
+                else:
+                    canonical = _load_parsed_paper(session, existing)
+                item.stage = PaperStage.PARSED.value
+                item.updated_at = updated_at
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL parsed-paper persistence is unavailable"
+            ) from error
+        except IntegrityError as error:
+            raise RepositoryIntegrityError(
+                "PostgreSQL rejected parsed-paper ownership constraints"
+            ) from error
+        return canonical
+
+    def persist_analysis_bundle(
+        self,
+        *,
+        run_id: UUID,
+        bundle: AnalysisBundle,
+        expected_stage: PaperStage,
+        updated_at: datetime,
+    ) -> None:
+        expected_for_scope = (
+            PaperStage.PARSED
+            if bundle.analysis.analysis_scope is AnalysisScope.FULL_TEXT
+            else PaperStage.SELECTED
+        )
+        if expected_stage is not expected_for_scope:
+            raise RepositoryError("analysis scope does not match the durable pipeline stage")
+        try:
+            with self._sessions.begin() as session:
+                item = session.scalars(
+                    select(RunItemRow).where(
+                        RunItemRow.run_id == run_id,
+                        RunItemRow.paper_version_id == bundle.analysis.paper_version_id,
+                        RunItemRow.status == RunItemStatus.IN_PROGRESS.value,
+                        RunItemRow.stage == expected_stage.value,
+                    )
+                ).one_or_none()
+                if item is None or item.paper_id != bundle.analysis.paper_id:
+                    raise RepositoryError("analysis bundle does not match an active run item")
+                existing = session.get(PaperAnalysisRow, bundle.analysis.id)
+                if existing is None:
+                    _add_analysis_bundle(session, bundle)
+                elif (
+                    existing.paper_id != bundle.analysis.paper_id
+                    or existing.paper_version_id != bundle.analysis.paper_version_id
+                    or existing.parsed_paper_id != bundle.analysis.parsed_paper_id
+                    or existing.analysis_scope != bundle.analysis.analysis_scope.value
+                    or existing.provider != bundle.analysis.provider
+                    or existing.configured_model != bundle.analysis.configured_model
+                    or existing.model_version != bundle.analysis.model_version
+                    or existing.prompt_version != bundle.analysis.prompt_version
+                ):
+                    raise RepositoryError("stable analysis identity conflicts with stored data")
+                item.stage = PaperStage.EVIDENCE_EXTRACTED.value
+                item.status = RunItemStatus.COMPLETED.value
+                item.updated_at = updated_at
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL analysis persistence is unavailable"
+            ) from error
+        except IntegrityError as error:
+            raise RepositoryIntegrityError(
+                "PostgreSQL rejected analysis and evidence ownership constraints"
+            ) from error
+
+    def fail_analysis_item(
+        self,
+        *,
+        run_id: UUID,
+        paper_version_id: UUID,
+        failed_stage: PaperStage,
+        error_code: str,
+        retryable: bool,
+        error_detail: str,
+        updated_at: datetime,
+    ) -> None:
+        statement = (
+            update(RunItemRow)
+            .where(
+                RunItemRow.run_id == run_id,
+                RunItemRow.paper_version_id == paper_version_id,
+                RunItemRow.status == RunItemStatus.IN_PROGRESS.value,
+            )
+            .values(
+                status=RunItemStatus.FAILED.value,
+                failed_stage=failed_stage.value,
+                error_code=error_code[:80],
+                retryable=retryable,
+                error_detail=error_detail[:1000],
+                updated_at=updated_at,
+            )
+            .returning(RunItemRow.id)
+        )
+        try:
+            with self._sessions.begin() as session:
+                updated_id = session.scalar(statement)
+                if updated_id is None:
+                    raise RepositoryError("analysis item is missing or already terminal")
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL item-failure persistence is unavailable"
+            ) from error
+        except IntegrityError as error:
+            raise RepositoryIntegrityError(
+                "PostgreSQL rejected analysis item failure constraints"
+            ) from error
+
+    def finalize_analysis_run(self, run_id: UUID, *, completed_at: datetime) -> DailyRun:
+        try:
+            with self._sessions.begin() as session:
+                run_row = session.scalars(
+                    select(DailyRunRow)
+                    .where(
+                        DailyRunRow.id == run_id,
+                        DailyRunRow.operation == RunOperation.STRUCTURED_ANALYSIS.value,
+                        DailyRunRow.status == RunStatus.RUNNING.value,
+                    )
+                    .with_for_update()
+                ).one_or_none()
+                if run_row is None:
+                    raise RepositoryError("analysis run is missing or no longer running")
+                item_rows = tuple(
+                    session.scalars(
+                        select(RunItemRow)
+                        .where(RunItemRow.run_id == run_id)
+                        .order_by(RunItemRow.created_at, RunItemRow.id)
+                    )
+                )
+                if len(item_rows) != run_row.selected_count or any(
+                    item.status == RunItemStatus.IN_PROGRESS.value for item in item_rows
+                ):
+                    raise RepositoryError("analysis run cannot publish with nonterminal items")
+                completed_count = sum(
+                    item.status == RunItemStatus.COMPLETED.value for item in item_rows
+                )
+                failed_items = tuple(
+                    item for item in item_rows if item.status == RunItemStatus.FAILED.value
+                )
+                if completed_count == 0:
+                    status = RunStatus.FAILED
+                    error_code = "NO_SELECTED_PAPER_COMPLETED"
+                    error_detail = "No selected paper completed evidence extraction."
+                elif failed_items:
+                    status = RunStatus.PARTIAL
+                    error_code = None
+                    error_detail = None
+                else:
+                    status = RunStatus.COMPLETE
+                    error_code = None
+                    error_detail = None
+                run_row.status = status.value
+                run_row.completed_at = completed_at
+                run_row.completed_count = completed_count
+                run_row.failed_count = len(failed_items)
+                run_row.error_code = error_code
+                run_row.error_detail = error_detail
+                if status in (RunStatus.COMPLETE, RunStatus.PARTIAL):
+                    _add_analysis_report(
+                        session,
+                        run_row=run_row,
+                        failed_items=failed_items,
+                        generated_at=completed_at,
+                    )
+                session.flush()
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL analysis publication is unavailable"
+            ) from error
+        except IntegrityError as error:
+            raise RepositoryIntegrityError(
+                "PostgreSQL rejected report ownership constraints"
+            ) from error
+        return _run_from_row(run_row)
+
+    def fail_analysis_run(
+        self,
+        run_id: UUID,
+        *,
+        completed_at: datetime,
+        failed_stage: PaperStage,
+        error_code: str,
+        retryable: bool,
+        error_detail: str,
+    ) -> DailyRun:
+        try:
+            with self._sessions.begin() as session:
+                session.execute(
+                    update(RunItemRow)
+                    .where(
+                        RunItemRow.run_id == run_id,
+                        RunItemRow.status == RunItemStatus.IN_PROGRESS.value,
+                    )
+                    .values(
+                        status=RunItemStatus.FAILED.value,
+                        failed_stage=failed_stage.value,
+                        error_code=error_code[:80],
+                        retryable=retryable,
+                        error_detail=error_detail[:1000],
+                        updated_at=completed_at,
+                    )
+                )
+                completed_count, failed_count = session.execute(
+                    select(
+                        func.count().filter(RunItemRow.status == RunItemStatus.COMPLETED.value),
+                        func.count().filter(RunItemRow.status == RunItemStatus.FAILED.value),
+                    ).where(RunItemRow.run_id == run_id)
+                ).one()
+                row = session.scalars(
+                    update(DailyRunRow)
+                    .where(
+                        DailyRunRow.id == run_id,
+                        DailyRunRow.operation == RunOperation.STRUCTURED_ANALYSIS.value,
+                        DailyRunRow.status == RunStatus.RUNNING.value,
+                    )
+                    .values(
+                        status=RunStatus.FAILED.value,
+                        completed_at=completed_at,
+                        completed_count=completed_count,
+                        failed_count=failed_count,
+                        error_code=error_code[:80],
+                        error_detail=error_detail[:1000],
+                    )
+                    .returning(DailyRunRow)
+                ).one_or_none()
+                if row is None:
+                    raise RepositoryError("analysis run is missing or no longer running")
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL analysis-run failure persistence is unavailable"
+            ) from error
+        except IntegrityError as error:
+            raise RepositoryIntegrityError(
+                "PostgreSQL rejected analysis-run failure constraints"
+            ) from error
+        return _run_from_row(row)
+
+    def get_paper_analysis(
+        self,
+        paper_id: UUID,
+        *,
+        paper_version_id: UUID | None,
+        analysis_scope: AnalysisScope | None = None,
+    ) -> AnalysisDetail | None:
+        statement = (
+            select(
+                PaperAnalysisRow,
+                PaperVersionRow.version,
+                ParsedPaperRow.parser_name,
+                ParsedPaperRow.parser_version,
+            )
+            .join(PaperVersionRow, PaperVersionRow.id == PaperAnalysisRow.paper_version_id)
+            .outerjoin(ParsedPaperRow, ParsedPaperRow.id == PaperAnalysisRow.parsed_paper_id)
+            .where(PaperAnalysisRow.paper_id == paper_id)
+        )
+        if paper_version_id is None:
+            statement = statement.join(PaperRow, PaperRow.id == PaperAnalysisRow.paper_id).where(
+                PaperVersionRow.version == PaperRow.current_version
+            )
+        else:
+            statement = statement.where(PaperAnalysisRow.paper_version_id == paper_version_id)
+        if analysis_scope is not None:
+            statement = statement.where(PaperAnalysisRow.analysis_scope == analysis_scope.value)
+        statement = statement.order_by(
+            case((PaperAnalysisRow.analysis_scope == AnalysisScope.FULL_TEXT.value, 0), else_=1),
+            PaperAnalysisRow.generated_at.desc(),
+            PaperAnalysisRow.id,
+        ).limit(1)
+        try:
+            with self._sessions() as session:
+                selected = session.execute(statement).one_or_none()
+                if selected is None:
+                    return None
+                analysis_row, arxiv_version, parser_name, parser_version = selected
+                claim_rows = tuple(
+                    session.scalars(
+                        select(AnalysisClaimRow)
+                        .where(AnalysisClaimRow.analysis_id == analysis_row.id)
+                        .order_by(AnalysisClaimRow.claim_key, AnalysisClaimRow.id)
+                    )
+                )
+                evidence_rows = tuple(
+                    session.scalars(
+                        select(EvidenceRow)
+                        .where(EvidenceRow.analysis_id == analysis_row.id)
+                        .order_by(EvidenceRow.section, EvidenceRow.evidence_key, EvidenceRow.id)
+                    )
+                )
+                link_rows = tuple(
+                    session.execute(
+                        select(EvidenceClaimRow.evidence_id, EvidenceClaimRow.claim_id)
+                        .where(EvidenceClaimRow.analysis_id == analysis_row.id)
+                        .order_by(EvidenceClaimRow.evidence_id, EvidenceClaimRow.claim_id)
+                    )
+                )
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL analysis detail query is unavailable"
+            ) from error
+        supported_claims: dict[UUID, list[UUID]] = {}
+        for evidence_id, claim_id in link_rows:
+            supported_claims.setdefault(evidence_id, []).append(claim_id)
+        return AnalysisDetail(
+            analysis=_analysis_from_row(analysis_row),
+            arxiv_version=arxiv_version,
+            claims=tuple(_claim_from_row(row) for row in claim_rows),
+            evidence=tuple(
+                _evidence_from_row(row, tuple(supported_claims.get(row.id, ())))
+                for row in evidence_rows
+            ),
+            parser_name=parser_name,
+            parser_version=parser_version,
+        )
+
+    def list_paper_evidence(
+        self,
+        paper_id: UUID,
+        *,
+        analysis_id: UUID,
+        paper_version_id: UUID | None,
+        analysis_scope: AnalysisScope | None = None,
+    ) -> tuple[Evidence, ...] | None:
+        analysis_statement = select(PaperAnalysisRow.id).where(
+            PaperAnalysisRow.id == analysis_id,
+            PaperAnalysisRow.paper_id == paper_id,
+        )
+        if paper_version_id is not None:
+            analysis_statement = analysis_statement.where(
+                PaperAnalysisRow.paper_version_id == paper_version_id
+            )
+        if analysis_scope is not None:
+            analysis_statement = analysis_statement.where(
+                PaperAnalysisRow.analysis_scope == analysis_scope.value
+            )
+        evidence_statement = (
+            select(EvidenceRow)
+            .where(EvidenceRow.analysis_id == analysis_id)
+            .order_by(EvidenceRow.section, EvidenceRow.evidence_key, EvidenceRow.id)
+        )
+        links_statement = (
+            select(EvidenceClaimRow.evidence_id, EvidenceClaimRow.claim_id)
+            .where(EvidenceClaimRow.analysis_id == analysis_id)
+            .order_by(EvidenceClaimRow.evidence_id, EvidenceClaimRow.claim_id)
+        )
+        try:
+            with self._sessions() as session:
+                if session.scalar(analysis_statement) is None:
+                    return None
+                evidence_rows = tuple(session.scalars(evidence_statement))
+                link_rows = tuple(session.execute(links_statement))
+        except OperationalError as error:
+            raise RepositoryUnavailableError("PostgreSQL evidence query is unavailable") from error
+        supported_claims: dict[UUID, list[UUID]] = {}
+        for evidence_id, claim_id in link_rows:
+            supported_claims.setdefault(evidence_id, []).append(claim_id)
+        return tuple(
+            _evidence_from_row(row, tuple(supported_claims.get(row.id, ())))
+            for row in evidence_rows
+        )
+
     def list_runs(
         self, *, topic_slug: str | None, limit: int, offset: int
     ) -> tuple[tuple[DailyRun, ...], int]:
@@ -580,17 +1178,353 @@ class PostgresRepository:
                 if run_row is None:
                     return None
                 item_rows = tuple(
-                    session.scalars(
-                        select(RunItemRow)
+                    session.execute(
+                        select(RunItemRow, PaperRow)
+                        .join(PaperRow, PaperRow.id == RunItemRow.paper_id)
                         .where(RunItemRow.run_id == run_row.id)
                         .order_by(RunItemRow.created_at, RunItemRow.id)
+                    )
+                )
+                report_row = session.scalars(
+                    select(ReportRow).where(ReportRow.run_id == run_row.id)
+                ).one_or_none()
+                failure_rows = (
+                    ()
+                    if report_row is None
+                    else tuple(
+                        session.scalars(
+                            select(ReportFailureRow)
+                            .where(ReportFailureRow.report_id == report_row.id)
+                            .order_by(ReportFailureRow.created_at, ReportFailureRow.id)
+                        )
                     )
                 )
         except OperationalError as error:
             raise RepositoryUnavailableError(
                 "PostgreSQL latest run query is unavailable"
             ) from error
-        return RunDetail(run=_run_from_row(run_row), items=tuple(map(_item_from_row, item_rows)))
+        return RunDetail(
+            run=_run_from_row(run_row),
+            items=tuple(
+                RunItemDetail(
+                    item=_item_from_row(item_row),
+                    canonical_arxiv_id=paper_row.canonical_arxiv_id,
+                    paper_title=paper_row.title,
+                )
+                for item_row, paper_row in item_rows
+            ),
+            report=(
+                None if report_row is None else _report_from_rows(report_row, tuple(failure_rows))
+            ),
+        )
+
+
+def _add_parsed_paper(session: Session, parsed: ParsedPaper, *, created_at: datetime) -> None:
+    session.add(
+        ParsedPaperRow(
+            id=parsed.id,
+            paper_id=parsed.paper_id,
+            paper_version_id=parsed.paper_version_id,
+            parser_name=parsed.parser_name,
+            parser_version=parsed.parser_version,
+            parsed_at=parsed.parsed_at,
+            source=parsed.source,
+            call_count=parsed.call_count,
+            duration_ms=parsed.duration_ms,
+            schema_version=parsed.schema_version,
+            created_at=created_at,
+        )
+    )
+    session.flush()
+    for section in parsed.sections:
+        session.add(
+            ParsedSectionRow(
+                id=section.id,
+                parsed_paper_id=parsed.id,
+                position=section.index,
+                title=section.title,
+            )
+        )
+    session.flush()
+    for section in parsed.sections:
+        for passage in section.passages:
+            session.add(
+                ParsedPassageRow(
+                    id=passage.id,
+                    parsed_paper_id=parsed.id,
+                    parsed_section_id=section.id,
+                    source_id=passage.source_id,
+                    position=passage.passage_index,
+                    text=passage.text,
+                    coordinates=_coordinates_to_json(passage.coordinates),
+                )
+            )
+    reference_by_source = {reference.source_id: reference for reference in parsed.references}
+    for reference in parsed.references:
+        session.add(
+            ParsedReferenceRow(
+                id=reference.id,
+                parsed_paper_id=parsed.id,
+                source_id=reference.source_id,
+                title=reference.title,
+                authors=list(reference.authors),
+                publication_year=reference.year,
+                raw_text=reference.raw_text,
+            )
+        )
+    session.flush()
+    for context in parsed.citation_contexts:
+        reference = reference_by_source.get(context.reference_source_id)
+        if reference is None:
+            raise RepositoryError("citation context references an unknown parsed reference")
+        session.add(
+            CitationContextRow(
+                id=context.id,
+                parsed_paper_id=parsed.id,
+                parsed_passage_id=context.parsed_passage_id,
+                parsed_reference_id=reference.id,
+                reference_source_id=context.reference_source_id,
+                excerpt=context.excerpt,
+                coordinates=_coordinates_to_json(context.coordinates),
+            )
+        )
+
+
+def _load_parsed_paper(session: Session, row: ParsedPaperRow) -> ParsedPaper:
+    section_rows = tuple(
+        session.scalars(
+            select(ParsedSectionRow)
+            .where(ParsedSectionRow.parsed_paper_id == row.id)
+            .order_by(ParsedSectionRow.position, ParsedSectionRow.id)
+        )
+    )
+    passage_rows = tuple(
+        session.scalars(
+            select(ParsedPassageRow)
+            .where(ParsedPassageRow.parsed_paper_id == row.id)
+            .order_by(
+                ParsedPassageRow.parsed_section_id,
+                ParsedPassageRow.position,
+                ParsedPassageRow.id,
+            )
+        )
+    )
+    section_position_by_id = {section_row.id: section_row.position for section_row in section_rows}
+    passages_by_section: dict[UUID, list[ParsedPassage]] = {}
+    for passage_row in passage_rows:
+        passages_by_section.setdefault(passage_row.parsed_section_id, []).append(
+            ParsedPassage(
+                id=passage_row.id,
+                source_id=passage_row.source_id,
+                section_index=section_position_by_id[passage_row.parsed_section_id],
+                passage_index=passage_row.position,
+                text=passage_row.text,
+                coordinates=_coordinates_from_json(passage_row.coordinates),
+            )
+        )
+    sections = tuple(
+        ParsedSection(
+            id=section_row.id,
+            index=section_row.position,
+            title=section_row.title,
+            passages=tuple(passages_by_section.get(section_row.id, ())),
+        )
+        for section_row in section_rows
+    )
+    reference_rows = tuple(
+        session.scalars(
+            select(ParsedReferenceRow)
+            .where(ParsedReferenceRow.parsed_paper_id == row.id)
+            .order_by(ParsedReferenceRow.source_id, ParsedReferenceRow.id)
+        )
+    )
+    references = tuple(
+        ParsedReference(
+            id=reference_row.id,
+            source_id=reference_row.source_id,
+            title=reference_row.title,
+            authors=tuple(reference_row.authors),
+            year=reference_row.publication_year,
+            raw_text=reference_row.raw_text,
+        )
+        for reference_row in reference_rows
+    )
+    context_rows = tuple(
+        session.scalars(
+            select(CitationContextRow)
+            .where(CitationContextRow.parsed_paper_id == row.id)
+            .order_by(CitationContextRow.id)
+        )
+    )
+    citation_contexts = tuple(
+        CitationContext(
+            id=context_row.id,
+            parsed_passage_id=context_row.parsed_passage_id,
+            reference_source_id=context_row.reference_source_id,
+            excerpt=context_row.excerpt,
+            coordinates=_coordinates_from_json(context_row.coordinates),
+        )
+        for context_row in context_rows
+    )
+    return ParsedPaper(
+        id=row.id,
+        paper_id=row.paper_id,
+        paper_version_id=row.paper_version_id,
+        parser_name=row.parser_name,
+        parser_version=row.parser_version,
+        parsed_at=row.parsed_at,
+        source=row.source,
+        sections=sections,
+        references=references,
+        citation_contexts=citation_contexts,
+        call_count=row.call_count,
+        duration_ms=row.duration_ms,
+        schema_version=row.schema_version,
+    )
+
+
+def _add_analysis_bundle(session: Session, bundle: AnalysisBundle) -> None:
+    analysis = bundle.analysis
+    session.add(
+        PaperAnalysisRow(
+            id=analysis.id,
+            paper_id=analysis.paper_id,
+            paper_version_id=analysis.paper_version_id,
+            parsed_paper_id=analysis.parsed_paper_id,
+            analysis_scope=analysis.analysis_scope.value,
+            summary=analysis.summary,
+            research_problem=analysis.research_problem,
+            method_summary=analysis.method_summary,
+            key_contributions=list(analysis.key_contributions),
+            limitations=list(analysis.limitations),
+            provider=analysis.provider,
+            configured_model=analysis.configured_model,
+            model_version=analysis.model_version,
+            prompt_version=analysis.prompt_version,
+            generated_at=analysis.generated_at,
+            source=analysis.source,
+            verification_status=analysis.verification_status.value,
+            prompt_tokens=analysis.usage.prompt_tokens,
+            completion_tokens=analysis.usage.completion_tokens,
+            total_tokens=analysis.usage.total_tokens,
+            call_count=analysis.usage.call_count,
+            duration_ms=analysis.usage.duration_ms,
+            estimated_cost_usd=analysis.usage.estimated_cost_usd,
+            schema_version=analysis.schema_version,
+            created_at=analysis.created_at,
+        )
+    )
+    # These ownership constraints are deliberately composite and the ORM models
+    # do not expose relationships. Flush each parent tier explicitly so
+    # PostgreSQL validates the whole bundle in dependency order while the outer
+    # transaction still commits or rolls back atomically.
+    session.flush()
+    for claim in bundle.claims:
+        session.add(
+            AnalysisClaimRow(
+                id=claim.id,
+                analysis_id=claim.analysis_id,
+                paper_id=claim.paper_id,
+                paper_version_id=claim.paper_version_id,
+                claim_key=claim.key,
+                claim_type=claim.claim_type.value,
+                text=claim.text,
+                provider=claim.provider,
+                model_version=claim.model_version,
+                prompt_version=claim.prompt_version,
+                generated_at=claim.generated_at,
+                source=claim.source,
+                verification_status=claim.verification_status.value,
+                schema_version=claim.schema_version,
+                created_at=claim.created_at,
+            )
+        )
+    session.flush()
+    for item in bundle.evidence:
+        session.add(
+            EvidenceRow(
+                id=item.id,
+                analysis_id=item.analysis_id,
+                paper_id=item.paper_id,
+                paper_version_id=item.paper_version_id,
+                evidence_key=item.key,
+                section=item.section,
+                passage_id=item.passage_id,
+                coordinates=_coordinates_to_json(item.coordinates),
+                excerpt=item.excerpt,
+                evidence_type=item.evidence_type.value,
+                extraction_source=item.extraction_source,
+                provider=item.provider,
+                model_version=item.model_version,
+                prompt_version=item.prompt_version,
+                generated_at=item.generated_at,
+                verification_status=item.verification_status.value,
+                schema_version=item.schema_version,
+                created_at=item.created_at,
+            )
+        )
+    session.flush()
+    for item in bundle.evidence:
+        session.add_all(
+            EvidenceClaimRow(
+                evidence_id=item.id,
+                claim_id=claim_id,
+                analysis_id=item.analysis_id,
+            )
+            for claim_id in item.supported_claim_ids
+        )
+
+
+def _add_analysis_report(
+    session: Session,
+    *,
+    run_row: DailyRunRow,
+    failed_items: tuple[RunItemRow, ...],
+    generated_at: datetime,
+) -> None:
+    report_id = stable_report_id(run_row.id)
+    status = RunStatus(run_row.status)
+    session.add(
+        ReportRow(
+            id=report_id,
+            run_id=run_row.id,
+            topic_id=run_row.topic_id,
+            logical_date=run_row.logical_date,
+            status=status.value,
+            title=f"Structured analysis for {run_row.logical_date.isoformat()}",
+            summary=(
+                f"{run_row.completed_count} of {run_row.selected_count} selected papers "
+                "completed evidence extraction."
+            ),
+            source="deterministic_pipeline",
+            generated_at=generated_at,
+            schema_version=1,
+            created_at=generated_at,
+        )
+    )
+    session.flush()
+    for item in failed_items:
+        if (
+            item.failed_stage is None
+            or item.error_code is None
+            or item.retryable is None
+            or item.error_detail is None
+        ):
+            raise RepositoryError("failed run item lacks reportable failure metadata")
+        session.add(
+            ReportFailureRow(
+                id=uuid5(report_id, str(item.paper_version_id)),
+                report_id=report_id,
+                paper_id=item.paper_id,
+                paper_version_id=item.paper_version_id,
+                failed_stage=item.failed_stage,
+                error_code=item.error_code,
+                retryable=item.retryable,
+                error_detail=item.error_detail,
+                schema_version=1,
+                created_at=generated_at,
+            )
+        )
 
 
 def _advisory_key(topic_id: UUID, logical_date: date) -> int:
@@ -686,6 +1620,7 @@ def _run_from_row(row: DailyRunRow) -> DailyRun:
         topic_id=row.topic_id,
         logical_date=row.logical_date,
         operation=RunOperation(row.operation),
+        analysis_scope=(None if row.analysis_scope is None else AnalysisScope(row.analysis_scope)),
         status=RunStatus(row.status),
         started_at=row.started_at,
         completed_at=row.completed_at,
@@ -693,6 +1628,8 @@ def _run_from_row(row: DailyRunRow) -> DailyRun:
         cursor_to=row.cursor_to,
         discovered_count=row.discovered_count,
         normalized_count=row.normalized_count,
+        selected_count=row.selected_count,
+        completed_count=row.completed_count,
         failed_count=row.failed_count,
         error_code=row.error_code,
         error_detail=row.error_detail,
@@ -717,3 +1654,139 @@ def _item_from_row(row: RunItemRow) -> RunItem:
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+def _analysis_from_row(row: PaperAnalysisRow) -> PaperAnalysis:
+    return PaperAnalysis(
+        id=row.id,
+        paper_id=row.paper_id,
+        paper_version_id=row.paper_version_id,
+        parsed_paper_id=row.parsed_paper_id,
+        analysis_scope=AnalysisScope(row.analysis_scope),
+        summary=row.summary,
+        research_problem=row.research_problem,
+        method_summary=row.method_summary,
+        key_contributions=tuple(row.key_contributions),
+        limitations=tuple(row.limitations),
+        provider=row.provider,
+        configured_model=row.configured_model,
+        model_version=row.model_version,
+        prompt_version=row.prompt_version,
+        generated_at=row.generated_at,
+        source=row.source,
+        verification_status=VerificationStatus(row.verification_status),
+        usage=ModelUsage(
+            prompt_tokens=row.prompt_tokens,
+            completion_tokens=row.completion_tokens,
+            total_tokens=row.total_tokens,
+            call_count=row.call_count,
+            duration_ms=row.duration_ms,
+            estimated_cost_usd=row.estimated_cost_usd,
+        ),
+        schema_version=row.schema_version,
+        created_at=row.created_at,
+    )
+
+
+def _claim_from_row(row: AnalysisClaimRow) -> AnalysisClaim:
+    return AnalysisClaim(
+        id=row.id,
+        analysis_id=row.analysis_id,
+        paper_id=row.paper_id,
+        paper_version_id=row.paper_version_id,
+        key=row.claim_key,
+        claim_type=ClaimType(row.claim_type),
+        text=row.text,
+        provider=row.provider,
+        model_version=row.model_version,
+        prompt_version=row.prompt_version,
+        generated_at=row.generated_at,
+        source=row.source,
+        verification_status=VerificationStatus(row.verification_status),
+        schema_version=row.schema_version,
+        created_at=row.created_at,
+    )
+
+
+def _evidence_from_row(row: EvidenceRow, supported_claim_ids: tuple[UUID, ...]) -> Evidence:
+    return Evidence(
+        id=row.id,
+        analysis_id=row.analysis_id,
+        paper_id=row.paper_id,
+        paper_version_id=row.paper_version_id,
+        key=row.evidence_key,
+        section=row.section,
+        passage_id=row.passage_id,
+        coordinates=_coordinates_from_json(row.coordinates),
+        excerpt=row.excerpt,
+        evidence_type=EvidenceType(row.evidence_type),
+        supported_claim_ids=supported_claim_ids,
+        extraction_source=row.extraction_source,
+        provider=row.provider,
+        model_version=row.model_version,
+        prompt_version=row.prompt_version,
+        generated_at=row.generated_at,
+        verification_status=VerificationStatus(row.verification_status),
+        schema_version=row.schema_version,
+        created_at=row.created_at,
+    )
+
+
+def _report_from_rows(row: ReportRow, failure_rows: tuple[ReportFailureRow, ...]) -> Report:
+    return Report(
+        id=row.id,
+        run_id=row.run_id,
+        topic_id=row.topic_id,
+        logical_date=row.logical_date,
+        status=RunStatus(row.status),
+        title=row.title,
+        summary=row.summary,
+        source=row.source,
+        generated_at=row.generated_at,
+        schema_version=row.schema_version,
+        created_at=row.created_at,
+        failures=tuple(
+            ReportFailure(
+                id=failure.id,
+                report_id=failure.report_id,
+                paper_id=failure.paper_id,
+                paper_version_id=failure.paper_version_id,
+                failed_stage=PaperStage(failure.failed_stage),
+                error_code=failure.error_code,
+                retryable=failure.retryable,
+                error_detail=failure.error_detail,
+                schema_version=failure.schema_version,
+                created_at=failure.created_at,
+            )
+            for failure in failure_rows
+        ),
+    )
+
+
+def _coordinates_to_json(values: tuple[PageCoordinates, ...]) -> list[dict[str, int | float]]:
+    return [
+        {
+            "page": value.page,
+            "x": value.x,
+            "y": value.y,
+            "width": value.width,
+            "height": value.height,
+        }
+        for value in values
+    ]
+
+
+def _coordinates_from_json(values: list[dict[str, Any]]) -> tuple[PageCoordinates, ...]:
+    try:
+        return tuple(
+            PageCoordinates(
+                page=int(value["page"]),
+                x=float(value["x"]),
+                y=float(value["y"]),
+                width=float(value["width"]),
+                height=float(value["height"]),
+            )
+            for value in values
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise RepositoryError("stored evidence coordinates are invalid") from error

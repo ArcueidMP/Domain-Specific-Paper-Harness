@@ -82,9 +82,9 @@ export function DashboardPage() {
           ) : null}
         </section>
 
-        <aside aria-label="Daily ingestion status">
+        <aside aria-label="Daily processing status">
           <div className="section-title-row">
-            <h2>Ingestion state</h2>
+            <h2>Daily processing state</h2>
           </div>
           {latestRun.isPending ? <StateNotice kind="loading" title="Loading the latest run" /> : null}
           {latestRun.isError ? (

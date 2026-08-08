@@ -1,10 +1,11 @@
 # Domain-Specific Paper Harness
 
 Domain-Specific Paper Harness is a private research-intelligence product for
-tracking broad LLM-agent research. M1 provides a reliable, version-aware arXiv
-ingestion foundation, a read-only FastAPI surface, and an initial React product.
-Later milestones will add grounded full-text analysis, historical comparison,
-knowledge graphs, trends, and reports.
+tracking broad LLM-agent research. M1 and M2 are implemented locally: the system
+ingests versioned arXiv metadata, analyzes explicitly selected paper versions
+with strict DeepSeek output, grounds claims in abstract or GROBID-parsed text,
+and presents analyses, evidence, reports, and item failures through FastAPI and
+React. No production runtime is deployed yet.
 
 The permanent product, safety, source, and engineering rules are in
 [AGENTS.md](AGENTS.md). Current milestone and deployment state are in
@@ -21,41 +22,63 @@ embodied systems without a material LLM-agent component.
 Source boundaries are strict:
 
 - daily discovery uses arXiv only;
-- historical and related-work search will use Semantic Scholar, the persisted
-  corpus, and a bounded PaSa-derived workflow in M3;
 - only an arXiv-hosted PDF may enter full-text analysis;
+- M3 historical and related-work search may use Semantic Scholar, the persisted
+  corpus, and a bounded PaSa-derived workflow;
 - publisher scraping, paywall bypass, publisher-PDF download, arbitrary web
-  search, and hidden metadata-provider fallbacks are prohibited.
+  search, and hidden metadata-provider fallbacks are prohibited; and
+- paper text is untrusted content, never an instruction to the analysis runtime.
 
-## M1 capabilities
+## Implemented capabilities
 
-M1 currently implements:
+### Platform and ingestion
 
-- exact CPython 3.13.13 and frozen uv/pnpm dependency sets;
-- validated YAML topic configuration for broad LLM-agent research;
-- arxiv.py 4.0.0 behind `ArxivPort`, with bounded timeouts, a total deadline,
-  narrow transient retries, `Retry-After`, complete-window saturation detection,
-  and no partial cursor advance;
-- canonical arXiv identities, explicit versions, overlap windows, database
-  idempotency, PostgreSQL advisory locking, and atomic batch/cursor/run completion;
-- PostgreSQL 15+ with pgvector, normalized source/version/run schemas, composite
-  ownership constraints, and an explicit Alembic migration;
-- a protected operator CLI and a separate Daily Job entrypoint;
-- read-oriented FastAPI health, topic, paper, version, and run endpoints;
-- a React/Vite dashboard and paper list generated against the FastAPI OpenAPI
-  contract, including loading, empty, and failure states;
-- production-like Web/API and Daily Docker images; and
-- a two-phase GCP Terraform foundation for Artifact Registry, empty Secret
-  Manager resources, least-privilege identities, direct Cloud Run IAP, a Daily
-  Cloud Run Job, and a 05:00 Asia/Kuala_Lumpur Scheduler target.
+- Exact CPython 3.13.13 and frozen uv/pnpm dependency sets.
+- Validated topic configuration for broad LLM-agent research.
+- arxiv.py 4.0.0 behind `ArxivPort`, with bounded timeouts, transient retries,
+  `Retry-After`, complete-window saturation checks, and no partial cursor advance.
+- Canonical arXiv identities, explicit versions, overlap windows, PostgreSQL
+  advisory locking, database idempotency, and atomic batch/cursor/run completion.
+- PostgreSQL 15+ with pgvector, normalized schemas, and explicit Alembic
+  migrations through `0002_m2_structured_analysis`.
+- A protected operator CLI and a separate Daily Job entrypoint. FastAPI never
+  runs the pipeline through startup hooks, background tasks, or a public run
+  endpoint.
 
-FastAPI does not run the pipeline through startup hooks, background tasks, an
-in-process scheduler, or a public execution endpoint.
+### Structured analysis and evidence
+
+- Explicit `FULL_TEXT` and `ABSTRACT_ONLY` scopes selected before execution and
+  persisted on the run and each successful analysis. Parser failure never
+  changes the selected scope, including zero-success runs.
+- DeepSeek is the sole analysis provider, fixed to `deepseek-v4-flash` behind
+  `LLMPort`. Configuration, authentication, response envelopes, JSON schemas,
+  domain invariants, usage totals, and evidence grounding are validated before
+  persistence. Malformed JSON is rejected rather than repaired or retried.
+- GROBID 0.9.0 CRF is the sole scientific PDF parser behind `PdfParserPort`.
+  Requests disable metadata consolidation, retain raw citations and source
+  coordinates, and reject invalid or oversized PDF/TEI data. No parser fallback
+  exists.
+- Parsed sections, passages, references, citation contexts, analyses, claims,
+  evidence-to-claim links, model usage, prompt/model versions, source scope,
+  verification status, and generation timestamps are normalized in PostgreSQL.
+- Analysis, claims, evidence, and their ownership links commit atomically. Run
+  finalization and deterministic `COMPLETE` or `PARTIAL` report publication are
+  one transaction; failed items retain stage, stable error code, retryability,
+  and concise detail.
+- FastAPI exposes paper detail, structured analysis, grounded evidence, run
+  history, and latest-run report/failure data from its generated OpenAPI
+  contract. React provides paper analysis and evidence views plus prominent
+  `PARTIAL` and item-failure display.
+- PaperQA2 `v2026.03.18` at commit
+  `ac4ff91ad703e6816cb620ea579a98ca0c42c36f` was audited and rejected for code
+  or package reuse because its parser, providers, index, malformed-JSON repair,
+  and provenance model conflict with this product. M2 uses project-owned
+  deterministic grounding functions and adds no PaperQA2 dependency.
 
 ## Architecture summary
 
-The repository is a Ports-and-Adapters modular monolith with independently
-deployed runtime units:
+The repository is a Ports-and-Adapters modular monolith with three independently
+deployable runtime units:
 
 ```mermaid
 flowchart TD
@@ -63,20 +86,21 @@ flowchart TD
     IAP --> Web["Web/API service<br/>React + FastAPI"]
     Web --> DB[("PostgreSQL 15+ + pgvector")]
     Scheduler["Cloud Scheduler<br/>05:00 Asia/Kuala_Lumpur"] --> Daily["Daily Cloud Run Job"]
-    Daily --> Arxiv["arXiv metadata API"]
+    Daily --> Arxiv["arXiv API and arXiv-hosted PDFs"]
+    Daily --> DeepSeek["DeepSeek V4 Flash"]
+    Daily --> Grobid["IAM-private GROBID 0.9.0 CRF"]
     Daily --> DB
-    Daily -. "M2" .-> Grobid["Private GROBID service"]
 ```
 
-Dependencies point inward from adapters to ports, application use cases, and
-the domain. PostgreSQL is the source of truth. Production receives only a
-secret-backed `DATABASE_URL`; no database-provider SDK is part of the contract.
-The target excludes Cloud SQL, Kubernetes, Redis, Celery, Neo4j, a permanent
-worker, public unauthenticated endpoints, and an unapproved paid load balancer.
+This is the configured deployment shape, not a claim that production resources
+exist. Dependencies point inward from adapters to ports, application use cases,
+and the domain. PostgreSQL is the source of truth. The target excludes Cloud SQL,
+Kubernetes, Redis, Celery, Neo4j, a permanent worker, public unauthenticated
+endpoints, and unapproved fixed-cost networking.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
 [docs/BOUNDARIES.md](docs/BOUNDARIES.md), and
-[docs/FAILURE_POLICY.md](docs/FAILURE_POLICY.md) for the detailed boundaries.
+[docs/FAILURE_POLICY.md](docs/FAILURE_POLICY.md) for detailed boundaries.
 
 ## Prerequisites
 
@@ -91,21 +115,8 @@ Development targets Windows with PowerShell:
 - Google Cloud CLI for deployment work.
 
 The current workstation resolves uv and Terraform under `D:\Tools` when they
-are not already on `PATH`. Verify the environment with:
-
-```powershell
-python --version
-D:\Tools\uv\uv.exe --version
-node --version
-corepack pnpm --version
-docker version
-docker compose version
-D:\Tools\terraform\terraform.exe version
-gcloud --version
-```
-
-`python --version` and every first-party container must resolve exactly
-3.13.13. A different Python minor or patch release is not a fallback.
+are not already on `PATH`. Every first-party Python environment and container
+must use CPython 3.13.13; another Python release is not a fallback.
 
 ## Local setup
 
@@ -120,18 +131,9 @@ $env:DATABASE_URL = "postgresql+psycopg://paper_harness:paper_harness_local@loca
 D:\Tools\uv\uv.exe run --frozen --python 3.13.13 alembic upgrade head
 ```
 
-`.env` is ignored. Its checked-in example contains local-only PostgreSQL values
-and empty future-milestone credential placeholders; never replace those
-placeholders with real values in a tracked file.
-
-Stop the local database without deleting its volume:
-
-```powershell
-docker compose down
-```
-
-Use `docker compose down --volumes` only when intentionally discarding local
-development data.
+`.env` is ignored. Never place a real secret in a tracked file. Stop PostgreSQL
+without deleting its volume with `docker compose down`; use `--volumes` only
+when intentionally discarding local data.
 
 ## Verification
 
@@ -143,113 +145,106 @@ powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
 
 It verifies exact Python and frozen dependencies, Ruff, formatting, strict
 Pyright, FastAPI/OpenAPI/generated-TypeScript drift, frontend lint/typecheck/unit
-tests/build, credential-free Playwright Chromium, Compose, Terraform formatting
-and validation, a clean Alembic upgrade against disposable pgvector PostgreSQL,
-repository/contract/unit tests, and both production images.
+tests/build, credential-free Playwright, Compose, Terraform, clean and M1-to-M2
+Alembic upgrades against disposable pgvector PostgreSQL, repository/contract/unit
+tests, and the Web/API, Daily Job, and pinned GROBID wrapper images. It builds the
+GROBID wrapper but does not start a live GROBID service.
 
-The default suite is deterministic and does not call live providers. The
-explicit live arXiv smoke test is opt-in through `RUN_LIVE_ARXIV_TEST=1` and a
-disposable `TEST_DATABASE_URL`; it ingests arXiv `1706.03762` through the real
-adapter into PostgreSQL.
-
-The completed M1 verification result is recorded in
-[docs/STATUS.md](docs/STATUS.md).
+Default verification is deterministic: it does not call live arXiv, DeepSeek,
+Semantic Scholar, or Google Cloud, and it does not start a GROBID service. The
+explicit real-arXiv test remains opt-in through `RUN_LIVE_ARXIV_TEST=1` and
+`TEST_DATABASE_URL`.
 
 ## Local run
 
-Start PostgreSQL, apply migrations, and launch the API plus Vite development
-server:
+Start PostgreSQL, apply migrations, and launch FastAPI plus Vite:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/dev.ps1
 ```
 
-The default URLs are:
+The web application is at `http://127.0.0.1:5173`; API documentation is at
+`http://127.0.0.1:8000/api/docs`.
 
-- web: `http://127.0.0.1:5173`;
-- API documentation: `http://127.0.0.1:8000/api/docs`;
-- liveness: `http://127.0.0.1:8000/health/live`; and
-- readiness: `http://127.0.0.1:8000/health/ready`.
-
-Run daily arXiv ingestion explicitly after the database is migrated and
-`DATABASE_URL` is set:
+Run arXiv ingestion explicitly:
 
 ```powershell
 $env:DATABASE_URL = "postgresql+psycopg://paper_harness:paper_harness_local@localhost:5432/paper_harness"
 powershell -ExecutionPolicy Bypass -File scripts/run-daily.ps1
 ```
 
-An optional `-LogicalDate YYYY-MM-DD` supports a deliberate operator run. The
-same topic/date cannot be executed twice, and the API has no run endpoint.
+M2 analysis is a separate protected operation over selected persisted paper
+UUIDs. For full-text analysis, start the pinned local GROBID service and provide
+the DeepSeek key only in the local environment:
+
+```powershell
+docker compose --profile analysis up --detach --wait grobid
+$env:GROBID_URL = "http://127.0.0.1:8070"
+$env:GROBID_AUTH_MODE = "none"
+$env:LLM_PROVIDER = "deepseek"
+$env:LLM_MODEL = "deepseek-v4-flash"
+$env:DEEPSEEK_API_KEY = "<local-secret>"
+$paperId = "replace-with-a-persisted-paper-uuid"
+D:\Tools\uv\uv.exe run --frozen --python 3.13.13 paper-harness analyze-papers `
+  --paper-id $paperId `
+  --analysis-scope full_text
+```
+
+Choose `abstract_only` before execution to analyze only the persisted abstract;
+that mode does not call or require GROBID but still requires DeepSeek. A failed
+full-text parse never changes to abstract-only analysis.
 
 ## Deployment
 
-Deployment requires an explicitly selected GCP project and defaults to region
-`asia-southeast1` (Singapore). Terraform is foundation-first and refuses any
-plan containing delete or replacement actions.
+Deployment uses the existing GCP project and defaults to `asia-southeast1`.
+Terraform remains foundation-first and the deployment script rejects delete or
+replacement plans. The web service uses direct Cloud Run IAP. The optional M2
+GROBID service has minimum instances zero, maximum instances one, concurrency
+one, no `allUsers` binding, and only the Daily service account receives
+`roles/run.invoker`. Daily obtains an ephemeral identity token for the GROBID
+service URL; no VPC connector, NAT gateway, load balancer, or fixed-cost runtime
+resource is introduced.
 
-Create and inspect a non-destructive foundation plan:
+`deploy_runtime_resources=true` requires immutable Web/API and Daily image
+digests plus a fixed `DATABASE_URL` secret version. M2 additionally requires
+`deploy_analysis_resources=true`, an immutable mirrored GROBID wrapper digest,
+and a fixed DeepSeek secret version. Secret values never enter Terraform state.
 
-```powershell
-$owner = (gcloud auth list --filter=status:ACTIVE "--format=value(account)").Trim()
-$projectId = (gcloud config get-value project).Trim()
-if ([string]::IsNullOrWhiteSpace($projectId) -or $projectId -eq "(unset)") {
-  throw "Select a GCP project before deployment."
-}
-powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 `
-  -ProjectId $projectId `
-  -OwnerEmail $owner `
-  -Region asia-southeast1
-```
-
-After reviewing the saved plan, `-Apply` creates only the foundation first. It
-will not build or push application images until `paper-harness-database-url`
-has an enabled Secret Manager version. Runtime deployment then uses immutable
-image digests and a fixed numeric Secret version.
-
-The M1 plan was verified as `19 add, 0 change, 0 destroy`. Foundation apply was
-attempted, but this workstation could not complete a TCP connection to Google
-API endpoints; the apply was stopped before new foundation resources were
-created. Post-attempt checks found only the pre-existing Logging API among the
-target APIs, with no `paper-harness` service account, repository, or Secret.
-Independently, a production
-`DATABASE_URL` Secret version has not been supplied, so Cloud Run, the Daily
-Job, and Scheduler are not deployed. See `docs/STATUS.md` for the exact current
-state.
-
-Terraform state is local and ignored in M1. Preserve it on this workstation;
-do not commit or manually edit it. A reviewed remote-state strategy is required
-before treating this as a multi-operator production deployment.
+No foundation or runtime resource is currently deployed. The earlier foundation
+apply could not establish TCP 443 connections to Google API endpoints and stopped
+before resource creation. Production deployment is also blocked on an
+owner-supplied PostgreSQL `DATABASE_URL` and DeepSeek API key in Secret Manager.
 
 ## Configuration and required secrets
 
-Never commit, print, or place real secret values in Terraform variables or
-state.
-
-| Name | Status | Contract |
-| --- | --- | --- |
-| `DATABASE_URL` | Required for persistence and deployment | PostgreSQL 15+ connection with pgvector; local value may come from `.env`, production value must be an enabled Secret Manager version |
-| `DEEPSEEK_API_KEY` | M2, not yet used | Required for DeepSeek analysis; no mock or provider fallback |
-| `GROBID_URL` | M2, not yet used | Authenticated private GROBID endpoint |
-| `SEMANTIC_SCHOLAR_API_KEY` | M3, not yet used | Required for production historical/related-work search |
-| `LLM_PROVIDER` | M2 configuration | Fixed to `deepseek` |
-| `LLM_MODEL` | M2 configuration | Fixed initially to `deepseek-v4-flash` |
+| Name | Current contract |
+| --- | --- |
+| `DATABASE_URL` | Required for persistence; production must use PostgreSQL 15+ with pgvector through a fixed Secret Manager version |
+| `DEEPSEEK_API_KEY` | Required only for structured analysis; no mock, anonymous access, or alternate model |
+| `LLM_PROVIDER` | Must be `deepseek` for M2 |
+| `LLM_MODEL` | Must be `deepseek-v4-flash` for M2 |
+| `GROBID_URL` | Required only for `full_text`; local URL may be HTTP, production must be the private HTTPS Cloud Run URI |
+| `GROBID_AUTH_MODE` | `none` for local development; production requires `google_identity` |
+| `GROBID_AUDIENCE` | Required with Google identity and equal to the private GROBID service audience |
+| `SEMANTIC_SCHOLAR_API_KEY` | Reserved for authenticated M3 scholarly search; unused by M2 |
 
 The read API starts without DeepSeek, GROBID, or Semantic Scholar credentials.
-An operation that requires a missing dependency fails explicitly; it never
-creates mock output or switches providers.
+Only the operation that needs a dependency validates it, and missing configuration
+fails explicitly.
 
 ## Current limitations
 
-- M1 stores and presents arXiv metadata only; relevance scoring, PDF download,
-  GROBID parsing, DeepSeek analysis, evidence, and partial publication begin in
-  M2.
-- Historical Semantic Scholar/PaSa search, SPECTER2 retrieval, comparisons,
-  graph, lineage, trends, and reports are not implemented.
-- M2 is deliberately deferred at the owner's request.
-- No production database or enabled production secret version is configured.
-- GCP foundation resources and application runtimes are not deployed because
-  the attempted apply could not establish the required Google API TCP
-  connection; no unauthenticated endpoint was created.
-- Terraform uses ignored local state in M1.
-- Full PDFs and model weights are never stored in Git.
+- Production PostgreSQL and DeepSeek Secret Manager versions are not supplied,
+  and Google API connectivity currently prevents Terraform apply.
+- The strict DeepSeek adapter is fixture-tested but no live DeepSeek analysis has
+  been run because no key was supplied.
+- Daily ingestion and selected-paper analysis are separate operator/Job commands;
+  automatic discovery-to-selection-to-analysis orchestration is not yet wired.
+- The CRF GROBID image is CPU-bounded and smaller than the full deep-learning
+  image, but its lower extraction accuracy is an explicit provenance limitation.
+- M3 Semantic Scholar/PaSa/SPECTER2 comparison and M4 graph, lineage, trends, and
+  complete daily/historical report views are not implemented.
+- Terraform state is local and ignored; a reviewed remote-state strategy is
+  required before multi-operator production use.
+- Full PDFs, complete prompts/responses, model weights, secrets, and credentials
+  are never stored in Git.

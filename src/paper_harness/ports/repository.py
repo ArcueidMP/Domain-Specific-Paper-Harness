@@ -7,21 +7,42 @@ from datetime import date, datetime
 from typing import Protocol
 from uuid import UUID
 
-from paper_harness.application.read_models import PaperDetail, RunDetail, StoredTopic
-from paper_harness.domain.models import DailyRun, IngestionCursor, Paper, TopicConfig
+from paper_harness.application.read_models import (
+    AnalysisDetail,
+    AnalysisTarget,
+    PaperDetail,
+    RunDetail,
+    StoredTopic,
+)
+from paper_harness.domain.analysis import AnalysisBundle, AnalysisScope, Evidence, ParsedPaper
+from paper_harness.domain.models import DailyRun, IngestionCursor, Paper, PaperStage, TopicConfig
 from paper_harness.ports.arxiv import ArxivPaperRecord
 
 
 class RepositoryError(RuntimeError):
     """Base persistence-boundary failure."""
 
+    error_code = "REPOSITORY_FAILURE"
+    retryable = False
+
 
 class RepositoryUnavailableError(RepositoryError):
     """The configured PostgreSQL database is unavailable."""
 
+    error_code = "REPOSITORY_UNAVAILABLE"
+    retryable = True
+
+
+class RepositoryIntegrityError(RepositoryError):
+    """PostgreSQL rejected a validated write without exposing SQL parameters."""
+
+    error_code = "PERSISTENCE_INTEGRITY_FAILED"
+
 
 class MigrationIncompatibleError(RepositoryError):
     """The database migration revision differs from the application head."""
+
+    error_code = "MIGRATION_INCOMPATIBLE"
 
 
 class RepositoryPort(Protocol):
@@ -80,3 +101,89 @@ class RepositoryPort(Protocol):
     ) -> tuple[tuple[DailyRun, ...], int]: ...
 
     def get_latest_run(self, *, topic_slug: str | None) -> RunDetail | None: ...
+
+    def get_analysis_targets(
+        self, topic_id: UUID, paper_ids: tuple[UUID, ...]
+    ) -> tuple[AnalysisTarget, ...]: ...
+
+    def get_analysis_run_for_date(self, topic_id: UUID, logical_date: date) -> DailyRun | None: ...
+
+    def start_analysis_run(
+        self,
+        *,
+        topic_id: UUID,
+        logical_date: date,
+        analysis_scope: AnalysisScope,
+        started_at: datetime,
+        targets: tuple[AnalysisTarget, ...],
+    ) -> DailyRun: ...
+
+    def advance_analysis_item(
+        self,
+        *,
+        run_id: UUID,
+        paper_version_id: UUID,
+        expected_stage: PaperStage,
+        next_stage: PaperStage,
+        updated_at: datetime,
+    ) -> None: ...
+
+    def persist_parsed_paper(
+        self,
+        *,
+        run_id: UUID,
+        parsed_paper: ParsedPaper,
+        expected_stage: PaperStage,
+        updated_at: datetime,
+    ) -> ParsedPaper: ...
+
+    def persist_analysis_bundle(
+        self,
+        *,
+        run_id: UUID,
+        bundle: AnalysisBundle,
+        expected_stage: PaperStage,
+        updated_at: datetime,
+    ) -> None: ...
+
+    def fail_analysis_item(
+        self,
+        *,
+        run_id: UUID,
+        paper_version_id: UUID,
+        failed_stage: PaperStage,
+        error_code: str,
+        retryable: bool,
+        error_detail: str,
+        updated_at: datetime,
+    ) -> None: ...
+
+    def finalize_analysis_run(self, run_id: UUID, *, completed_at: datetime) -> DailyRun: ...
+
+    def fail_analysis_run(
+        self,
+        run_id: UUID,
+        *,
+        completed_at: datetime,
+        failed_stage: PaperStage,
+        error_code: str,
+        retryable: bool,
+        error_detail: str,
+    ) -> DailyRun: ...
+
+    def get_paper_analysis(
+        self,
+        paper_id: UUID,
+        *,
+        paper_version_id: UUID | None,
+        analysis_scope: AnalysisScope | None = None,
+    ) -> AnalysisDetail | None: ...
+
+    def list_paper_evidence(
+        self,
+        paper_id: UUID,
+        *,
+        analysis_id: UUID,
+        paper_version_id: UUID | None,
+        analysis_scope: AnalysisScope | None = None,
+    ) -> tuple[Evidence, ...] | None: ...

@@ -21,3 +21,13 @@ output "daily_job_name" {
   description = "Daily Cloud Run Job name, or null before runtime deployment."
   value       = var.deploy_runtime_resources ? google_cloud_run_v2_job.daily[0].name : null
 }
+
+output "grobid_service_uri" {
+  description = "IAM-private GROBID service URI, or null when M2 analysis resources are disabled."
+  value       = var.deploy_analysis_resources ? google_cloud_run_v2_service.grobid[0].uri : null
+}
+
+output "grobid_service_name" {
+  description = "IAM-private GROBID Cloud Run service name, or null when disabled."
+  value       = var.deploy_analysis_resources ? google_cloud_run_v2_service.grobid[0].name : null
+}

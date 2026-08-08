@@ -10,7 +10,7 @@ from uuid import UUID
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from paper_harness.domain.models import TopicConfig
+from paper_harness.domain.models import MAX_REPRESENTATIVE_FULL_TEXT_COUNT, TopicConfig
 
 _CATEGORY = re.compile(r"^[a-z-]+(?:\.[A-Z]{2})?$")
 
@@ -62,7 +62,7 @@ class TopicDocument(BaseModel):
     description: str = Field(min_length=1, max_length=2000)
     arxiv: ArxivTopicDocument
     discovery: DiscoveryDocument
-    representative_full_text_count: int = Field(ge=1, le=5000)
+    representative_full_text_count: int = Field(ge=1, le=MAX_REPRESENTATIVE_FULL_TEXT_COUNT)
 
     def to_domain(self) -> TopicConfig:
         return TopicConfig(

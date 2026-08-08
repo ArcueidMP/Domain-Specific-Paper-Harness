@@ -46,3 +46,26 @@ def test_topic_document_rejects_query_syntax_injection() -> None:
                 "representative_full_text_count": 10,
             }
         )
+
+
+def test_topic_document_rejects_unbounded_full_text_selection() -> None:
+    with pytest.raises(ValidationError):
+        TopicDocument.model_validate(
+            {
+                "schema_version": 1,
+                "topic_id": "4b7db6d4-349c-5c06-bc41-f84091580fcb",
+                "slug": "test",
+                "name": "Test",
+                "description": "Test topic",
+                "arxiv": {
+                    "categories": ["cs.AI"],
+                    "include_terms": ["LLM agent"],
+                },
+                "discovery": {
+                    "overlap_hours": 48,
+                    "initial_lookback_days": 7,
+                    "max_results": 100,
+                },
+                "representative_full_text_count": 201,
+            }
+        )

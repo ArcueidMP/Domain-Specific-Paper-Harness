@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import type { PaperSummary } from "../api/client";
 import { formatDate } from "../lib/format";
 
@@ -25,14 +27,19 @@ export function PaperCard({ paper, compact = false }: PaperCardProps) {
         <span className="arxiv-id">arXiv:{paper.canonical_arxiv_id}v{paper.current_version}</span>
         <span className="paper-category">{paper.primary_category}</span>
       </div>
-      <h3>{paper.title}</h3>
+      <h3>
+        <Link to={`/papers/${paper.id}`}>{paper.title}</Link>
+      </h3>
       <p className="paper-authors">{formatAuthors(paper.authors)}</p>
       {!compact ? <p className="paper-abstract">{paper.abstract}</p> : null}
       <div className="paper-card-footer">
         <span>Updated {formatDate(paper.latest_updated_at)}</span>
-        <a href={paper.pdf_url} target="_blank" rel="noreferrer">
-          Open PDF <span aria-hidden="true">↗</span>
-        </a>
+        <span className="paper-card-actions">
+          <Link to={`/papers/${paper.id}`}>View analysis</Link>
+          <a href={paper.pdf_url} target="_blank" rel="noreferrer">
+            Open PDF <span aria-hidden="true">↗</span>
+          </a>
+        </span>
       </div>
     </article>
   );

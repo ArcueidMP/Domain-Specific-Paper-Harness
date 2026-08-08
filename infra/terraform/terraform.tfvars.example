@@ -4,7 +4,15 @@ owner_email = "owner@example.com"
 # Foundation-only is the safe default. Runtime deployment additionally requires
 # immutable image digests and an enabled DATABASE_URL secret version.
 deploy_runtime_resources = false
+deploy_analysis_resources = false
 
 # web_api_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/web-api@sha256:..."
 # daily_image   = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/daily@sha256:..."
 # database_secret_version = "1"
+
+# M2 analysis remains opt-in so the M1 runtime can deploy without a DeepSeek key.
+# The upstream GROBID 0.9.0-crf manifest is pinned in Dockerfile.grobid. Before
+# enabling M2, mirror the first-party wrapper and use its Artifact Registry digest.
+# deploy_analysis_resources = true
+# grobid_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/grobid@sha256:..."
+# deepseek_secret_version = "1"
