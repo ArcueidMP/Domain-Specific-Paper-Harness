@@ -57,8 +57,10 @@ not started, and no production resource has been deployed.
 
 - Production deployment requires an owner-supplied PostgreSQL 15+ pgvector
   `DATABASE_URL` in an enabled, fixed Secret Manager version.
-- Live M2 analysis and analysis-resource deployment require an owner-supplied
-  DeepSeek API key in an enabled, fixed Secret Manager version.
+- Live DeepSeek smoke verification passed with `deepseek-v4-flash`.
+- The response passed JSON, Pydantic, domain, provenance, and claim-evidence validation.
+- The smoke test performed one request and did not write to the database.
+- Production deployment will obtain `DEEPSEEK_API_KEY` from Secret Manager; the local value remains only in the ignored `.env`.
 - Terraform apply and GCP IAM-private service-invocation verification require
   this workstation to establish TCP 443 connections to Google API endpoints.
 
