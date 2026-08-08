@@ -214,6 +214,9 @@ if (-not $SkipImageBuild) {
     Invoke-Checked "Daily Job image" {
         & $Docker build --file infra/docker/Dockerfile.daily --tag paper-harness-daily:verify .
     }
+    Invoke-Checked "Pinned GROBID wrapper image" {
+        & $Docker build --file infra/docker/Dockerfile.grobid --tag paper-harness-grobid:verify .
+    }
 }
 
 Write-Host "All canonical verification checks passed."

@@ -53,6 +53,10 @@ describe("PapersPage", () => {
 
     expect(await screen.findByText(firstPaper.title)).toBeInTheDocument();
     expect(screen.getByText(secondPaper.title)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: firstPaper.title })).toHaveAttribute(
+      "href",
+      `/papers/${firstPaper.id}`,
+    );
 
     await user.type(screen.getByRole("searchbox"), "Ada North");
 

@@ -38,6 +38,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/papers/{paper_id}/analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Paper Analysis */
+        get: operations["getPaperAnalysis"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/papers/{paper_id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Paper Evidence */
+        get: operations["listPaperEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs": {
         parameters: {
             query?: never;
@@ -127,6 +161,145 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AnalysisClaimResponse */
+        AnalysisClaimResponse: {
+            /**
+             * Analysis Id
+             * Format: uuid
+             */
+            analysis_id: string;
+            claim_type: components["schemas"]["ClaimType"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Key */
+            key: string;
+            /** Model Version */
+            model_version: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Paper Version Id
+             * Format: uuid
+             */
+            paper_version_id: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provider */
+            provider: string;
+            /** Schema Version */
+            schema_version: number;
+            /** Source */
+            source: string;
+            /** Text */
+            text: string;
+            verification_status: components["schemas"]["VerificationStatus"];
+        };
+        /**
+         * AnalysisScope
+         * @enum {string}
+         */
+        AnalysisScope: "ABSTRACT_ONLY" | "FULL_TEXT";
+        /** ApiErrorDetail */
+        ApiErrorDetail: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+        };
+        /** ApiErrorResponse */
+        ApiErrorResponse: {
+            detail: components["schemas"]["ApiErrorDetail"];
+        };
+        /**
+         * ClaimType
+         * @enum {string}
+         */
+        ClaimType: "RESEARCH_PROBLEM" | "METHOD" | "CONTRIBUTION" | "RESULT" | "LIMITATION";
+        /** EvidenceListResponse */
+        EvidenceListResponse: {
+            /** Items */
+            items: components["schemas"]["EvidenceResponse"][];
+            /** Total */
+            total: number;
+        };
+        /** EvidenceResponse */
+        EvidenceResponse: {
+            /**
+             * Analysis Id
+             * Format: uuid
+             */
+            analysis_id: string;
+            /** Coordinates */
+            coordinates: components["schemas"]["PageCoordinatesResponse"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            evidence_type: components["schemas"]["EvidenceType"];
+            /** Excerpt */
+            excerpt: string;
+            /** Extraction Source */
+            extraction_source: string;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Key */
+            key: string;
+            /** Model Version */
+            model_version: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Paper Version Id
+             * Format: uuid
+             */
+            paper_version_id: string;
+            /** Passage Id */
+            passage_id: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provider */
+            provider: string;
+            /** Schema Version */
+            schema_version: number;
+            /** Section */
+            section: string;
+            /** Supported Claim Ids */
+            supported_claim_ids: string[];
+            verification_status: components["schemas"]["VerificationStatus"];
+        };
+        /**
+         * EvidenceType
+         * @enum {string}
+         */
+        EvidenceType: "SUPPORTS" | "QUALIFIES" | "CONTRADICTS";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -140,6 +313,97 @@ export interface components {
              * @constant
              */
             status: "alive";
+        };
+        /** ModelUsageResponse */
+        ModelUsageResponse: {
+            /** Call Count */
+            call_count: number;
+            /** Completion Tokens */
+            completion_tokens: number;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Estimated Cost Usd */
+            estimated_cost_usd: string | null;
+            /** Prompt Tokens */
+            prompt_tokens: number;
+            /** Total Tokens */
+            total_tokens: number;
+        };
+        /** PageCoordinatesResponse */
+        PageCoordinatesResponse: {
+            /** Height */
+            height: number;
+            /** Page */
+            page: number;
+            /** Width */
+            width: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /** PaperAnalysisResponse */
+        PaperAnalysisResponse: {
+            analysis_scope: components["schemas"]["AnalysisScope"];
+            /** Arxiv Version */
+            arxiv_version: number;
+            /** Claims */
+            claims: components["schemas"]["AnalysisClaimResponse"][];
+            /** Configured Model */
+            configured_model: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Key Contributions */
+            key_contributions: string[];
+            /** Limitations */
+            limitations: string[];
+            /** Method Summary */
+            method_summary: string;
+            /** Model Version */
+            model_version: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Paper Version Id
+             * Format: uuid
+             */
+            paper_version_id: string;
+            /** Parsed Paper Id */
+            parsed_paper_id: string | null;
+            /** Parser Name */
+            parser_name: string | null;
+            /** Parser Version */
+            parser_version: string | null;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provider */
+            provider: string;
+            /** Research Problem */
+            research_problem: string;
+            /** Schema Version */
+            schema_version: number;
+            /** Source */
+            source: string;
+            /** Summary */
+            summary: string;
+            usage: components["schemas"]["ModelUsageResponse"];
+            verification_status: components["schemas"]["VerificationStatus"];
         };
         /** PaperDetailResponse */
         PaperDetailResponse: {
@@ -314,25 +578,103 @@ export interface components {
              */
             status: "ready";
         };
-        /** RunDetailResponse */
-        RunDetailResponse: {
-            /** Completed At */
-            completed_at: string | null;
+        /** ReportFailureResponse */
+        ReportFailureResponse: {
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+            /** Error Code */
+            error_code: string;
+            /** Error Detail */
+            error_detail: string;
+            failed_stage: components["schemas"]["PaperStage"];
             /**
-             * Cursor From
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Paper Version Id
+             * Format: uuid
+             */
+            paper_version_id: string;
+            /**
+             * Report Id
+             * Format: uuid
+             */
+            report_id: string;
+            /** Retryable */
+            retryable: boolean;
+            /** Schema Version */
+            schema_version: number;
+        };
+        /** ReportResponse */
+        ReportResponse: {
+            /**
+             * Created At
              * Format: date-time
              */
-            cursor_from: string;
+            created_at: string;
+            /** Failures */
+            failures: components["schemas"]["ReportFailureResponse"][];
             /**
-             * Cursor To
+             * Generated At
              * Format: date-time
              */
-            cursor_to: string;
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Logical Date
+             * Format: date
+             */
+            logical_date: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Schema Version */
+            schema_version: number;
+            /** Source */
+            source: string;
+            status: components["schemas"]["RunStatus"];
+            /** Summary */
+            summary: string;
+            /** Title */
+            title: string;
+            /**
+             * Topic Id
+             * Format: uuid
+             */
+            topic_id: string;
+        };
+        /** RunDetailResponse */
+        RunDetailResponse: {
+            analysis_scope: components["schemas"]["AnalysisScope"] | null;
+            /** Completed At */
+            completed_at: string | null;
+            /** Completed Count */
+            completed_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Cursor From */
+            cursor_from: string | null;
+            /** Cursor To */
+            cursor_to: string | null;
             /** Discovered Count */
             discovered_count: number;
             /** Error Code */
@@ -356,8 +698,11 @@ export interface components {
             /** Normalized Count */
             normalized_count: number;
             operation: components["schemas"]["RunOperation"];
+            report: components["schemas"]["ReportResponse"] | null;
             /** Schema Version */
             schema_version: number;
+            /** Selected Count */
+            selected_count: number;
             /**
              * Started At
              * Format: date-time
@@ -372,6 +717,8 @@ export interface components {
         };
         /** RunItemResponse */
         RunItemResponse: {
+            /** Canonical Arxiv Id */
+            canonical_arxiv_id: string;
             /**
              * Created At
              * Format: date-time
@@ -392,6 +739,8 @@ export interface components {
              * Format: uuid
              */
             paper_id: string;
+            /** Paper Title */
+            paper_title: string;
             /**
              * Paper Version Id
              * Format: uuid
@@ -434,7 +783,7 @@ export interface components {
          * RunOperation
          * @enum {string}
          */
-        RunOperation: "ARXIV_INGESTION";
+        RunOperation: "ARXIV_INGESTION" | "STRUCTURED_ANALYSIS";
         /**
          * RunStatus
          * @enum {string}
@@ -442,23 +791,20 @@ export interface components {
         RunStatus: "RUNNING" | "COMPLETE" | "PARTIAL" | "FAILED";
         /** RunSummary */
         RunSummary: {
+            analysis_scope: components["schemas"]["AnalysisScope"] | null;
             /** Completed At */
             completed_at: string | null;
+            /** Completed Count */
+            completed_count: number;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
-            /**
-             * Cursor From
-             * Format: date-time
-             */
-            cursor_from: string;
-            /**
-             * Cursor To
-             * Format: date-time
-             */
-            cursor_to: string;
+            /** Cursor From */
+            cursor_from: string | null;
+            /** Cursor To */
+            cursor_to: string | null;
             /** Discovered Count */
             discovered_count: number;
             /** Error Code */
@@ -482,6 +828,8 @@ export interface components {
             operation: components["schemas"]["RunOperation"];
             /** Schema Version */
             schema_version: number;
+            /** Selected Count */
+            selected_count: number;
             /**
              * Started At
              * Format: date-time
@@ -571,6 +919,11 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * VerificationStatus
+         * @enum {string}
+         */
+        VerificationStatus: "UNVERIFIED" | "HUMAN_VERIFIED" | "REJECTED";
     };
     responses: never;
     parameters: never;
@@ -640,6 +993,111 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getPaperAnalysis: {
+        parameters: {
+            query?: {
+                paper_version_id?: string | null;
+                scope?: components["schemas"]["AnalysisScope"] | null;
+            };
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperAnalysisResponse"];
+                };
+            };
+            /** @description Paper or analysis not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Analysis storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    listPaperEvidence: {
+        parameters: {
+            query: {
+                analysis_id: string;
+                paper_version_id?: string | null;
+                scope?: components["schemas"]["AnalysisScope"] | null;
+            };
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceListResponse"];
+                };
+            };
+            /** @description Paper or analysis not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Evidence storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };

@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import type { LatestRun } from "../api/client";
 import { formatDateTime } from "../lib/format";
 import { RunStatusBadge } from "./RunStatusBadge";
@@ -7,12 +9,26 @@ type LatestRunPanelProps = {
 };
 
 export function LatestRunPanel({ run }: LatestRunPanelProps) {
+  type DisplayableRunItem = LatestRun["items"][number] & {
+    canonical_arxiv_id?: string | null;
+    paper_title?: string | null;
+  };
+
+  const failedItems = run.items.filter(
+    (item) => item.status === "FAILED" || item.failed_stage !== null,
+  ) as DisplayableRunItem[];
+
   return (
     <article className="run-panel card">
       <div className="run-panel-heading">
         <div>
           <p className="eyebrow">Latest daily run</p>
           <h2 className="panel-title">{run.logical_date}</h2>
+          {run.analysis_scope ? (
+            <span className={`scope-badge ${run.analysis_scope.toLocaleLowerCase()}`}>
+              {run.analysis_scope === "FULL_TEXT" ? "Full text analysis" : "Abstract-only analysis"}
+            </span>
+          ) : null}
         </div>
         <RunStatusBadge status={run.status} />
       </div>
@@ -40,6 +56,57 @@ export function LatestRunPanel({ run }: LatestRunPanelProps) {
           <strong>{formatDateTime(run.completed_at)}</strong>
         </div>
       </div>
+      {run.status === "PARTIAL" ? (
+        <div className="partial-run-banner" role="alert">
+          <strong>Partial daily run</strong>
+          <span>
+            {failedItems.length > 0
+              ? `${failedItems.length} selected paper${failedItems.length === 1 ? "" : "s"} did not complete every required stage.`
+              : "One or more selected papers did not complete every required stage."}
+          </span>
+        </div>
+      ) : null}
+      {failedItems.length > 0 ? (
+        <section className="run-item-failures" aria-labelledby={`run-failures-${run.id}`}>
+          <h3 id={`run-failures-${run.id}`}>Item failures</h3>
+          <ul>
+            {failedItems.map((item) => {
+              const identifier = item.canonical_arxiv_id
+                ? `arXiv:${item.canonical_arxiv_id}`
+                : item.paper_id;
+              return (
+                <li key={item.id}>
+                  <Link to={`/papers/${item.paper_id}`}>
+                    <strong>{item.paper_title ?? identifier}</strong>
+                    {item.paper_title ? <span>{identifier}</span> : null}
+                  </Link>
+                  <dl>
+                    <div>
+                      <dt>Failed stage</dt>
+                      <dd>{item.failed_stage?.replaceAll("_", " ") ?? "Not recorded"}</dd>
+                    </div>
+                    <div>
+                      <dt>Error code</dt>
+                      <dd>{item.error_code ?? "Not recorded"}</dd>
+                    </div>
+                    <div>
+                      <dt>Retryable</dt>
+                      <dd>
+                        {item.retryable === null
+                          ? "Not recorded"
+                          : item.retryable
+                            ? "Yes"
+                            : "No"}
+                      </dd>
+                    </div>
+                  </dl>
+                  {item.error_detail ? <p>{item.error_detail}</p> : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
       {run.error_code ? (
         <div className="run-warning" role="alert">
           <strong>{run.error_code}</strong>

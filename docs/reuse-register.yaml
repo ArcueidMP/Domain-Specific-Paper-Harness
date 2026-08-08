@@ -15,10 +15,63 @@ entries:
       - Application code owns cursor overlap, stable identity, versioning, transactions, and idempotency.
       - Adapter retry count and delay remain explicit, bounded, and mapped to domain errors.
     python_compatibility: Upstream declares Python 3.10 or newer; repository verification on exact CPython 3.13.13 is required before M1 completion.
+  - project: GROBID
+    upstream: https://github.com/grobidOrg/grobid
+    revision: "0.9.0"
+    release_commit: "b2251cb"
+    license: Apache-2.0
+    integration_mode: pinned-external-container-runtime
+    source_copied: false
+    copied_files: []
+    local_changes: A first-party wrapper Dockerfile adds provenance labels only; no upstream source or model files are copied or modified.
+    reason: Sole scientific PDF-to-TEI parser for explicitly selected full-text analysis.
+    runtime:
+      upstream_image: grobid/grobid:0.9.0-crf@sha256:24ba90eb1c959f65d812bcdb2cf79c677fa5fd7b95235de616b8bc9fa1317849
+      flavor: CRF-only CPU image
+      service_port: 8070
+      health_endpoint: /api/health
+      version_endpoint: /api/version
+      digest_verification:
+        status: verified
+        checked_at: "2026-08-08"
+        command: docker pull grobid/grobid:0.9.0-crf
+        manifest_digest: sha256:24ba90eb1c959f65d812bcdb2cf79c677fa5fd7b95235de616b8bc9fa1317849
+        verification: Docker pull and image inspection returned the same repository digest.
+      local_smoke_test:
+        status: passed
+        checked_at: "2026-08-08"
+        version_response: "version 0.9.0, revision 0.9.0"
+        health_response: initialized and ready with 12 CRF models loaded and no model failures
+        hardening: Read-only root filesystem, bounded CPU, memory and process count, dropped capabilities, no-new-privileges, zero core-dump ulimit, init, and writable tmpfs paths remained healthy.
+    update_strategy: Verify the release tag, full source revision, license, container manifest digest, image contents, REST contract, and local fixture behavior before changing the pin.
+    constraints:
+      - The CRF image is selected for bounded CPU-only runtime size and cost; its lower extraction accuracy than the full deep-learning image must remain visible in provenance.
+      - Full-text requests explicitly disable header, citation, and funder consolidation so GROBID cannot call Crossref or biblio-glutton.
+      - TEI remains the source representation; no alternate parser or lossy client converter is permitted.
+      - Cloud deployment accepts only an immutable Artifact Registry digest produced after mirroring the verified upstream image through the first-party wrapper.
+    python_compatibility: GROBID is an isolated Java service and is exempt from the first-party CPython 3.13.13 runtime constraint.
 audits:
   paperqa2:
-    status: pending-m2
+    status: reviewed-incompatible-no-code-reuse
+    upstream: https://github.com/Future-House/paper-qa
+    revision: "v2026.03.18"
+    commit: ac4ff91ad703e6816cb620ea579a98ca0c42c36f
+    license: Apache-2.0
     source_copied: false
+    reviewed_at: "2026-08-08"
+    source_and_tests:
+      - Reviewed the package source, readers, retrieval/evidence path, settings, metadata clients, and test workflow at the pinned revision.
+      - Upstream CI exercises source tests on Python 3.11 and 3.13 and package tests on Python 3.12 and 3.13.
+    dependency_graph: The base package pulls fhaviary with LLM support, fhlmi, LiteLLM, OpenAI, paper-qa-pypdf, Tantivy, tiktoken, tokenizers, Redis client support, and related provider and model dependencies that are not required by M2.
+    python_compatibility: Upstream declares Python 3.11 or newer and Python 3.13 support. Its locked dependency graph resolved with exact local CPython 3.13.13, but the package was not installed or runtime-tested because the integration was rejected on architecture and policy grounds.
+    decision: Do not install PaperQA2 and do not copy any PaperQA2 source. Keep deterministic section-aware passage mapping, evidence grounding, and context assembly as ordinary typed project-owned functions; there is no external evidence component requiring an EvidenceEnginePort in M2.
+    reasons:
+      - The default parsing path uses PyPDF instead of the required sole GROBID parser.
+      - Default metadata and model behavior includes Crossref, Semantic Scholar, OpenAI models and embeddings, with optional OpenAlex and Unpaywall providers.
+      - The high-level Docs path owns a separate file index, MD5 document identities, persistence, and retrieval policy instead of the repository PostgreSQL source of truth.
+      - The JSON helper repairs and coerces malformed model output, and the evidence path retries or drops invalid contexts, conflicting with strict M2 validation and failure semantics.
+      - The available PDF chunker uses overlapping character windows over page text and loses GROBID section and coordinate provenance, so selective vendoring would add notice and update burden without a useful boundary-preserving capability.
+    update_strategy: Re-audit an exact future revision only if it offers a provider-free, parser-independent, strict-output lower-level module whose dependency graph and provenance model fit the repository boundaries.
   scholar_qa:
     status: pending-m3
     source_copied: false

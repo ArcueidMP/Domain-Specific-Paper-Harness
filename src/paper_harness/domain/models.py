@@ -7,8 +7,11 @@ from datetime import date, datetime
 from enum import StrEnum
 from uuid import UUID
 
+from paper_harness.domain.analysis import AnalysisScope
 from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.domain.identity import normalize_author_name, validate_canonical_arxiv_id
+
+MAX_REPRESENTATIVE_FULL_TEXT_COUNT = 200
 
 
 class PaperStage(StrEnum):
@@ -42,6 +45,7 @@ class RunItemStatus(StrEnum):
 
 class RunOperation(StrEnum):
     ARXIV_INGESTION = "ARXIV_INGESTION"
+    STRUCTURED_ANALYSIS = "STRUCTURED_ANALYSIS"
 
 
 def _require_aware(value: datetime, name: str) -> None:
@@ -73,6 +77,8 @@ class TopicConfig:
             raise DomainInvariantError("discovery overlap and initial lookback must be positive")
         if self.max_results < 1 or self.representative_full_text_count < 1:
             raise DomainInvariantError("topic result limits must be positive")
+        if self.representative_full_text_count > MAX_REPRESENTATIVE_FULL_TEXT_COUNT:
+            raise DomainInvariantError("representative full-text count exceeds the run bound")
         if self.schema_version < 1:
             raise DomainInvariantError("schema_version must be positive")
 
@@ -189,13 +195,16 @@ class DailyRun:
     topic_id: UUID
     logical_date: date
     operation: RunOperation
+    analysis_scope: AnalysisScope | None
     status: RunStatus
     started_at: datetime
     completed_at: datetime | None
-    cursor_from: datetime
-    cursor_to: datetime
+    cursor_from: datetime | None
+    cursor_to: datetime | None
     discovered_count: int
     normalized_count: int
+    selected_count: int
+    completed_count: int
     failed_count: int
     error_code: str | None
     error_detail: str | None
@@ -204,13 +213,45 @@ class DailyRun:
 
     def __post_init__(self) -> None:
         _require_aware(self.started_at, "started_at")
-        _require_aware(self.cursor_from, "cursor_from")
-        _require_aware(self.cursor_to, "cursor_to")
+        if self.cursor_from is not None:
+            _require_aware(self.cursor_from, "cursor_from")
+        if self.cursor_to is not None:
+            _require_aware(self.cursor_to, "cursor_to")
         _require_aware(self.created_at, "created_at")
         if self.completed_at is not None:
             _require_aware(self.completed_at, "completed_at")
-        if min(self.discovered_count, self.normalized_count, self.failed_count) < 0:
+        if (
+            min(
+                self.discovered_count,
+                self.normalized_count,
+                self.selected_count,
+                self.completed_count,
+                self.failed_count,
+            )
+            < 0
+        ):
             raise DomainInvariantError("run counts cannot be negative")
+        if self.operation is RunOperation.ARXIV_INGESTION:
+            if self.analysis_scope is not None:
+                raise DomainInvariantError("arXiv ingestion run cannot carry an analysis scope")
+            if self.cursor_from is None or self.cursor_to is None:
+                raise DomainInvariantError("arXiv ingestion run requires a cursor window")
+            if self.cursor_from > self.cursor_to:
+                raise DomainInvariantError("run cursor window is reversed")
+            if self.selected_count or self.completed_count:
+                raise DomainInvariantError("ingestion run cannot carry analysis counts")
+        else:
+            if self.analysis_scope is None:
+                raise DomainInvariantError("structured analysis run requires a preselected scope")
+            if self.cursor_from is not None or self.cursor_to is not None:
+                raise DomainInvariantError("analysis run cannot carry an ingestion cursor window")
+        if self.completed_count > self.selected_count:
+            raise DomainInvariantError("completed count cannot exceed selected count")
+        if (
+            self.failed_count > self.selected_count
+            and self.operation is RunOperation.STRUCTURED_ANALYSIS
+        ):
+            raise DomainInvariantError("failed count cannot exceed selected count")
         if self.status is RunStatus.RUNNING and self.completed_at is not None:
             raise DomainInvariantError("a running run cannot be completed")
         if self.status is not RunStatus.RUNNING and self.completed_at is None:

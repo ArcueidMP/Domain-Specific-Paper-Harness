@@ -1,6 +1,298 @@
 {
   "components": {
     "schemas": {
+      "AnalysisClaimResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "claim_type": {
+            "$ref": "#/components/schemas/ClaimType"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_version_id": {
+            "format": "uuid",
+            "title": "Paper Version Id",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "analysis_id",
+          "paper_id",
+          "paper_version_id",
+          "key",
+          "claim_type",
+          "text",
+          "provider",
+          "model_version",
+          "prompt_version",
+          "generated_at",
+          "source",
+          "verification_status",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "AnalysisClaimResponse",
+        "type": "object"
+      },
+      "AnalysisScope": {
+        "enum": [
+          "ABSTRACT_ONLY",
+          "FULL_TEXT"
+        ],
+        "title": "AnalysisScope",
+        "type": "string"
+      },
+      "ApiErrorDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ApiErrorDetail",
+        "type": "object"
+      },
+      "ApiErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/ApiErrorDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ApiErrorResponse",
+        "type": "object"
+      },
+      "ClaimType": {
+        "enum": [
+          "RESEARCH_PROBLEM",
+          "METHOD",
+          "CONTRIBUTION",
+          "RESULT",
+          "LIMITATION"
+        ],
+        "title": "ClaimType",
+        "type": "string"
+      },
+      "EvidenceListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "EvidenceListResponse",
+        "type": "object"
+      },
+      "EvidenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "coordinates": {
+            "items": {
+              "$ref": "#/components/schemas/PageCoordinatesResponse"
+            },
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_type": {
+            "$ref": "#/components/schemas/EvidenceType"
+          },
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "extraction_source": {
+            "title": "Extraction Source",
+            "type": "string"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_version_id": {
+            "format": "uuid",
+            "title": "Paper Version Id",
+            "type": "string"
+          },
+          "passage_id": {
+            "title": "Passage Id",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "section": {
+            "title": "Section",
+            "type": "string"
+          },
+          "supported_claim_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Supported Claim Ids",
+            "type": "array"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "analysis_id",
+          "paper_id",
+          "paper_version_id",
+          "key",
+          "section",
+          "passage_id",
+          "coordinates",
+          "excerpt",
+          "evidence_type",
+          "supported_claim_ids",
+          "extraction_source",
+          "provider",
+          "model_version",
+          "prompt_version",
+          "generated_at",
+          "verification_status",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "EvidenceResponse",
+        "type": "object"
+      },
+      "EvidenceType": {
+        "enum": [
+          "SUPPORTS",
+          "QUALIFIES",
+          "CONTRADICTS"
+        ],
+        "title": "EvidenceType",
+        "type": "string"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -25,6 +317,261 @@
           }
         },
         "title": "LiveResponse",
+        "type": "object"
+      },
+      "ModelUsageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "call_count": {
+            "minimum": 1.0,
+            "title": "Call Count",
+            "type": "integer"
+          },
+          "completion_tokens": {
+            "minimum": 0.0,
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "duration_ms": {
+            "minimum": 0.0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "estimated_cost_usd": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Cost Usd"
+          },
+          "prompt_tokens": {
+            "minimum": 0.0,
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "minimum": 0.0,
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt_tokens",
+          "completion_tokens",
+          "total_tokens",
+          "call_count",
+          "duration_ms",
+          "estimated_cost_usd"
+        ],
+        "title": "ModelUsageResponse",
+        "type": "object"
+      },
+      "PageCoordinatesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "exclusiveMinimum": 0.0,
+            "title": "Height",
+            "type": "number"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "width": {
+            "exclusiveMinimum": 0.0,
+            "title": "Width",
+            "type": "number"
+          },
+          "x": {
+            "minimum": 0.0,
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "minimum": 0.0,
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "page",
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "title": "PageCoordinatesResponse",
+        "type": "object"
+      },
+      "PaperAnalysisResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_scope": {
+            "$ref": "#/components/schemas/AnalysisScope"
+          },
+          "arxiv_version": {
+            "minimum": 1.0,
+            "title": "Arxiv Version",
+            "type": "integer"
+          },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisClaimResponse"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "configured_model": {
+            "title": "Configured Model",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "key_contributions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Key Contributions",
+            "type": "array"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "method_summary": {
+            "title": "Method Summary",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_version_id": {
+            "format": "uuid",
+            "title": "Paper Version Id",
+            "type": "string"
+          },
+          "parsed_paper_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parsed Paper Id"
+          },
+          "parser_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Name"
+          },
+          "parser_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parser Version"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "research_problem": {
+            "title": "Research Problem",
+            "type": "string"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/ModelUsageResponse"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "paper_id",
+          "paper_version_id",
+          "arxiv_version",
+          "analysis_scope",
+          "parsed_paper_id",
+          "parser_name",
+          "parser_version",
+          "summary",
+          "research_problem",
+          "method_summary",
+          "key_contributions",
+          "limitations",
+          "provider",
+          "configured_model",
+          "model_version",
+          "prompt_version",
+          "generated_at",
+          "source",
+          "verification_status",
+          "usage",
+          "schema_version",
+          "created_at",
+          "claims"
+        ],
+        "title": "PaperAnalysisResponse",
         "type": "object"
       },
       "PaperDetailResponse": {
@@ -400,9 +947,161 @@
         "title": "ReadyResponse",
         "type": "object"
       },
+      "ReportFailureResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_code": {
+            "title": "Error Code",
+            "type": "string"
+          },
+          "error_detail": {
+            "title": "Error Detail",
+            "type": "string"
+          },
+          "failed_stage": {
+            "$ref": "#/components/schemas/PaperStage"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_version_id": {
+            "format": "uuid",
+            "title": "Paper Version Id",
+            "type": "string"
+          },
+          "report_id": {
+            "format": "uuid",
+            "title": "Report Id",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "report_id",
+          "paper_id",
+          "paper_version_id",
+          "failed_stage",
+          "error_code",
+          "retryable",
+          "error_detail",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "ReportFailureResponse",
+        "type": "object"
+      },
+      "ReportResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "failures": {
+            "items": {
+              "$ref": "#/components/schemas/ReportFailureResponse"
+            },
+            "title": "Failures",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "logical_date": {
+            "format": "date",
+            "title": "Logical Date",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topic_id": {
+            "format": "uuid",
+            "title": "Topic Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "topic_id",
+          "logical_date",
+          "status",
+          "title",
+          "summary",
+          "source",
+          "generated_at",
+          "schema_version",
+          "created_at",
+          "failures"
+        ],
+        "title": "ReportResponse",
+        "type": "object"
+      },
       "RunDetailResponse": {
         "additionalProperties": false,
         "properties": {
+          "analysis_scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "completed_at": {
             "anyOf": [
               {
@@ -415,20 +1114,39 @@
             ],
             "title": "Completed At"
           },
+          "completed_count": {
+            "minimum": 0.0,
+            "title": "Completed Count",
+            "type": "integer"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
           },
           "cursor_from": {
-            "format": "date-time",
-            "title": "Cursor From",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor From"
           },
           "cursor_to": {
-            "format": "date-time",
-            "title": "Cursor To",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor To"
           },
           "discovered_count": {
             "minimum": 0.0,
@@ -487,9 +1205,24 @@
           "operation": {
             "$ref": "#/components/schemas/RunOperation"
           },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReportResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_version": {
             "minimum": 1.0,
             "title": "Schema Version",
+            "type": "integer"
+          },
+          "selected_count": {
+            "minimum": 0.0,
+            "title": "Selected Count",
             "type": "integer"
           },
           "started_at": {
@@ -511,6 +1244,7 @@
           "topic_id",
           "logical_date",
           "operation",
+          "analysis_scope",
           "status",
           "started_at",
           "completed_at",
@@ -518,12 +1252,15 @@
           "cursor_to",
           "discovered_count",
           "normalized_count",
+          "selected_count",
+          "completed_count",
           "failed_count",
           "error_code",
           "error_detail",
           "schema_version",
           "created_at",
-          "items"
+          "items",
+          "report"
         ],
         "title": "RunDetailResponse",
         "type": "object"
@@ -531,6 +1268,10 @@
       "RunItemResponse": {
         "additionalProperties": false,
         "properties": {
+          "canonical_arxiv_id": {
+            "title": "Canonical Arxiv Id",
+            "type": "string"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -578,6 +1319,10 @@
             "title": "Paper Id",
             "type": "string"
           },
+          "paper_title": {
+            "title": "Paper Title",
+            "type": "string"
+          },
           "paper_version_id": {
             "format": "uuid",
             "title": "Paper Version Id",
@@ -621,6 +1366,8 @@
           "run_id",
           "paper_id",
           "paper_version_id",
+          "canonical_arxiv_id",
+          "paper_title",
           "stage",
           "status",
           "failed_stage",
@@ -681,7 +1428,8 @@
       },
       "RunOperation": {
         "enum": [
-          "ARXIV_INGESTION"
+          "ARXIV_INGESTION",
+          "STRUCTURED_ANALYSIS"
         ],
         "title": "RunOperation",
         "type": "string"
@@ -699,6 +1447,16 @@
       "RunSummary": {
         "additionalProperties": false,
         "properties": {
+          "analysis_scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisScope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "completed_at": {
             "anyOf": [
               {
@@ -711,20 +1469,39 @@
             ],
             "title": "Completed At"
           },
+          "completed_count": {
+            "minimum": 0.0,
+            "title": "Completed Count",
+            "type": "integer"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
           },
           "cursor_from": {
-            "format": "date-time",
-            "title": "Cursor From",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor From"
           },
           "cursor_to": {
-            "format": "date-time",
-            "title": "Cursor To",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor To"
           },
           "discovered_count": {
             "minimum": 0.0,
@@ -781,6 +1558,11 @@
             "title": "Schema Version",
             "type": "integer"
           },
+          "selected_count": {
+            "minimum": 0.0,
+            "title": "Selected Count",
+            "type": "integer"
+          },
           "started_at": {
             "format": "date-time",
             "title": "Started At",
@@ -800,6 +1582,7 @@
           "topic_id",
           "logical_date",
           "operation",
+          "analysis_scope",
           "status",
           "started_at",
           "completed_at",
@@ -807,6 +1590,8 @@
           "cursor_to",
           "discovered_count",
           "normalized_count",
+          "selected_count",
+          "completed_count",
           "failed_count",
           "error_code",
           "error_detail",
@@ -979,6 +1764,15 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "VerificationStatus": {
+        "enum": [
+          "UNVERIFIED",
+          "HUMAN_VERIFIED",
+          "REJECTED"
+        ],
+        "title": "VerificationStatus",
+        "type": "string"
       }
     }
   },
@@ -1098,6 +1892,202 @@
           }
         },
         "summary": " Get Paper"
+      }
+    },
+    "/api/v1/papers/{paper_id}/analysis": {
+      "get": {
+        "operationId": "getPaperAnalysis",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "paper_version_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Paper Version Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AnalysisScope"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperAnalysisResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper or analysis not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Analysis storage unavailable"
+          }
+        },
+        "summary": " Get Paper Analysis"
+      }
+    },
+    "/api/v1/papers/{paper_id}/evidence": {
+      "get": {
+        "operationId": "listPaperEvidence",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "paper_version_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Paper Version Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AnalysisScope"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper or analysis not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Evidence storage unavailable"
+          }
+        },
+        "summary": " List Paper Evidence"
       }
     },
     "/api/v1/runs": {

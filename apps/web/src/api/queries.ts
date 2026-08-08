@@ -1,6 +1,13 @@
 import { queryOptions } from "@tanstack/react-query";
 
-import { getLatestRun, getPapers, getTopics } from "./client";
+import {
+  getLatestRun,
+  getPaper,
+  getPaperAnalysis,
+  getPaperEvidence,
+  getPapers,
+  getTopics,
+} from "./client";
 
 export const topicsQuery = () =>
   queryOptions({
@@ -12,6 +19,29 @@ export const papersQuery = (limit: number, offset: number) =>
   queryOptions({
     queryKey: ["papers", { limit, offset }],
     queryFn: () => getPapers({ limit, offset }),
+  });
+
+export const paperQuery = (paperId: string) =>
+  queryOptions({
+    queryKey: ["papers", paperId],
+    queryFn: () => getPaper(paperId),
+  });
+
+export const paperAnalysisQuery = (paperId: string, paperVersionId: string) =>
+  queryOptions({
+    queryKey: ["papers", paperId, "analysis", paperVersionId],
+    queryFn: () => getPaperAnalysis(paperId, paperVersionId),
+  });
+
+export const paperEvidenceQuery = (
+  paperId: string,
+  analysisId: string,
+  paperVersionId: string,
+  scope: "ABSTRACT_ONLY" | "FULL_TEXT",
+) =>
+  queryOptions({
+    queryKey: ["papers", paperId, "evidence", analysisId],
+    queryFn: () => getPaperEvidence(paperId, analysisId, paperVersionId, scope),
   });
 
 export const latestRunQuery = () =>

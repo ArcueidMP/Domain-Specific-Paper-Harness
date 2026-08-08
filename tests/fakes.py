@@ -8,7 +8,15 @@ from dataclasses import replace
 from datetime import UTC, date, datetime
 from uuid import UUID, uuid4, uuid5
 
-from paper_harness.application.read_models import PaperDetail, RunDetail, StoredTopic
+from paper_harness.application.read_models import (
+    AnalysisDetail,
+    AnalysisTarget,
+    PaperDetail,
+    RunDetail,
+    RunItemDetail,
+    StoredTopic,
+)
+from paper_harness.domain.analysis import AnalysisBundle, AnalysisScope, Evidence, ParsedPaper
 from paper_harness.domain.models import (
     DailyRun,
     IngestionCursor,
@@ -20,7 +28,8 @@ from paper_harness.domain.models import (
     RunStatus,
     TopicConfig,
 )
-from paper_harness.ports.arxiv import ArxivPaperRecord, ArxivPortError
+from paper_harness.ports.arxiv import ArxivPaperRecord, ArxivPdf, ArxivPortError
+from paper_harness.ports.repository import RepositoryError
 
 
 class FakeArxiv:
@@ -28,10 +37,15 @@ class FakeArxiv:
         self,
         records: tuple[ArxivPaperRecord, ...] = (),
         error: ArxivPortError | None = None,
+        pdf_content: bytes = b"%PDF-1.7\nfixture",
+        pdf_error: ArxivPortError | None = None,
     ) -> None:
         self.records = records
         self.error = error
+        self.pdf_content = pdf_content
+        self.pdf_error = pdf_error
         self.calls: list[tuple[str, datetime, datetime, int]] = []
+        self.pdf_calls: list[tuple[str, int, str]] = []
 
     def search(
         self,
@@ -46,6 +60,23 @@ class FakeArxiv:
             raise self.error
         return self.records
 
+    def download_pdf(
+        self,
+        *,
+        canonical_arxiv_id: str,
+        version: int,
+        pdf_url: str,
+    ) -> ArxivPdf:
+        self.pdf_calls.append((canonical_arxiv_id, version, pdf_url))
+        if self.pdf_error is not None:
+            raise self.pdf_error
+        return ArxivPdf(
+            canonical_arxiv_id=canonical_arxiv_id,
+            version=version,
+            source_url=pdf_url,
+            content=self.pdf_content,
+        )
+
 
 class FakeRepository:
     def __init__(self) -> None:
@@ -55,7 +86,12 @@ class FakeRepository:
         self.items: tuple[RunItem, ...] = ()
         self.papers: tuple[Paper, ...] = ()
         self.paper_detail: PaperDetail | None = None
+        self.analysis_detail: AnalysisDetail | None = None
+        self.analysis_targets: tuple[AnalysisTarget, ...] = ()
+        self.parsed_papers: dict[UUID, ParsedPaper] = {}
         self.ready_error: Exception | None = None
+        self.analysis_persist_error: RepositoryError | None = None
+        self.finalize_error: RepositoryError | None = None
         self.locked = False
 
     @contextmanager
@@ -94,6 +130,7 @@ class FakeRepository:
             topic_id=topic_id,
             logical_date=logical_date,
             operation=RunOperation.ARXIV_INGESTION,
+            analysis_scope=None,
             status=RunStatus.RUNNING,
             started_at=started_at,
             completed_at=None,
@@ -101,6 +138,8 @@ class FakeRepository:
             cursor_to=cursor_to,
             discovered_count=0,
             normalized_count=0,
+            selected_count=0,
+            completed_count=0,
             failed_count=0,
             error_code=None,
             error_detail=None,
@@ -202,4 +241,292 @@ class FakeRepository:
 
     def get_latest_run(self, *, topic_slug: str | None) -> RunDetail | None:
         del topic_slug
-        return None if self.run is None else RunDetail(run=self.run, items=self.items)
+        return (
+            None
+            if self.run is None
+            else RunDetail(
+                run=self.run,
+                items=tuple(
+                    RunItemDetail(
+                        item=item,
+                        canonical_arxiv_id="2601.01234",
+                        paper_title="A Reliable LLM Agent",
+                    )
+                    for item in self.items
+                ),
+            )
+        )
+
+    def get_analysis_targets(
+        self, topic_id: UUID, paper_ids: tuple[UUID, ...]
+    ) -> tuple[AnalysisTarget, ...]:
+        del topic_id
+        return tuple(
+            target
+            for paper_id in paper_ids
+            for target in self.analysis_targets
+            if target.paper.id == paper_id
+        )
+
+    def get_analysis_run_for_date(self, topic_id: UUID, logical_date: date) -> DailyRun | None:
+        del topic_id, logical_date
+        if self.run is not None and self.run.operation is RunOperation.STRUCTURED_ANALYSIS:
+            return self.run
+        return None
+
+    def start_analysis_run(
+        self,
+        *,
+        topic_id: UUID,
+        logical_date: date,
+        analysis_scope: AnalysisScope,
+        started_at: datetime,
+        targets: tuple[AnalysisTarget, ...],
+    ) -> DailyRun:
+        self.run = DailyRun(
+            id=uuid4(),
+            topic_id=topic_id,
+            logical_date=logical_date,
+            operation=RunOperation.STRUCTURED_ANALYSIS,
+            analysis_scope=analysis_scope,
+            status=RunStatus.RUNNING,
+            started_at=started_at,
+            completed_at=None,
+            cursor_from=None,
+            cursor_to=None,
+            discovered_count=0,
+            normalized_count=0,
+            selected_count=len(targets),
+            completed_count=0,
+            failed_count=0,
+            error_code=None,
+            error_detail=None,
+            schema_version=1,
+            created_at=started_at,
+        )
+        self.items = tuple(
+            RunItem(
+                id=uuid5(self.run.id, str(target.version.id)),
+                run_id=self.run.id,
+                paper_id=target.paper.id,
+                paper_version_id=target.version.id,
+                stage=PaperStage.SELECTED,
+                status=RunItemStatus.IN_PROGRESS,
+                failed_stage=None,
+                error_code=None,
+                retryable=None,
+                error_detail=None,
+                schema_version=1,
+                created_at=started_at,
+                updated_at=started_at,
+            )
+            for target in targets
+        )
+        return self.run
+
+    def advance_analysis_item(
+        self,
+        *,
+        run_id: UUID,
+        paper_version_id: UUID,
+        expected_stage: PaperStage,
+        next_stage: PaperStage,
+        updated_at: datetime,
+    ) -> None:
+        del run_id
+        self.items = tuple(
+            replace(item, stage=next_stage, updated_at=updated_at)
+            if item.paper_version_id == paper_version_id and item.stage is expected_stage
+            else item
+            for item in self.items
+        )
+
+    def persist_parsed_paper(
+        self,
+        *,
+        run_id: UUID,
+        parsed_paper: ParsedPaper,
+        expected_stage: PaperStage,
+        updated_at: datetime,
+    ) -> ParsedPaper:
+        canonical = self.parsed_papers.setdefault(parsed_paper.id, parsed_paper)
+        if (
+            canonical.paper_id != parsed_paper.paper_id
+            or canonical.paper_version_id != parsed_paper.paper_version_id
+            or canonical.parser_name != parsed_paper.parser_name
+            or canonical.parser_version != parsed_paper.parser_version
+        ):
+            raise RepositoryError("stable parsed-paper identity conflicts with stored data")
+        self.advance_analysis_item(
+            run_id=run_id,
+            paper_version_id=parsed_paper.paper_version_id,
+            expected_stage=expected_stage,
+            next_stage=PaperStage.PARSED,
+            updated_at=updated_at,
+        )
+        return canonical
+
+    def persist_analysis_bundle(
+        self,
+        *,
+        run_id: UUID,
+        bundle: AnalysisBundle,
+        expected_stage: PaperStage,
+        updated_at: datetime,
+    ) -> None:
+        del run_id, expected_stage
+        if self.analysis_persist_error is not None:
+            raise self.analysis_persist_error
+        parsed = (
+            None
+            if bundle.analysis.parsed_paper_id is None
+            else self.parsed_papers[bundle.analysis.parsed_paper_id]
+        )
+        self.analysis_detail = AnalysisDetail(
+            analysis=bundle.analysis,
+            arxiv_version=1,
+            claims=bundle.claims,
+            evidence=bundle.evidence,
+            parser_name=None if parsed is None else parsed.parser_name,
+            parser_version=None if parsed is None else parsed.parser_version,
+        )
+        self.items = tuple(
+            replace(
+                item,
+                stage=PaperStage.EVIDENCE_EXTRACTED,
+                status=RunItemStatus.COMPLETED,
+                updated_at=updated_at,
+            )
+            if item.paper_version_id == bundle.analysis.paper_version_id
+            else item
+            for item in self.items
+        )
+
+    def fail_analysis_item(
+        self,
+        *,
+        run_id: UUID,
+        paper_version_id: UUID,
+        failed_stage: PaperStage,
+        error_code: str,
+        retryable: bool,
+        error_detail: str,
+        updated_at: datetime,
+    ) -> None:
+        del run_id
+        self.items = tuple(
+            replace(
+                item,
+                status=RunItemStatus.FAILED,
+                failed_stage=failed_stage,
+                error_code=error_code,
+                retryable=retryable,
+                error_detail=error_detail,
+                updated_at=updated_at,
+            )
+            if item.paper_version_id == paper_version_id
+            else item
+            for item in self.items
+        )
+
+    def finalize_analysis_run(self, run_id: UUID, *, completed_at: datetime) -> DailyRun:
+        if self.finalize_error is not None:
+            raise self.finalize_error
+        if self.run is None or self.run.id != run_id:
+            raise AssertionError("run was not started")
+        completed = sum(item.status is RunItemStatus.COMPLETED for item in self.items)
+        failed = sum(item.status is RunItemStatus.FAILED for item in self.items)
+        status = (
+            RunStatus.COMPLETE
+            if failed == 0
+            else (RunStatus.PARTIAL if completed else RunStatus.FAILED)
+        )
+        self.run = replace(
+            self.run,
+            status=status,
+            completed_at=completed_at,
+            completed_count=completed,
+            failed_count=failed,
+            error_code=None if completed else "NO_SELECTED_PAPER_COMPLETED",
+            error_detail=None if completed else "No selected paper completed evidence extraction.",
+        )
+        return self.run
+
+    def fail_analysis_run(
+        self,
+        run_id: UUID,
+        *,
+        completed_at: datetime,
+        failed_stage: PaperStage,
+        error_code: str,
+        retryable: bool,
+        error_detail: str,
+    ) -> DailyRun:
+        if self.run is None or self.run.id != run_id:
+            raise AssertionError("run was not started")
+        self.items = tuple(
+            replace(
+                item,
+                status=RunItemStatus.FAILED,
+                failed_stage=failed_stage,
+                error_code=error_code,
+                retryable=retryable,
+                error_detail=error_detail,
+                updated_at=completed_at,
+            )
+            if item.status is RunItemStatus.IN_PROGRESS
+            else item
+            for item in self.items
+        )
+        completed_count = sum(item.status is RunItemStatus.COMPLETED for item in self.items)
+        failed_count = sum(item.status is RunItemStatus.FAILED for item in self.items)
+        self.run = replace(
+            self.run,
+            status=RunStatus.FAILED,
+            completed_at=completed_at,
+            completed_count=completed_count,
+            error_code=error_code,
+            error_detail=error_detail,
+            failed_count=failed_count,
+        )
+        return self.run
+
+    def get_paper_analysis(
+        self,
+        paper_id: UUID,
+        *,
+        paper_version_id: UUID | None,
+        analysis_scope: AnalysisScope | None = None,
+    ) -> AnalysisDetail | None:
+        if self.analysis_detail is None:
+            return None
+        if self.analysis_detail.analysis.paper_id != paper_id:
+            return None
+        if (
+            paper_version_id is not None
+            and self.analysis_detail.analysis.paper_version_id != paper_version_id
+        ):
+            return None
+        if (
+            analysis_scope is not None
+            and self.analysis_detail.analysis.analysis_scope is not analysis_scope
+        ):
+            return None
+        return self.analysis_detail
+
+    def list_paper_evidence(
+        self,
+        paper_id: UUID,
+        *,
+        analysis_id: UUID,
+        paper_version_id: UUID | None,
+        analysis_scope: AnalysisScope | None = None,
+    ) -> tuple[Evidence, ...] | None:
+        detail = self.get_paper_analysis(
+            paper_id,
+            paper_version_id=paper_version_id,
+            analysis_scope=analysis_scope,
+        )
+        if detail is None or detail.analysis.id != analysis_id:
+            return None
+        return detail.evidence

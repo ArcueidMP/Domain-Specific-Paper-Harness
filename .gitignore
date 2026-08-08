@@ -54,6 +54,7 @@ downloads/
 models/
 *.pdf
 *.tei.xml
+!tests/contract/fixtures/grobid_fulltext_0_9_0.tei.xml
 
 # Editors and operating systems
 .idea/
