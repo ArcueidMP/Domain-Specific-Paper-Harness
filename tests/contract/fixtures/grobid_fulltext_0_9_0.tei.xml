@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <teiHeader>
+    <fileDesc>
+      <titleStmt>
+        <title>Reliable Tool-Using Agents</title>
+      </titleStmt>
+      <publicationStmt><p>arXiv</p></publicationStmt>
+      <sourceDesc><p>PDF</p></sourceDesc>
+    </fileDesc>
+  </teiHeader>
+  <facsimile>
+    <surface n="1" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0" />
+    <surface n="2" ulx="0.0" uly="0.0" lrx="612.0" lry="792.0" />
+  </facsimile>
+  <text>
+    <body>
+      <div xml:id="sec-introduction">
+        <head coords="1,72.0,90.0,160.0,12.0">Introduction</head>
+        <p xml:id="p-introduction" coords="1,72.0,115.0,468.0,36.0">
+          <s xml:id="s-introduction-1" coords="1,72.0,115.0,468.0,12.0">LLM agents use tools <ref type="bibr" target="#b0" coords="1,201.0,115.0,16.0,12.0">[1]</ref> to solve tasks.</s>
+          <s xml:id="s-introduction-2">Memory improves long-horizon execution.</s>
+        </p>
+      </div>
+      <div xml:id="sec-evaluation">
+        <head coords="2,72.0,90.0,140.0,12.0">Evaluation</head>
+        <p xml:id="p-evaluation" coords="2,72.0,115.0,468.0,24.0">We evaluate on AgentBench <ref type="bibr" target="#b1" coords="2,247.0,115.0,18.0,12.0">[2]</ref> with exact-match accuracy.</p>
+      </div>
+    </body>
+    <back>
+      <div type="references">
+        <listBibl>
+          <biblStruct xml:id="b0" coords="2,72.0,600.0,468.0,18.0">
+            <analytic>
+              <title level="a">Tool Use by Language Model Agents</title>
+              <author><persName><forename>Ada</forename> <surname>Lovelace</surname></persName></author>
+              <author><persName><forename>Alan</forename> <surname>Turing</surname></persName></author>
+            </analytic>
+            <monogr><imprint><date when="2024-06-01" /></imprint></monogr>
+            <note type="raw_reference">Lovelace and Turing. Tool Use by Language Model Agents. 2024.</note>
+          </biblStruct>
+          <biblStruct xml:id="b1" coords="2,72.0,625.0,468.0,18.0">
+            <analytic>
+              <title level="a">AgentBench</title>
+              <author><persName><forename>Grace</forename> <surname>Hopper</surname></persName></author>
+            </analytic>
+            <monogr><imprint><date>2023</date></imprint></monogr>
+            <note type="raw_reference">Hopper. AgentBench. 2023.</note>
+          </biblStruct>
+        </listBibl>
+      </div>
+    </back>
+  </text>
+</TEI>

@@ -60,6 +60,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24.15.0
+          package-manager-cache: false
       - run: corepack enable
       - run: corepack prepare pnpm@11.0.9 --activate
       - run: pnpm install --frozen-lockfile
