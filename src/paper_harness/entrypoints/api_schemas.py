@@ -9,6 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from paper_harness.application.read_models import GraphEvidenceRole
 from paper_harness.domain.analysis import (
     AnalysisScope,
     ClaimType,
@@ -27,7 +28,20 @@ from paper_harness.domain.historical import (
     SearchTool,
     SelectionDecision,
 )
+from paper_harness.domain.knowledge import (
+    GraphEntityType,
+    GraphRelationType,
+    LineageCorpusScope,
+    TrendDataSufficiency,
+    TrendGrowthStatus,
+    TrendWindow,
+)
 from paper_harness.domain.models import PaperStage, RunItemStatus, RunOperation, RunStatus
+from paper_harness.domain.reports import (
+    ReportNarrativeMode,
+    ReportSectionKind,
+    ReportType,
+)
 
 
 class ApiModel(BaseModel):
@@ -147,6 +161,7 @@ class RunItemResponse(ApiModel):
 class RunSummary(ApiModel):
     id: UUID
     topic_id: UUID
+    source_run_id: UUID | None
     logical_date: date
     operation: RunOperation
     analysis_scope: AnalysisScope | None
@@ -166,6 +181,15 @@ class RunSummary(ApiModel):
     created_at: datetime
 
 
+class ModelUsageResponse(ApiModel):
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    call_count: int = Field(ge=1)
+    duration_ms: int = Field(ge=0)
+    estimated_cost_usd: Decimal | None
+
+
 class ReportFailureResponse(ApiModel):
     id: UUID
     report_id: UUID
@@ -179,9 +203,76 @@ class ReportFailureResponse(ApiModel):
     created_at: datetime
 
 
+class ReportCountsResponse(ApiModel):
+    retrieved: int = Field(ge=0)
+    selected: int = Field(ge=0)
+    processed: int = Field(ge=0)
+    completed: int = Field(ge=0)
+    failed: int = Field(ge=0)
+
+
+class ReportPaperHighlightResponse(ApiModel):
+    paper_id: UUID
+    paper_version_id: UUID
+    title: str
+    reason: str
+    evidence_ids: list[UUID]
+
+
+class ReportEntityHighlightResponse(ApiModel):
+    graph_entity_id: UUID
+    entity_type: str
+    label: str
+    distinct_paper_count: int = Field(
+        ge=1,
+        description="Distinct papers for this entity in the report's latest 7-day snapshot.",
+    )
+
+
+class ReportComparisonHighlightResponse(ApiModel):
+    comparison_id: UUID
+    summary: str
+    comparability_status: str
+    evidence_ids: list[UUID]
+
+
+class ReportLineageHighlightResponse(ApiModel):
+    lineage_snapshot_id: UUID
+    root_paper_id: UUID
+    summary: str
+    uncertain: bool
+
+
+class ReportEvidenceReferenceResponse(ApiModel):
+    id: UUID
+    paper_id: UUID
+    paper_version_id: UUID
+    section: str
+    excerpt: str
+    evidence_type: str
+    verification_status: VerificationStatus
+
+
+class ReportGraphChangesResponse(ApiModel):
+    entity_count: int = Field(ge=0)
+    edge_count: int = Field(ge=0)
+    new_entity_count: int = Field(ge=0)
+    inferred_edge_count: int = Field(ge=0)
+
+
+class ReportSectionResponse(ApiModel):
+    id: UUID
+    report_id: UUID
+    kind: ReportSectionKind
+    narrative: str
+    evidence_ids: list[UUID]
+    schema_version: int = Field(ge=1)
+    created_at: datetime
+
+
 class ReportResponse(ApiModel):
     id: UUID
-    run_id: UUID
+    run_id: UUID | None
     topic_id: UUID
     logical_date: date
     status: RunStatus
@@ -192,9 +283,36 @@ class ReportResponse(ApiModel):
     schema_version: int = Field(ge=1)
     created_at: datetime
     failures: list[ReportFailureResponse]
+    sections: list[ReportSectionResponse]
+    report_type: ReportType
+    period_start: date
+    period_end: date
+    counts: ReportCountsResponse
+    highlighted_papers: list[ReportPaperHighlightResponse]
+    major_entities: list[ReportEntityHighlightResponse]
+    notable_comparisons: list[ReportComparisonHighlightResponse]
+    graph_changes: ReportGraphChangesResponse
+    trend_snapshot_ids: list[UUID]
+    lineage_highlights: list[ReportLineageHighlightResponse]
+    evidence: list[ReportEvidenceReferenceResponse]
+    limitations: list[str]
+    missing_sections: list[str]
+    narrative_mode: ReportNarrativeMode
+    provider: str | None
+    configured_model: str | None
+    model_version: str | None
+    prompt_version: str | None
+    usage: ModelUsageResponse | None
+    verification_status: VerificationStatus
 
 
 class RunDetailResponse(RunSummary):
+    items: list[RunItemResponse]
+    report: ReportResponse | None
+
+
+class DailyRunEnvelopeResponse(ApiModel):
+    run: RunSummary
     items: list[RunItemResponse]
     report: ReportResponse | None
 
@@ -206,13 +324,194 @@ class RunListResponse(ApiModel):
     offset: int = Field(ge=0)
 
 
-class ModelUsageResponse(ApiModel):
-    prompt_tokens: int = Field(ge=0)
-    completion_tokens: int = Field(ge=0)
-    total_tokens: int = Field(ge=0)
-    call_count: int = Field(ge=1)
-    duration_ms: int = Field(ge=0)
-    estimated_cost_usd: Decimal | None
+class ReportListResponse(ApiModel):
+    items: list[ReportResponse]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1, le=100)
+    offset: int = Field(ge=0)
+
+
+class GraphModelProvenanceResponse(ApiModel):
+    provider: str
+    configured_model: str
+    model_version: str
+    prompt_version: str
+
+
+class GraphEntityMentionResponse(ApiModel):
+    id: UUID
+    paper_id: UUID
+    paper_version_id: UUID
+    analysis_id: UUID | None
+    comparison_id: UUID | None
+    observed_label: str
+    provenance: RelationProvenance
+    inferred: bool
+    evidence_ids: list[UUID]
+    model_provenance: GraphModelProvenanceResponse | None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    verification_status: VerificationStatus
+    generated_at: datetime
+    schema_version: int = Field(ge=1)
+    created_at: datetime
+
+
+class GraphNodeResponse(ApiModel):
+    id: UUID
+    topic_id: UUID
+    entity_type: GraphEntityType
+    paper_id: UUID | None
+    canonical_label: str
+    normalized_key: str
+    display_label: str
+    aliases: list[str]
+    provenance: RelationProvenance
+    inferred: bool
+    source: str
+    mention_count: int = Field(ge=0)
+    mentions: list[GraphEntityMentionResponse]
+    schema_version: int = Field(ge=1)
+    created_at: datetime
+    updated_at: datetime
+
+
+class GraphEdgeEvidenceResponse(ApiModel):
+    evidence_id: UUID
+    paper_id: UUID
+    paper_version_id: UUID
+    role: GraphEvidenceRole
+
+
+class GraphEdgeResponse(ApiModel):
+    id: UUID
+    source_entity_id: UUID
+    target_entity_id: UUID
+    relation_type: GraphRelationType
+    source_paper_version_id: UUID
+    target_paper_version_id: UUID | None
+    analysis_id: UUID | None
+    comparison_id: UUID | None
+    paper_relation_id: UUID | None
+    provenance: RelationProvenance
+    inferred: bool
+    evidence_ids: list[UUID]
+    evidence: list[GraphEdgeEvidenceResponse]
+    justification: str
+    model_provenance: GraphModelProvenanceResponse | None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    confidence_meaning: str | None
+    verification_status: VerificationStatus
+    generated_at: datetime
+    schema_version: int = Field(ge=1)
+    created_at: datetime
+
+
+class KnowledgeGraphResponse(ApiModel):
+    topic_id: UUID
+    as_of: date | None
+    nodes: list[GraphNodeResponse]
+    edges: list[GraphEdgeResponse]
+    total_nodes: int = Field(ge=0)
+    total_edges: int = Field(ge=0)
+    total_mentions: int = Field(ge=0)
+    truncated: bool
+
+
+class TrendChangeResponse(ApiModel):
+    current_count: int = Field(ge=0)
+    preceding_count: int = Field(ge=0)
+    absolute_change: int
+    denominator_count: int = Field(ge=0)
+    relative_change: Decimal | None
+    growth_status: TrendGrowthStatus
+
+
+class TrendEntityCountResponse(ApiModel):
+    entity_id: UUID
+    entity_type: GraphEntityType
+    label: str
+    change: TrendChangeResponse
+    newly_appearing: bool
+    recurring: bool
+
+
+class TrendRelationCountResponse(ApiModel):
+    relation_type: GraphRelationType
+    change: TrendChangeResponse
+
+
+class TrendThresholdsResponse(ApiModel):
+    limited_paper_count: int = Field(ge=1)
+    sufficient_paper_count: int = Field(ge=1)
+    minimum_growth_denominator: int = Field(ge=1)
+
+
+class TrendRepresentativePaperResponse(ApiModel):
+    paper_id: UUID
+    paper_version_id: UUID
+    activity_date: date
+    title: str
+
+
+class TrendSnapshotResponse(ApiModel):
+    id: UUID
+    topic_id: UUID
+    as_of_date: date
+    window: TrendWindow
+    window_start: date
+    window_end: date
+    preceding_window_start: date
+    preceding_window_end: date
+    included_paper_count: int = Field(ge=0)
+    preceding_paper_count: int = Field(ge=0)
+    paper_count_change: TrendChangeResponse
+    entity_counts: list[TrendEntityCountResponse]
+    total_entities: int = Field(ge=0)
+    truncated: bool
+    relation_counts: list[TrendRelationCountResponse]
+    new_entity_ids: list[UUID]
+    recurring_entity_ids: list[UUID]
+    representative_papers: list[TrendRepresentativePaperResponse]
+    data_sufficiency: TrendDataSufficiency
+    preceding_data_sufficiency: TrendDataSufficiency
+    thresholds: TrendThresholdsResponse
+    aggregation_version: str
+    generated_at: datetime
+    schema_version: int = Field(ge=1)
+
+
+class TrendsResponse(ApiModel):
+    items: list[TrendSnapshotResponse]
+    total: int = Field(ge=0, le=3)
+
+
+class LineageNodeResponse(ApiModel):
+    graph_entity_id: UUID
+    paper_id: UUID
+    title: str
+    publication_date: date | None
+    depth: int = Field(ge=0, le=5)
+
+
+class LineageResponse(ApiModel):
+    id: UUID
+    topic_id: UUID
+    root_paper_id: UUID
+    as_of_date: date
+    nodes: list[LineageNodeResponse]
+    edges: list[GraphEdgeResponse]
+    permitted_relation_types: list[GraphRelationType]
+    max_depth: int = Field(ge=1, le=5)
+    max_nodes: int = Field(ge=1, le=100)
+    max_edges: int = Field(ge=1, le=400)
+    truncated: bool
+    explicit_predecessor_available: bool
+    verified_predecessor_available: bool
+    corpus_scope: LineageCorpusScope
+    limitations: list[str]
+    lineage_version: str
+    generated_at: datetime
+    schema_version: int = Field(ge=1)
 
 
 class AnalysisClaimResponse(ApiModel):

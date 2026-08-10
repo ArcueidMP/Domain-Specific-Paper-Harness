@@ -1,10 +1,11 @@
 # Domain-Specific Paper Harness
 
 Domain-Specific Paper Harness is a private research-intelligence product for
-tracking broad LLM-agent research. M1 through M3 are implemented and verified
-locally. M3 adds authenticated Semantic Scholar historical search, bounded
-PaSa-derived retrieval, SPECTER2 Base embeddings, and evidence-linked paper
-comparison. No production runtime is deployed.
+tracking broad LLM-agent research. M1 through M4 are implemented and verified
+locally. M4 adds a provenance-aware knowledge graph, bounded research lineages,
+deterministic 7/30/90-day trends, structured daily and sufficient-data periodic
+reports, and the complete read-only product UI. No production runtime is
+deployed.
 
 The permanent product, safety, source, and engineering rules are in
 [AGENTS.md](AGENTS.md). Current milestone and deployment state are in
@@ -106,6 +107,44 @@ Source boundaries are strict:
   title + separator token + abstract with a 512-token maximum. Full model and
   tokenizer provenance is persisted with every embedding. There is no generic,
   commercial, adapter, or alternate-model fallback.
+
+### Knowledge graph, trends, reports, and product UI (M4)
+
+- A distinct `PRODUCT_PUBLICATION` run references a prior structured-analysis
+  run and consumes only persisted M2 analyses/evidence plus M3 comparisons. It
+  never rewrites M2 terminal items or performs arbitrary search.
+- Topic-scoped Paper, ResearchProblem, Method, Task, Dataset, and Benchmark
+  entities use conservative exact-key normalization. Mentions and eleven edge
+  types retain exact paper/version/analysis/comparison ownership, supporting
+  Evidence IDs, provenance, model metadata where applicable, confidence
+  meaning, and verification status.
+- Graph reads independently bound nodes, edges, and mentions and expose exact
+  totals/truncation. Lineage follows directed predecessor relations and is
+  deterministic, cycle-safe, and independently bounded by depth, nodes, and
+  edges; it states corpus scope, truncation, and explicit/verified predecessor
+  availability rather than claiming global completeness.
+- Exact 7-, 30-, and 90-day windows compare against equal preceding windows.
+  Paper/entity/relation counts, sufficiency thresholds, zero/small-denominator
+  handling, new/recurring entities, and representative-paper ranking are
+  deterministic and persisted. Trend API entity rows are Top-N bounded with
+  total/truncation metadata.
+- Daily reports persist a fixed five-section structure, deterministic counts,
+  highlights, graph/trend/lineage links, failures, missing sections, evidence
+  links, and complete model provenance. `DEEPSEEK` and `STRUCTURED_ONLY` are
+  explicit preselected modes; the latter is never a fallback after model
+  failure. Model narrative cannot add statistics and each section has its own
+  Evidence-ID allowlist.
+- Weekly synthesis requires seven daily dates and at least three papers;
+  monthly synthesis requires at least twenty daily dates and ten papers.
+  Insufficient periods persist no aggregate report.
+- FastAPI exposes graph, trends, lineages, latest/dated daily publications,
+  report history, exact weekly/monthly periods, and historical run detail from
+  the generated OpenAPI contract. React provides the dashboard, report,
+  Cytoscape graph, Recharts trends, lineage, navigation, run status, partial
+  banners, and item-failure views.
+- STORM commit `fb951af7744dab086e34962e9bc6fe878e145f83` was audited as an
+  architecture-only reference. No STORM package, source, prompt, retriever,
+  model wrapper, embedding stack, or filesystem persistence is copied or used.
 
 ## Architecture summary
 
@@ -273,6 +312,32 @@ Choose `abstract_only` before execution to analyze only the persisted abstract;
 that mode does not call or require GROBID but still requires DeepSeek. A failed
 full-text parse never changes to abstract-only analysis.
 
+Publish one M4 daily product after its selected papers have persisted M2
+analyses and M3 comparisons. DeepSeek is the default narrative mode; choose
+`structured_only` explicitly for the deterministic report mode:
+
+```powershell
+$logicalDate = Get-Date -Format "yyyy-MM-dd"
+& .\scripts\run-daily.ps1 `
+  -Operation publish-product `
+  -LogicalDate $logicalDate `
+  -OperationArgument @("--narrative-mode", "structured_only")
+```
+
+Eligible weekly and monthly reports are explicit protected operations. Period
+bounds must cover a complete Monday-through-Sunday week or calendar month:
+
+```powershell
+& .\scripts\run-daily.ps1 `
+  -Operation generate-periodic-report `
+  -OperationArgument @(
+    "--report-type", "weekly",
+    "--period-start", "2026-08-03",
+    "--period-end", "2026-08-09",
+    "--narrative-mode", "deepseek"
+  )
+```
+
 ## Deployment
 
 Deployment uses the existing GCP project and defaults to `asia-southeast1`.
@@ -303,7 +368,7 @@ owner-supplied PostgreSQL `DATABASE_URL` and DeepSeek API key in Secret Manager.
 | Name | Current contract |
 | --- | --- |
 | `DATABASE_URL` | Required for persistence; production must use PostgreSQL 15+ with pgvector through a fixed Secret Manager version |
-| `DEEPSEEK_API_KEY` | Required for structured analysis, related-work selection, and comparison; no mock, anonymous access, or alternate model |
+| `DEEPSEEK_API_KEY` | Required for structured analysis, related-work selection, comparison, and `deepseek` report mode; no mock, anonymous access, or alternate model |
 | `LLM_PROVIDER` | Must be `deepseek` for every model-backed operation |
 | `LLM_MODEL` | Must be `deepseek-v4-flash` for every model-backed operation |
 | `GROBID_URL` | Required only for `full_text`; local URL may be HTTP, production must be the private HTTPS Cloud Run URI |
@@ -319,12 +384,14 @@ fails explicitly.
 
 - Production PostgreSQL and DeepSeek Secret Manager versions are not supplied,
   and Google API connectivity currently prevents Terraform apply.
-- The strict DeepSeek adapter is fixture-tested but no live DeepSeek analysis has
-  been run because no key was supplied.
+- Live DeepSeek report-synthesis state is recorded in
+  [docs/STATUS.md](docs/STATUS.md); default verification remains credential-free.
 - The Semantic Scholar adapter is fixture-tested but no live scholarly-search
   smoke test has run because no API key was supplied.
 - Daily ingestion and selected-paper analysis are separate operator/Job commands;
-  automatic discovery-to-selection-to-analysis orchestration is not yet wired.
+  the configured Terraform Scheduler invokes the keyless default ingestion command
+  only. Analysis, search, comparison, product publication, and eligible periodic
+  reports remain explicit commands and are not yet chained automatically.
 - The CRF GROBID image is CPU-bounded and smaller than the full deep-learning
   image, but its lower extraction accuracy is an explicit provenance limitation.
 - The model-bearing Daily image is approximately 786 MB. Normal CI deliberately
@@ -335,8 +402,6 @@ fails explicitly.
   requires Transformers 4.57.x, below the project's patched Transformers 5.3+
   security floor. Reconsidering the adapter requires a future explicit
   architecture decision after upstream compatibility exists.
-- M4 graph, lineage, trends, and complete daily/historical report views are not
-  implemented.
 - Terraform state is local and ignored; a reviewed remote-state strategy is
   required before multi-operator production use.
 - Full PDFs, complete prompts/responses, model weights, secrets, and credentials

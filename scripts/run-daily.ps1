@@ -5,7 +5,9 @@ param(
         "analyze-papers",
         "historical-backfill",
         "search-related",
-        "compare-papers"
+        "compare-papers",
+        "publish-product",
+        "generate-periodic-report"
     )]
     [string]$Operation = "ingest-arxiv",
     [string]$TopicConfig = "configs/topics/broad-llm-agents.yaml",
@@ -32,14 +34,16 @@ $OperationsUsingTopicConfig = @(
     "ingest-arxiv",
     "analyze-papers",
     "historical-backfill",
-    "search-related"
+    "search-related",
+    "publish-product",
+    "generate-periodic-report"
 )
 if ($OperationsUsingTopicConfig -contains $Operation -and -not (Test-Path -LiteralPath $TopicConfig)) {
     throw "Topic configuration '$TopicConfig' does not exist."
 }
 if (-not [string]::IsNullOrWhiteSpace($LogicalDate) -and
-    $Operation -notin @("ingest-arxiv", "analyze-papers")) {
-    throw "LogicalDate is supported only by ingest-arxiv and analyze-papers."
+    $Operation -notin @("ingest-arxiv", "analyze-papers", "publish-product")) {
+    throw "LogicalDate is supported only by ingest-arxiv, analyze-papers, and publish-product."
 }
 if ($OperationArgument -contains "--topic-config") {
     throw "Use -TopicConfig instead of passing --topic-config through OperationArgument."

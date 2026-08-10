@@ -60,7 +60,8 @@ both exact local paper versions to have persisted analyses and evidence.
 ## Model, parser, and embedding boundaries
 
 - DeepSeek `deepseek-v4-flash` is the sole LLM provider/model for structured
-  analysis, Crawler planning, candidate selection, and comparison.
+  analysis, Crawler planning, candidate selection, comparison, and the
+  explicitly selected model-backed report mode.
 - Model calls receive bounded structured inputs and no hidden tools. Empty,
   malformed, schema-invalid, domain-invalid, ungrounded, or usage-inconsistent
   output fails. It is not repaired, coerced, retried for content, or routed to
@@ -85,6 +86,53 @@ both exact local paper versions to have persisted analyses and evidence.
 PaperQA2 and Ai2 Scholar QA were reviewed at exact revisions but are not
 installed, vendored, copied, or called. M2 evidence grounding and M3 comparison
 planning are project-owned typed code over persisted GROBID/analysis evidence.
+STORM was likewise reviewed at an exact revision and is not installed, vendored,
+copied, or called. M4 implements only its outline-to-section concept as
+first-party typed synthesis over persisted local records and Evidence IDs.
+
+## Graph, lineage, trend, and report boundary
+
+Graph identities are topic-scoped. Non-paper entities merge only after exact
+canonical-key equality under the documented conservative normalization; M4 does
+not ask an LLM to invent aliases or entity equivalence. Every mention and edge
+retains its exact paper version and analysis or comparison owner. Text-explicit
+and inferred records require persisted supporting Evidence IDs, and rejected
+records never enter trends or lineages.
+
+Paper labels preserve titles up to the existing 4,000-character paper bound.
+Concept labels are bounded to 500 characters and come only from complete
+validated structured fields; M4 does not split prose heuristically. An overlong
+or unavailable concept is omitted and reported as missing rather than truncated
+into a false canonical identity.
+
+Graph responses have separate node, edge, and per-node mention limits, accurate
+totals, and truncation state. Trend responses bound their highest-activity entity
+rows and expose the matching total. Lineage follows only the directed predecessor
+relations `CITES`, `EXTENDS`, and `IMPROVES_ON`; it is cycle-safe and has
+independent depth, node, and edge bounds. It reports
+`CURRENTLY_RETRIEVED_CORPUS`, truncation, and predecessor availability; it cannot
+assert exhaustive or global ancestry.
+
+Seven-, thirty-, and ninety-day statistics are deterministic database-derived
+facts over exact current and preceding windows. Fixed paper-count thresholds,
+denominator handling, and stable representative ranking cannot be changed by a
+model. Insufficient and limited windows remain visible, and a zero or small
+denominator suppresses percentage growth. Paper volume uses each version's first
+published activity date; entity and relation activity use the owning product
+run's logical date, never the server's UTC write date.
+
+Report synthesis receives only bounded persisted highlights, deterministic
+statistics, missing-section declarations, limitations, failures, and a
+section-specific Evidence-ID allowlist. Rejected Evidence is excluded. DeepSeek
+output must contain the fixed ordered section schema, may cite only IDs allowed
+for that section, and may not introduce numeric literals; all published counts
+and percentages remain deterministic fields. Malformed output, an unknown or
+wrong-section citation, or model-authored statistics fails; it is not repaired,
+retried as content, polished by another pass, or replaced by the deterministic
+mode.
+`STRUCTURED_ONLY` is a preselected explicit mode, not a fallback. Weekly and
+monthly synthesis is unavailable until fixed deterministic coverage thresholds
+are met.
 
 ## Relation and confidence boundary
 
@@ -140,8 +188,10 @@ identity prefers canonical arXiv identity where available. Later arXiv/DOI
 enrichment transactionally promotes or merges an earlier S2-only stub and
 rekeys its dependent corpus, embedding, candidate, and discovery rows. Search
 sessions, actions, candidate discoveries, embeddings, comparisons, relations,
-and evidence links retain stable IDs, schema versions, ownership, timestamps,
-exact model/prompt revisions where applicable, source, and verification state.
+graph entities/mentions/edges, trend and lineage snapshots, product runs,
+reports, sections, highlights, and evidence links retain stable IDs, schema
+versions, ownership, timestamps, exact model/prompt revisions where applicable,
+source, and verification state.
 
 Complete prompts, model responses, hidden reasoning, full paper text, PDFs,
 model weights, secrets, and authorization headers are not persisted for
@@ -154,7 +204,9 @@ cross-comparison, cross-paper, or cross-version ownership.
 Item stages advance only after their required durable write commits. Each item
 failure records a failed stage, stable error code, retryability, and concise
 detail. M3 protected operations do not silently mark later graph/publication
-stages complete and are not invoked by FastAPI.
+stages complete and are not invoked by FastAPI. M4 instead opens a distinct
+`PRODUCT_PUBLICATION` run that references the source M2 run, consumes persisted
+M3 comparisons, and owns its graph/trend/report/publication stages.
 
 An interrupted `RUNNING` backfill and an explicitly reinvoked `FAILED`
 backfill both resume from the last committed query boundary, only with the
@@ -166,6 +218,23 @@ overall timeout. Provider, schema, domain, or persistence errors record
 Comparison is accepted only for a completed session and a selected local target.
 It either persists the comparison, dimensions, relations, and evidence links as
 one valid bundle or persists none of them.
+
+Product publication stages graph, trend, and lineage records under its run before
+aggregate calculation. Read APIs expose only artifacts owned by terminal
+`COMPLETE` or `PARTIAL` runs. Final report insertion, item `PUBLISHED` states, and
+terminal run state commit atomically; a failed publication removes its staged
+artifacts without mutating earlier published canonical entities. At least one
+completed item permits a visibly `PARTIAL` report with all missing papers and
+stable errors. No completed item, aggregate failure, model-output failure, or
+final publication failure produces a report and marks the run `FAILED` where
+persistence remains available.
+
+The first start atomically freezes the exact analysis and comparison input IDs.
+An explicit retry reuses the same failed run and frozen inputs after clearing its
+staging rows. A logical-date report is therefore a current-state publication
+snapshot for that source analysis date, not a claim that delayed backfill
+reconstructs the historical end-of-day corpus. A completed artifact is idempotent
+only for the same preselected narrative mode; another mode is a stable conflict.
 
 ## Cloud boundary
 

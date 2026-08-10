@@ -2,86 +2,101 @@
 
 ## Current milestone
 
-M3 - PaSa and Semantic Scholar comparison is complete locally. M1 ingestion and
-M2 structured analysis remain intact on exact CPython 3.13.13. M4 has not
-started.
+M4 - Knowledge graph, trends, reports, and product UI is complete and verified
+locally on exact CPython 3.13.13. The merged M1-M3 ingestion, analysis,
+evidence, scholarly-search, embedding, and comparison behavior remains intact.
 
 ## Completed capabilities
 
-- The authenticated Semantic Scholar adapter provides bounded paper search,
-  metadata, arXiv source mapping, references, citations, and recommendations.
-  Production scholarly operations require `SEMANTIC_SCHOLAR_API_KEY`; Web/API
-  remains keyless and read-only.
-- The first-party PaSa-derived Crawler/Selector persists exact source analysis
-  and year scope, generated Crawler decisions, actions, candidates, discovery
-  provenance, score components, Selector decisions, model usage, limits, and
-  terminal stop reasons. No PaSa code, prompts, models, or providers are copied.
-- Six-month backfill persists its exact query plan, resumable cursor, normalized
-  external identities, corpus membership, representative ranks, and complete
-  embedding contract. Explicit retries resume the same failed window only with
-  identical configuration.
-- v0.1 deliberately uses official `allenai/specter2_base` revision
-  `3447645e1def9117997203454fa4495937bfbd83`, with the tokenizer at the same
-  revision. Title + separator token + abstract is truncated to 512 tokens; the
-  unnormalized final-layer CLS vector has dimension 768.
-- The SPECTER2 Base runtime is Daily-only and pins Transformers 5.3.0, CPU
-  PyTorch 2.13.0, Hugging Face Hub 1.27.0, and safetensors 0.8.0. Build-time
-  preparation verifies the official source weight SHA-256, loads with
-  `trust_remote_code=False` and `weights_only=True`, converts to safetensors,
-  and writes a strict manifest. Runtime loading is local-only and offline.
-- PostgreSQL/pgvector persists model and tokenizer identifiers/revisions,
-  dimension, preprocessing contract, model provenance, source, and
-  `generated_at` with every embedding. Retrieval requires the complete matching
-  contract; there is no generic, commercial, adapter, or alternate-model
-  fallback.
-- Evidence-linked comparisons pin both exact analysis IDs/scopes, fixed ordered
-  dimensions, comparability, evidence, usage, and relation provenance in one
-  atomic bundle. The API and React views expose session/action provenance,
-  candidate scores, comparison evidence, and clearly labelled AI inference.
-- PaSa and Ai2 Scholar QA remain architecture-only audits. The SPECTER2
-  proximity adapter is intentionally not used in v0.1 because Adapters 1.3.0
-  requires Transformers 4.57.x, below the project's patched Transformers 5.3+
-  security floor. Adopting it later requires a new explicit architecture
-  decision after upstream compatibility exists.
+- A topic-scoped relational knowledge graph persists stable Paper,
+  ResearchProblem, Method, Task, Dataset, and Benchmark entities, observed
+  mentions, evidence-linked edges, provenance, verification state, and exact
+  source analysis/comparison ownership. Public reads are SQL-bounded and expose
+  only successful COMPLETE or PARTIAL product publications.
+- Research lineages are persisted and projected with evidence ownership,
+  explicit versus inferred provenance, chronological paper metadata, cycle-safe
+  traversal, permitted predecessor relations, and depth/node/edge limits. The
+  UI describes them as the currently retrieved corpus rather than a globally
+  complete history.
+- Deterministic 7/30/90-day trend snapshots persist exact windows, preceding
+  equal-window comparisons, defined zero-denominator behavior, sufficiency,
+  distinct-paper entity counts, relation activity, and representative papers.
+  API responses apply typed top-N entity limits and expose totals/truncation.
+- A separate `PRODUCT_PUBLICATION` run consumes a frozen snapshot of a prior M2
+  analysis run plus persisted M3 comparisons. Graph, trend, lineage, and report
+  artifacts are run-owned staging data until atomic COMPLETE/PARTIAL
+  publication; FAILED runs expose item errors and leave no staged artifacts.
+  Explicit retry reuses the stable failed run and its frozen inputs.
+- DAILY reports and sufficient-data WEEKLY/MONTHLY reports persist structured
+  counts, graph changes, trends, comparisons, lineage highlights, failures,
+  missing sections, Evidence references, and narrative provenance. The
+  preselected `STRUCTURED_ONLY` and `DEEPSEEK` modes are mode-aware and never
+  fall back. DeepSeek output must satisfy strict JSON, ordered sections,
+  section-specific Evidence allowlists, and a no-numeric-narrative boundary.
+- FastAPI provides bounded graph, trend, lineage, daily/history report, and run
+  reads. The OpenAPI-generated React client powers dashboard, daily history,
+  Cytoscape graph, Recharts trends, lineage, run/item-failure, paper,
+  comparison, and Evidence navigation with visible PARTIAL, insufficiency,
+  uncertainty, provenance, and truncation states.
+- Stanford STORM was audited at commit
+  `fb951af7744dab086e34962e9bc6fe878e145f83`. Its package, source, prompts,
+  retrievers, provider layer, and persistence were not copied or installed.
+  M4 implements only the reviewed coverage-aware outline-to-section pattern as
+  first-party typed synthesis over persisted local data and the existing
+  DeepSeek port.
 
 ## Verification
 
-- `scripts/verify.ps1` and the command paths used by GitHub Actions pass with
-  exact CPython 3.13.13, frozen locks, Ruff, formatting, Pyright, generated API
-  contracts, Python/frontend/Playwright tests, Compose, Terraform, Alembic,
-  real PostgreSQL/pgvector repositories, and model-free CI images.
-- The explicit real SPECTER2 Base smoke passed locally: the pinned model loaded
-  under Transformers 5.3.0, returned finite 768-dimensional vectors, repeated
-  deterministic evaluation was identical, and real pgvector persistence plus
-  cosine retrieval succeeded.
-- The model-bearing Daily production target built successfully, loaded its
-  baked artifact offline as the non-root runtime user, and produced a finite
-  768-dimensional vector. The measured local image size is 785,573,507 bytes.
-- Semantic Scholar fixture, malformed-response, authentication, pagination,
-  retry, rate, and bounded-search tests pass. Its opt-in live smoke is skipped
-  because `SEMANTIC_SCHOLAR_API_KEY` is not configured.
+- `scripts/verify.ps1` passes on exact CPython 3.13.13: frozen locks, Ruff,
+  formatting, Pyright, OpenAPI/TypeScript contract hashes, 434 Python tests
+  passed with four explicit credential/model live tests skipped, 26 frontend
+  tests, two Playwright Chromium flows, Compose, Terraform, clean Alembic
+  upgrade/head/check, PostgreSQL/pgvector integration, and API, Daily, and
+  pinned GROBID image builds.
+- M4 PostgreSQL verification includes 19 focused publication/repository tests;
+  the full integration suite passes 42 tests with four explicit live tests
+  skipped. Clean 0001-to-0004 and populated M3-to-M4 upgrades pass, Alembic has
+  no drift, and the destructive downgrade guard preserves M3 data unless its
+  explicit data-loss flag is supplied.
+- The Python, frontend, and infrastructure repository command paths from all
+  three GitHub Actions jobs pass, including in-place generated-contract diff
+  checks and CI-tagged API/Daily image builds. The local non-administrator shell
+  cannot rewrite protected Program Files for the CI bootstrap-only
+  `corepack enable` step; the already resolved user-scoped pnpm 11.0.9 executed
+  every frontend workflow command successfully.
+- A credentialed live `deepseek-v4-flash` report probe exercised only synthetic
+  bounded input and emitted no prompt, response, Evidence text, or secret. One
+  nonconforming output was rejected as `LLM_OUTPUT_INVALID` without retry or
+  fallback; a subsequent independently classified single call passed schema,
+  ordered-section, Evidence-allowlist, no-numeric-narrative, and domain checks.
 
 ## Deployment
 
-- No foundation, Web/API, Daily, GROBID, Scheduler, secret version, or endpoint
-  is deployed. The configured target remains the existing GCP project in
-  `asia-southeast1`.
-- Deployment builds the explicit model-bearing Daily target. Its pinned model
-  is prepared once in the image; each Job runs offline and does not redownload
-  weights. Normal CI builds the model-free Daily target.
-- Terraform can attach a fixed Semantic Scholar secret version only to the
-  Daily service account. Web/API receives neither Semantic Scholar nor DeepSeek
-  credentials.
+- No production foundation, database, Web/API, Daily Job, GROBID service,
+  Scheduler, secret version, or endpoint was created or changed for M4.
+- The existing local PostgreSQL volume on port 55433 was preserved because it
+  carries a stale pre-final M3 schema under the final M3 revision label. All M4
+  migration and repository verification used disposable pgvector databases.
+- M4 commands are explicit batch operations. The current Terraform Scheduler
+  still invokes the Daily image with its default arXiv-ingestion command; it
+  does not yet orchestrate analysis, comparison, product publication, or
+  periodic reports automatically.
 
 ## Current blockers
 
-- `SEMANTIC_SCHOLAR_API_KEY` is intentionally not configured. This blocks the
-  opt-in live adapter smoke and real historical calls, but not M3 deterministic
-  verification, the read API, or the completed implementation.
-- Production deployment still requires owner-supplied PostgreSQL, DeepSeek, and
-  Semantic Scholar secret versions as applicable, plus successful Google API
-  connectivity. These are deployment blockers, not M3 implementation blockers.
+- Production deployment requires owner-supplied PostgreSQL `DATABASE_URL`,
+  fixed DeepSeek and Semantic Scholar Secret Manager versions as applicable,
+  and successful Google API/authentication connectivity. The missing local
+  Semantic Scholar key blocks only its opt-in live adapter smoke and real M3
+  historical calls, not deterministic M4 publication from persisted inputs.
+- End-to-end scheduled daily publication remains an M5 deployment task because
+  the configured Scheduler currently runs ingestion only. The preserved stale
+  local 55433 volume must be recreated or replaced with explicit owner
+  authorization before it can host M4 data.
 
 ## Next milestone
 
-M4 - Knowledge graph, trends, reports, and product UI. M4 has not started.
+M5 - Product hardening and deployment. It has not started. Its scope includes
+production secrets/database/authentication, full Daily Job orchestration and
+Scheduler verification, operational rollback/backup work, and concurrency
+hardening for periodic report generation.

@@ -1,29 +1,27 @@
 import { Link } from "react-router-dom";
 
-import type { LatestRun } from "../api/client";
+import type { RunItem, RunSummary } from "../api/client";
 import { formatDateTime } from "../lib/format";
 import { RunStatusBadge } from "./RunStatusBadge";
 
 type LatestRunPanelProps = {
-  run: LatestRun;
+  run: RunSummary;
+  items?: RunItem[];
+  heading?: string;
 };
 
-export function LatestRunPanel({ run }: LatestRunPanelProps) {
-  type DisplayableRunItem = LatestRun["items"][number] & {
-    canonical_arxiv_id?: string | null;
-    paper_title?: string | null;
-  };
-
-  const failedItems = run.items.filter(
+export function LatestRunPanel({ run, items = [], heading = "Daily run" }: LatestRunPanelProps) {
+  const failedItems = items.filter(
     (item) => item.status === "FAILED" || item.failed_stage !== null,
-  ) as DisplayableRunItem[];
+  );
 
   return (
     <article className="run-panel card">
       <div className="run-panel-heading">
         <div>
-          <p className="eyebrow">Latest daily run</p>
+          <p className="eyebrow">{heading}</p>
           <h2 className="panel-title">{run.logical_date}</h2>
+          <span className="run-operation">{run.operation.replaceAll("_", " ")}</span>
           {run.analysis_scope ? (
             <span className={`scope-badge ${run.analysis_scope.toLocaleLowerCase()}`}>
               {run.analysis_scope === "FULL_TEXT" ? "Full text analysis" : "Abstract-only analysis"}
@@ -38,8 +36,12 @@ export function LatestRunPanel({ run }: LatestRunPanelProps) {
           <dd>{run.discovered_count}</dd>
         </div>
         <div>
-          <dt>Normalized</dt>
-          <dd>{run.normalized_count}</dd>
+          <dt>Selected</dt>
+          <dd>{run.selected_count}</dd>
+        </div>
+        <div>
+          <dt>Completed</dt>
+          <dd>{run.completed_count}</dd>
         </div>
         <div>
           <dt>Failed</dt>
@@ -71,14 +73,12 @@ export function LatestRunPanel({ run }: LatestRunPanelProps) {
           <h3 id={`run-failures-${run.id}`}>Item failures</h3>
           <ul>
             {failedItems.map((item) => {
-              const identifier = item.canonical_arxiv_id
-                ? `arXiv:${item.canonical_arxiv_id}`
-                : item.paper_id;
+              const identifier = `arXiv:${item.canonical_arxiv_id}`;
               return (
                 <li key={item.id}>
                   <Link to={`/papers/${item.paper_id}`}>
-                    <strong>{item.paper_title ?? identifier}</strong>
-                    {item.paper_title ? <span>{identifier}</span> : null}
+                    <strong>{item.paper_title}</strong>
+                    <span>{identifier}</span>
                   </Link>
                   <dl>
                     <div>

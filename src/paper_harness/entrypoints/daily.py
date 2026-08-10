@@ -15,6 +15,8 @@ def main() -> None:
         "historical-backfill",
         "search-related",
         "compare-papers",
+        "publish-product",
+        "generate-periodic-report",
     }
     if arguments and arguments[0] in explicit_operations:
         app(prog_name="paper-harness-daily", args=arguments)

@@ -18,7 +18,6 @@ from paper_harness.application.read_models import (
     AnalysisTarget,
     PaperDetail,
     RunDetail,
-    RunItemDetail,
     StoredTopic,
 )
 from paper_harness.domain.analysis import (
@@ -60,7 +59,6 @@ from paper_harness.domain.models import (
     RunStatus,
     TopicConfig,
 )
-from paper_harness.domain.reports import Report, ReportFailure
 from paper_harness.ports.arxiv import ArxivPaperRecord
 from paper_harness.ports.repository import (
     MigrationIncompatibleError,
@@ -93,11 +91,12 @@ from .models import (
     TopicPaperRow,
     TopicRow,
 )
+from .product_repository import ProductRepositoryMixin
 
-EXPECTED_DATABASE_REVISION = "0003_m3_pasa_semantic_scholar"
+EXPECTED_DATABASE_REVISION = "0004_m4_graph_trends_reports"
 
 
-class PostgresRepository(HistoricalRepositoryMixin):
+class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
         self._sessions = sessionmaker(engine, expire_on_commit=False)
@@ -1173,51 +1172,7 @@ class PostgresRepository(HistoricalRepositoryMixin):
         if topic_slug is not None:
             statement = statement.join(TopicRow).where(TopicRow.slug == topic_slug)
         statement = statement.order_by(DailyRunRow.started_at.desc()).limit(1)
-        try:
-            with self._sessions() as session:
-                run_row = session.scalars(statement).one_or_none()
-                if run_row is None:
-                    return None
-                item_rows = tuple(
-                    session.execute(
-                        select(RunItemRow, PaperRow)
-                        .join(PaperRow, PaperRow.id == RunItemRow.paper_id)
-                        .where(RunItemRow.run_id == run_row.id)
-                        .order_by(RunItemRow.created_at, RunItemRow.id)
-                    )
-                )
-                report_row = session.scalars(
-                    select(ReportRow).where(ReportRow.run_id == run_row.id)
-                ).one_or_none()
-                failure_rows = (
-                    ()
-                    if report_row is None
-                    else tuple(
-                        session.scalars(
-                            select(ReportFailureRow)
-                            .where(ReportFailureRow.report_id == report_row.id)
-                            .order_by(ReportFailureRow.created_at, ReportFailureRow.id)
-                        )
-                    )
-                )
-        except OperationalError as error:
-            raise RepositoryUnavailableError(
-                "PostgreSQL latest run query is unavailable"
-            ) from error
-        return RunDetail(
-            run=_run_from_row(run_row),
-            items=tuple(
-                RunItemDetail(
-                    item=_item_from_row(item_row),
-                    canonical_arxiv_id=paper_row.canonical_arxiv_id,
-                    paper_title=paper_row.title,
-                )
-                for item_row, paper_row in item_rows
-            ),
-            report=(
-                None if report_row is None else _report_from_rows(report_row, tuple(failure_rows))
-            ),
-        )
+        return self._get_run_detail_by_statement(statement)
 
 
 def _add_parsed_paper(session: Session, parsed: ParsedPaper, *, created_at: datetime) -> None:
@@ -1636,24 +1591,7 @@ def _run_from_row(row: DailyRunRow) -> DailyRun:
         error_detail=row.error_detail,
         schema_version=row.schema_version,
         created_at=row.created_at,
-    )
-
-
-def _item_from_row(row: RunItemRow) -> RunItem:
-    return RunItem(
-        id=row.id,
-        run_id=row.run_id,
-        paper_id=row.paper_id,
-        paper_version_id=row.paper_version_id,
-        stage=PaperStage(row.stage),
-        status=RunItemStatus(row.status),
-        failed_stage=None if row.failed_stage is None else PaperStage(row.failed_stage),
-        error_code=row.error_code,
-        retryable=row.retryable,
-        error_detail=row.error_detail,
-        schema_version=row.schema_version,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
+        source_run_id=row.source_run_id,
     )
 
 
@@ -1730,37 +1668,6 @@ def _evidence_from_row(row: EvidenceRow, supported_claim_ids: tuple[UUID, ...]) 
         verification_status=VerificationStatus(row.verification_status),
         schema_version=row.schema_version,
         created_at=row.created_at,
-    )
-
-
-def _report_from_rows(row: ReportRow, failure_rows: tuple[ReportFailureRow, ...]) -> Report:
-    return Report(
-        id=row.id,
-        run_id=row.run_id,
-        topic_id=row.topic_id,
-        logical_date=row.logical_date,
-        status=RunStatus(row.status),
-        title=row.title,
-        summary=row.summary,
-        source=row.source,
-        generated_at=row.generated_at,
-        schema_version=row.schema_version,
-        created_at=row.created_at,
-        failures=tuple(
-            ReportFailure(
-                id=failure.id,
-                report_id=failure.report_id,
-                paper_id=failure.paper_id,
-                paper_version_id=failure.paper_version_id,
-                failed_stage=PaperStage(failure.failed_stage),
-                error_code=failure.error_code,
-                retryable=failure.retryable,
-                error_detail=failure.error_detail,
-                schema_version=failure.schema_version,
-                created_at=failure.created_at,
-            )
-            for failure in failure_rows
-        ),
     )
 
 

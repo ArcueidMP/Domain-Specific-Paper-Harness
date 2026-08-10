@@ -86,9 +86,17 @@ export function PaperDetailPage() {
           <h1>{detail.title}</h1>
           <p className="paper-detail-authors">{detail.authors.join(", ")}</p>
         </div>
-        <a className="primary-button" href={detail.pdf_url} target="_blank" rel="noreferrer">
-          Open source PDF <span aria-hidden="true">↗</span>
-        </a>
+        <div className="paper-detail-actions">
+          <a className="primary-button" href={detail.pdf_url} target="_blank" rel="noreferrer">
+            Open source PDF <span aria-hidden="true">↗</span>
+          </a>
+          <Link className="section-link" to={`/graph?paper_id=${detail.id}`}>
+            View paper graph
+          </Link>
+          <Link className="section-link" to={`/lineages/${detail.id}`}>
+            View research lineage
+          </Link>
+        </div>
       </header>
 
       <div className="paper-facts card" aria-label="Paper metadata">

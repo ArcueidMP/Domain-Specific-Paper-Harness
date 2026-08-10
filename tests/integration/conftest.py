@@ -39,7 +39,14 @@ def postgres_repository(postgres_engine: Engine) -> Generator[PostgresRepository
     with postgres_engine.begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE relation_evidence_links, paper_relations, "
+                "TRUNCATE report_evidence_links, lineage_edges, "
+                "graph_edge_evidence_links, graph_mention_evidence_links, "
+                "report_lineage_highlights, report_trend_links, "
+                "report_comparison_highlights, report_entity_highlights, "
+                "report_paper_highlights, report_sections, report_failures, reports, "
+                "trend_representative_papers, trend_metrics, lineage_nodes, graph_edges, "
+                "graph_entity_mentions, trend_snapshots, lineage_snapshots, graph_entities, "
+                "relation_evidence_links, paper_relations, "
                 "comparison_evidence_links, comparison_dimensions, comparisons, "
                 "scientific_embeddings, search_candidate_discoveries, search_candidates, "
                 "search_actions, search_sessions, historical_corpus_entries, "

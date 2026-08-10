@@ -211,6 +211,14 @@ describe("PaperDetailPage", () => {
       "href",
       `#claim-${claimId}`,
     );
+    expect(screen.getByRole("link", { name: "View paper graph" })).toHaveAttribute(
+      "href",
+      `/graph?paper_id=${paperId}`,
+    );
+    expect(screen.getByRole("link", { name: "View research lineage" })).toHaveAttribute(
+      "href",
+      `/lineages/${paperId}`,
+    );
   });
 
   it("shows an honest no-analysis state and does not request evidence", async () => {

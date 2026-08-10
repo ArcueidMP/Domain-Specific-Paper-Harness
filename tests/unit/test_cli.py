@@ -49,6 +49,38 @@ def test_related_search_cli_exposes_every_execution_bound() -> None:
 
 
 @pytest.mark.parametrize(
+    ("command_name", "expected_options"),
+    [
+        ("publish-product", {"--topic-config", "--logical-date", "--narrative-mode"}),
+        (
+            "generate-periodic-report",
+            {
+                "--topic-config",
+                "--report-type",
+                "--period-start",
+                "--period-end",
+                "--narrative-mode",
+            },
+        ),
+    ],
+)
+def test_m4_cli_commands_expose_explicit_report_inputs(
+    command_name: str,
+    expected_options: set[str],
+) -> None:
+    root = get_command(app)
+    assert isinstance(root, TyperGroup)
+    command = root.commands[command_name]
+    exposed = {
+        name
+        for parameter in command.params
+        if isinstance(parameter, TyperOption)
+        for name in parameter.opts
+    }
+    assert expected_options <= exposed
+
+
+@pytest.mark.parametrize(
     ("status", "completed_count", "failed_count", "exit_code", "level", "event"),
     [
         (RunStatus.COMPLETE, 1, 0, 0, "INFO", "structured_analysis_completed"),
@@ -113,6 +145,66 @@ def test_analysis_cli_exit_and_log_severity_follow_persisted_run_status(
             "--analysis-scope",
             "abstract_only",
         ],
+    )
+
+    assert result.exit_code == exit_code
+    assert f'"level":"{level}"' in result.output
+    assert f'"event":"{event}"' in result.output
+
+
+@pytest.mark.parametrize(
+    ("status", "exit_code", "level", "event"),
+    [
+        (RunStatus.COMPLETE, 0, "INFO", "product_publication_completed"),
+        (RunStatus.PARTIAL, 0, "WARNING", "product_publication_partial"),
+        (RunStatus.FAILED, 1, "ERROR", "product_publication_failed"),
+    ],
+)
+def test_product_cli_exit_and_log_severity_follow_persisted_run_status(
+    monkeypatch: pytest.MonkeyPatch,
+    status: RunStatus,
+    exit_code: int,
+    level: str,
+    event: str,
+) -> None:
+    run = DailyRun(
+        id=UUID("9d74e855-fc9d-4947-bcbf-d1d7218a0427"),
+        topic_id=UUID("4b7db6d4-349c-5c06-bc41-f84091580fcb"),
+        source_run_id=UUID("b0a47819-8190-4ff4-8bfc-68bd94e50325"),
+        logical_date=date(2026, 8, 10),
+        operation=RunOperation.PRODUCT_PUBLICATION,
+        analysis_scope=None,
+        status=status,
+        started_at=datetime(2026, 8, 10, 5, tzinfo=UTC),
+        completed_at=datetime(2026, 8, 10, 5, 1, tzinfo=UTC),
+        cursor_from=None,
+        cursor_to=None,
+        discovered_count=0,
+        normalized_count=0,
+        selected_count=1,
+        completed_count=0 if status is RunStatus.FAILED else 1,
+        failed_count=0 if status is RunStatus.COMPLETE else 1,
+        error_code="NO_SELECTED_PAPER_COMPLETED" if status is RunStatus.FAILED else None,
+        error_detail="No selected paper completed graph construction."
+        if status is RunStatus.FAILED
+        else None,
+        schema_version=1,
+        created_at=datetime(2026, 8, 10, 5, tzinfo=UTC),
+    )
+
+    def execute_stub(
+        *,
+        topic_config: Path,
+        logical_date: date | None,
+        narrative_mode: object,
+    ) -> DailyRun:
+        del topic_config, logical_date, narrative_mode
+        return run
+
+    monkeypatch.setattr(cli_module, "execute_product_publication", execute_stub)
+    result = CliRunner().invoke(
+        app,
+        ["publish-product", "--narrative-mode", "structured_only"],
     )
 
     assert result.exit_code == exit_code

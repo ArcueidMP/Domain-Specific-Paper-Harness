@@ -6,17 +6,19 @@ Domain-Specific Paper Harness is a private research-intelligence product for
 broad LLM-agent research. Daily discovery is arXiv-only. PostgreSQL stores
 canonical papers and versions, parsed scientific text, structured analyses and
 evidence, historical-paper stubs, scholarly-search provenance, comparisons,
-relations, run items, and deterministic reports. FastAPI exposes read-oriented
-data and serves the compiled React application in production.
+relations, provenance-aware graph records, deterministic trend and lineage
+snapshots, run items, and structured reports. FastAPI exposes read-oriented data
+and serves the compiled React application in production.
 
 The Ports-and-Adapters modular monolith has three deployment units:
 
 1. `web-api` serves health checks, FastAPI under `/api/v1`, and the React build.
    It is keyless with respect to DeepSeek and Semantic Scholar.
 2. `daily` runs explicit arXiv ingestion, structured analysis, six-month
-   historical backfill, related-work search, or paper-comparison commands. These
-   commands are protected operator operations and are not automatically chained
-   by FastAPI or an in-process scheduler.
+   historical backfill, related-work search, paper comparison, product
+   publication, or sufficient-data periodic-report commands. These commands are
+   protected operator operations and are not automatically chained by FastAPI
+   or an in-process scheduler.
 3. `grobid` is the sole scientific PDF parser for `FULL_TEXT` analysis. It is a
    separate IAM-authenticated Cloud Run service in the Terraform design and an
    opt-in hardened Compose service locally.
@@ -59,6 +61,11 @@ Upstream reuse remains deliberately narrow:
   `3447645e1def9117997203454fa4495937bfbd83`. The Daily production image
   contains a hash-verified safetensors conversion and loads it offline; no
   upstream Python source is copied.
+- STORM commit `fb951af7744dab086e34962e9bc6fe878e145f83` supplies only the
+  coverage-aware outline-to-section architectural pattern. M4 report assembly
+  is first-party typed code over persisted local evidence. STORM source,
+  prompts, internet retrievers, provider wrappers, embeddings, and filesystem
+  persistence are not installed, copied, or called.
 
 ## Daily arXiv ingestion
 
@@ -187,38 +194,108 @@ how strongly the cited evidence supports that relation. It is constrained to
 verification. The UI must label it accordingly and display `UNVERIFIED`
 separately.
 
+## M4 graph, trends, lineages, and reports
+
+M4 deliberately starts a separate `PRODUCT_PUBLICATION` run sourced from one
+persisted M2 analysis run. It does not mutate M2's terminal
+`EVIDENCE_EXTRACTED` items or pretend that M3's separately persisted search and
+comparison records advanced them. Each product item requires an available M3
+comparison and then advances durably through comparison, graph update,
+trend-snapshot preparation, report generation, and publication. A publication
+run with at least one completed item may become `PARTIAL`; zero completed items
+or a report/publication transaction failure becomes `FAILED`.
+
+The graph uses topic-scoped canonical entities for Paper, ResearchProblem,
+Method, Task, Dataset, and Benchmark. Conservative NFKC, punctuation-variant,
+whitespace, and case normalization merges only exact canonical keys. Mentions
+and edges retain exact analysis/comparison/paper-relation owners, evidence IDs,
+provenance, model metadata where applicable, confidence meaning, and
+verification state. Text-explicit and LLM-inferred records require evidence;
+LLM-inferred records additionally require complete model provenance and the
+uncalibrated support score. Paper labels retain the 4,000-character title bound;
+concept labels are complete validated fields capped at 500 characters and are
+omitted rather than heuristically split or truncated. Graph reads independently
+bound nodes, edges, and mentions and expose accurate totals and truncation.
+
+Lineage snapshots traverse only permitted persisted paper relations within the
+currently retrieved corpus. Traversal is deterministic, cycle-safe, and bounded
+by depth, nodes, and edges. The response states truncation, corpus scope,
+explicit and verified predecessor availability, and limitations; global
+completeness is never claimed.
+
+Trend snapshots use exact inclusive 7-, 30-, and 90-day windows and equal-sized
+preceding windows over persisted paper/version activity. Paper volume uses each
+version's first activity; entity mentions and relations use their owning
+publication run's logical date. Counts are distinct by paper, entity appearances
+and relation keys are deterministic, representative papers have a stable
+ranking, and fixed thresholds distinguish `SUFFICIENT`, `LIMITED`, and
+`INSUFFICIENT`. Zero denominators and small denominators suppress percentage
+growth rather than inventing a value. Read projections return a bounded Top-N
+entity list with total and truncation metadata; relation types and representative
+papers are already fixed-domain bounded.
+
+Daily reports use a fixed five-section outline and persist counts, paper/entity/
+comparison/lineage highlights, trend links, failures, missing sections,
+Evidence-ID links, and full model provenance where applicable. The narrative
+mode is selected before execution: `DEEPSEEK` uses the existing strict LLMPort
+method and rejects unknown or wrong-section citations, rejected Evidence,
+malformed sections, and any model-authored numeric literal; `STRUCTURED_ONLY` is
+an explicit deterministic mode and never an error fallback. Missing-section
+declarations enter the authoritative request before synthesis. Weekly reports
+require seven daily dates and at least three papers; monthly reports require at
+least twenty daily dates and ten papers. Statistics remain deterministic and
+authoritative in either mode.
+
 ## Read API and product UI
 
 FastAPI reads through `RepositoryPort`; OpenAPI is the sole frontend contract.
-M3 extends the existing API with:
+The M4 read surface includes:
 
-- `GET /api/v1/papers/{paper_id}/related`, optionally pinned to a paper version;
-  and
-- `GET /api/v1/comparisons/{comparison_id}`.
+- graph filtering by topic, date, paper, exact entity, type, provenance, and
+  verification with independent node/edge/mention bounds;
+- 7/30/90-day trend snapshots with representative papers, explicit data
+  sufficiency, entity-type filtering, and a bounded entity projection;
+- bounded lineage lookup;
+- latest and dated product-publication runs, item failures, daily-report history,
+  and exact weekly/monthly period reports; and
+- direct historical run lookup in addition to the existing paper, evidence,
+  related-work, and comparison reads.
 
-The related-work projection exposes the owning session, explicit bounds and stop
-reason, model usage, actions, candidate scores and decisions, each discovery's
-action linkage, and comparison summaries. The comparison projection exposes
-both exact paper versions, comparability, the ordered matrix, evidence excerpts,
-relations, provenance, usage, and verification state. React adds paper-detail
-related-work inspection and a comparison route. The API remains read-only: it
-has no public execution endpoint and never migrates on startup.
+React provides the dashboard, daily-report history/detail, paper and comparison
+views, a Cytoscape graph with trust filters, 7/30/90-day Recharts views, lineage
+inspection, run status, and item-level failure display. The API remains
+read-only: it has no public execution endpoint and never migrates on startup.
 
 ## Persistence and transactions
 
 Migration `0002_m2_structured_analysis` owns parsed papers, analyses, evidence,
-reports, and failures. The current M3 migration
+legacy analysis reports, and failures. M3 migration
 `0003_m3_pasa_semantic_scholar` adds normalized external stubs and identifiers,
 backfill runs and corpus entries, search sessions/actions/candidates/discoveries,
 768-dimensional pgvector embeddings with complete model/tokenizer/preprocessing
 provenance, comparisons/dimensions/evidence links, and paper
-relations/relation-evidence links.
+relations/relation-evidence links. Current migration
+`0004_m4_graph_trends_reports` adds topic-scoped graph entities, mentions, edges
+and evidence links; deterministic trend metrics and representative papers;
+bounded lineage snapshots/nodes/edges; product-run source ownership; and
+normalized report sections, highlights, trend/lineage/evidence links, periods,
+counts, narrative mode, and model provenance. Existing M2 rows are preserved as
+`ANALYSIS` reports.
 
 External calls occur outside short write transactions. Backfill pages advance
 their cursor only with the page's validated records. Search actions and
 candidate provenance preserve their owning session. Comparison ownership
 constraints prevent a relation or evidence link from crossing its two paper
 versions. A failed comparison write rolls the complete bundle back.
+
+The first product-publication start atomically stores its exact source analysis
+and comparison input IDs. Graph, trend, and lineage writes are run-owned staging
+data; public reads admit only terminal `COMPLETE` or `PARTIAL` owners. Final
+report, report links, item publication states, and run status commit atomically.
+Failure removes staging without changing prior published canonical entities, and
+an explicit retry reuses the failed run plus frozen input snapshot. Because M3
+comparisons necessarily follow M2 analysis, a delayed/backfilled logical date is
+a current-state publication snapshot, not a historical end-of-day reconstruction.
 
 ## Runtime and deployment
 
@@ -255,11 +332,13 @@ deployment blockers.
 
 ## Verification
 
-`scripts/verify.ps1` is the canonical Windows entrypoint. The current M3
-worktree passes its credential-free gate: exact Python, frozen dependency sets,
+`scripts/verify.ps1` is the canonical Windows entrypoint. The credential-free
+gate covers exact Python, frozen dependency sets,
 backend/frontend quality checks, generated-contract drift, Compose, Terraform,
 clean sequential Alembic upgrades, PostgreSQL/pgvector repository tests,
-credential-free browser tests, and all three focused image builds.
+credential-free browser tests, and all three focused image builds. M4 adds clean
+and populated `0003 -> 0004` migration checks plus graph, lineage, trend,
+publication, report, API-contract, React, and Playwright coverage.
 
 Default verification never calls Semantic Scholar. The live adapter smoke is
 explicitly opt-in with `RUN_LIVE_SEMANTIC_SCHOLAR_TEST=1`; selecting it without

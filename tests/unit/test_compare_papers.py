@@ -46,6 +46,7 @@ from paper_harness.domain.historical import (
     SelectionDecision,
 )
 from paper_harness.domain.identity import stable_comparison_id
+from paper_harness.domain.reports import GeneratedReportNarrative, ReportNarrativeRequest
 from paper_harness.ports.llm import LLMPort
 from paper_harness.ports.repository import RepositoryPort
 
@@ -126,6 +127,10 @@ class _LLM:
     def compare_papers(self, request: ComparisonRequest) -> GeneratedComparison:
         self.calls.append(request)
         return self.result
+
+    def generate_report(self, request: ReportNarrativeRequest) -> GeneratedReportNarrative:
+        del request
+        raise AssertionError("report generation is not part of comparison")
 
 
 def _paper(*, paper_id: UUID, version_id: UUID, evidence_id: UUID) -> ComparisonPaperInput:

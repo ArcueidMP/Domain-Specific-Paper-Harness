@@ -20,7 +20,8 @@ The complete product state order is:
 ```text
 DISCOVERED -> NORMALIZED -> ENRICHED -> RELEVANCE_SCORED -> SELECTED
 -> PDF_DOWNLOADED -> PARSED -> ANALYZED -> EVIDENCE_EXTRACTED
--> PRIOR_WORK_RETRIEVED -> COMPARED -> GRAPH_UPDATED -> PUBLISHED
+-> PRIOR_WORK_RETRIEVED -> COMPARED -> GRAPH_UPDATED
+-> TREND_SNAPSHOTS_GENERATED -> REPORT_GENERATED -> PUBLISHED
 ```
 
 M1 ingestion reaches normalization. The M2 structured-analysis operation starts
@@ -28,8 +29,11 @@ explicitly selected items at `SELECTED` and terminates successfully at
 `EVIDENCE_EXTRACTED`. Current M3 historical backfill, related-work search, and
 comparison are separate protected operations with their own persisted records;
 they do not simulate later graph/publication stages or silently advance M2 run
-items. The M4 stages are not simulated or marked complete. An item advances
-only after its required durable write commits.
+items. M4 opens a separate `PRODUCT_PUBLICATION` run with `source_run_id`
+pointing to the completed or partial M2 analysis run. Its items consume only
+persisted M3 comparisons and advance through graph, trend, report, and
+publication work. An item advances only after its required durable write
+commits.
 
 `FULL_TEXT` and `ABSTRACT_ONLY` are selected before analysis. A failed PDF
 download or GROBID parse records a full-text failure and never changes scope.
@@ -173,7 +177,57 @@ a run-level error. A separate best-effort `FAILED` transition follows. If the
 database remains unavailable, the run may remain `RUNNING`; operator
 reconciliation is then required before another logical-date attempt.
 
+## M4 product-publication and report failures
+
+Product publication validates the source run and persisted comparison inputs
+before graph work. A selected source item without a comparison fails at
+`COMPARED` with `COMPARISON_MISSING`; other items may continue. Invalid graph
+ownership, provenance, evidence, or canonical identity fails that item at
+`GRAPH_UPDATED`. If no item completes graph construction, the product run is
+`FAILED` and no report is published.
+
+Trend and lineage aggregation consume only committed topic-scoped graph records.
+Invalid windows, orphan references, or persistence failure is run-level at
+`TREND_SNAPSHOTS_GENERATED`. Trend percentages remain absent for zero or
+insufficient denominators; that is an honest data state, not an error or value
+to be filled by a model. Public reads ignore all artifacts owned by a `RUNNING`
+or `FAILED` product run.
+
+The report narrative mode is fixed before the run starts. In `DEEPSEEK` mode,
+missing configuration fails before database work. Empty, malformed,
+schema-invalid, incorrectly ordered, usage-invalid, domain-invalid, or
+unknown/wrong-section Evidence-ID output, rejected-Evidence reference, or
+model-authored numeric literal fails at `REPORT_GENERATED`; it is not repaired,
+content-retried, polished, or replaced by `STRUCTURED_ONLY`. The latter is a
+separate explicit deterministic mode. Reusing a completed identity with another
+narrative mode fails with `REPORT_NARRATIVE_MODE_CONFLICT`. Weekly and monthly
+requests that do not meet the fixed date/paper coverage thresholds fail with
+`REPORT_DATA_INSUFFICIENT` and persist no aggregate report.
+
+Final report, sections, links, item `PUBLISHED` states, and terminal product-run
+state commit atomically. At least one successful item plus item failures yields
+`PARTIAL` and a prominent failure list. Every successful item yields `COMPLETE`.
+Zero successful items, aggregate/report failure, or final transaction failure
+yields no report and removes run-owned staged graph, trend, and lineage records.
+Repeating an already complete or partial logical product run returns its
+persisted result only for the same narrative mode. An explicit retry of a
+`FAILED` run clears staging and reuses the same stable run plus its atomically
+frozen analysis/comparison input snapshot. An existing `RUNNING` run still
+requires operator reconciliation rather than duplicate publication.
+
+The source analysis run and product run share one logical date. Comparisons are
+necessarily produced after analysis, so the first publication freezes the
+current persisted inputs instead of applying the source completion time as a
+false cutoff. Delayed/backfilled publication is labelled as a current-state
+snapshot, not a historical end-of-day reconstruction.
+
 ## Destructive migration downgrade procedure
+
+Downgrading `0004_m4_graph_trends_reports` to
+`0003_m3_pasa_semantic_scholar` permanently removes product runs, graph records,
+trend and lineage snapshots, and M4 report structure. It preserves legacy M2
+`ANALYSIS` reports. The migration refuses when M4 data exists unless
+`-x allow_m4_data_loss=true` is supplied.
 
 Downgrading `0003_m3_pasa_semantic_scholar` to
 `0002_m2_structured_analysis` permanently removes historical stubs and aliases,
@@ -186,7 +240,7 @@ reports, and structured-analysis run data and requires
 `-x allow_m2_data_loss=true` when such data exists. Neither flag creates or
 validates a backup.
 
-Before either destructive downgrade:
+Before any destructive downgrade:
 
 1. Stop every writer and record the database identity, Alembic revision, UTC
    time, and affected table row counts.
@@ -203,10 +257,13 @@ may the operator use the matching flag, for example:
 
 ```powershell
 D:\Tools\uv\uv.exe run --frozen --python 3.13.13 alembic `
+  -x allow_m4_data_loss=true downgrade 0003_m3_pasa_semantic_scholar
+
+D:\Tools\uv\uv.exe run --frozen --python 3.13.13 alembic `
   -x allow_m3_data_loss=true downgrade 0002_m2_structured_analysis
 ```
 
-Production currently has no configured database and no production M3 data.
+Production currently has no configured database and no production M4 data.
 
 ## API readiness and presentation
 

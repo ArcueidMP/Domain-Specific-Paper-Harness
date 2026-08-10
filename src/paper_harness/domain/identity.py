@@ -32,6 +32,11 @@ EMBEDDING_NAMESPACE = UUID("cf44753b-3e97-4380-ad64-8aad2ac810a1")
 COMPARISON_NAMESPACE = UUID("056381f3-78bf-4929-af6f-983800a8dde9")
 COMPARISON_DIMENSION_NAMESPACE = UUID("b9157c1a-8407-4304-a3b6-ff7eec448fb0")
 PAPER_RELATION_NAMESPACE = UUID("e5799c68-7f25-48e8-a86b-65f6594bbd97")
+GRAPH_ENTITY_NAMESPACE = UUID("ec6392cf-c38b-4fdb-b205-59c9bf80f8fe")
+GRAPH_ENTITY_MENTION_NAMESPACE = UUID("d73b3650-d074-4d28-991c-bd97e8fc4899")
+GRAPH_EDGE_NAMESPACE = UUID("09c7e488-4471-430e-87f7-6d9312918710")
+LINEAGE_SNAPSHOT_NAMESPACE = UUID("048c51ec-5f00-4245-bb51-5e66123a32f4")
+TREND_SNAPSHOT_NAMESPACE = UUID("eb58cde7-537d-4677-aa2f-b71b5fe3d6a2")
 
 _ARXIV_VERSIONED_ID = re.compile(
     r"^(?P<canonical>(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7}))v(?P<version>[1-9]\d*)$",
@@ -143,6 +148,25 @@ def stable_evidence_id(analysis_id: UUID, evidence_key: str) -> UUID:
 
 def stable_report_id(run_id: UUID) -> UUID:
     return uuid5(REPORT_NAMESPACE, str(run_id))
+
+
+def stable_periodic_report_id(
+    topic_id: UUID,
+    report_type: str,
+    period_start: date,
+    period_end: date,
+) -> UUID:
+    """Return a stable identity for a run-independent weekly or monthly report."""
+
+    type_value = report_type.strip()
+    if type_value not in {"WEEKLY", "MONTHLY"}:
+        raise DomainInvariantError("periodic report identity requires weekly or monthly scope")
+    if period_start > period_end:
+        raise DomainInvariantError("periodic report identity has a reversed period")
+    return uuid5(
+        REPORT_NAMESPACE,
+        f"periodic:{topic_id}:{type_value}:{period_start.isoformat()}:{period_end.isoformat()}",
+    )
 
 
 def stable_external_paper_id(
@@ -286,4 +310,139 @@ def stable_paper_relation_id(
         PAPER_RELATION_NAMESPACE,
         f"{comparison_id}:{source_paper_version_id}:{target_paper_version_id}:"
         f"{relation_type}:{provenance}:{model_version or 'none'}:{prompt_version or 'none'}",
+    )
+
+
+def _encode_identity_parts(*parts: str) -> str:
+    """Length-prefix identity parts so embedded delimiters cannot cause collisions."""
+
+    return "".join(f"{len(part)}:{part}" for part in parts)
+
+
+def stable_graph_entity_id(topic_id: UUID, entity_type: str, normalized_key: str) -> UUID:
+    entity_type_value = entity_type.strip()
+    key_value = normalized_key.strip()
+    if not entity_type_value or not key_value:
+        raise DomainInvariantError("graph entity type and normalized key are required")
+    return uuid5(
+        GRAPH_ENTITY_NAMESPACE,
+        _encode_identity_parts(str(topic_id), entity_type_value, key_value),
+    )
+
+
+def stable_graph_paper_entity_id(topic_id: UUID, paper_id: UUID) -> UUID:
+    return stable_graph_entity_id(topic_id, "PAPER", f"paper:{paper_id}")
+
+
+def stable_graph_entity_mention_id(
+    entity_id: UUID,
+    paper_version_id: UUID,
+    *,
+    analysis_id: UUID | None = None,
+    comparison_id: UUID | None = None,
+) -> UUID:
+    if (analysis_id is None) == (comparison_id is None):
+        raise DomainInvariantError(
+            "graph entity mention requires exactly one analysis or comparison owner"
+        )
+    owner_kind = "analysis" if analysis_id is not None else "comparison"
+    owner_id = analysis_id if analysis_id is not None else comparison_id
+    assert owner_id is not None
+    return uuid5(
+        GRAPH_ENTITY_MENTION_NAMESPACE,
+        _encode_identity_parts(
+            str(entity_id),
+            str(paper_version_id),
+            owner_kind,
+            str(owner_id),
+        ),
+    )
+
+
+def stable_graph_edge_id(
+    source_entity_id: UUID,
+    target_entity_id: UUID,
+    relation_type: str,
+    source_paper_version_id: UUID,
+    *,
+    target_paper_version_id: UUID | None = None,
+    analysis_id: UUID | None = None,
+    comparison_id: UUID | None = None,
+    paper_relation_id: UUID | None = None,
+) -> UUID:
+    relation_value = relation_type.strip()
+    if source_entity_id == target_entity_id:
+        raise DomainInvariantError("graph edges cannot be self-relations")
+    if not relation_value:
+        raise DomainInvariantError("graph edge relation type is required")
+    if analysis_id is None and comparison_id is None:
+        raise DomainInvariantError("graph edge requires an analysis or comparison owner")
+    if analysis_id is not None and comparison_id is not None:
+        raise DomainInvariantError("graph edge cannot have both analysis and comparison owners")
+    if paper_relation_id is not None and comparison_id is None:
+        raise DomainInvariantError("paper-relation graph edge requires a comparison owner")
+    return uuid5(
+        GRAPH_EDGE_NAMESPACE,
+        _encode_identity_parts(
+            str(source_entity_id),
+            str(target_entity_id),
+            relation_value,
+            str(source_paper_version_id),
+            str(target_paper_version_id or "none"),
+            str(analysis_id or "none"),
+            str(comparison_id or "none"),
+            str(paper_relation_id or "none"),
+        ),
+    )
+
+
+def stable_lineage_snapshot_id(
+    topic_id: UUID,
+    root_paper_id: UUID,
+    as_of_date: date,
+    *,
+    permitted_relation_types: tuple[str, ...],
+    max_depth: int,
+    max_nodes: int,
+    max_edges: int,
+    lineage_version: str,
+) -> UUID:
+    relation_values = tuple(sorted(set(permitted_relation_types)))
+    if not relation_values:
+        raise DomainInvariantError("lineage requires at least one permitted relation type")
+    if max_depth < 1 or max_nodes < 1 or max_edges < 1 or not lineage_version.strip():
+        raise DomainInvariantError("lineage identity bounds and version must be positive")
+    return uuid5(
+        LINEAGE_SNAPSHOT_NAMESPACE,
+        _encode_identity_parts(
+            str(topic_id),
+            str(root_paper_id),
+            as_of_date.isoformat(),
+            *relation_values,
+            str(max_depth),
+            str(max_nodes),
+            str(max_edges),
+            lineage_version,
+        ),
+    )
+
+
+def stable_trend_snapshot_id(
+    topic_id: UUID,
+    as_of_date: date,
+    window: str,
+    aggregation_version: str,
+) -> UUID:
+    window_value = window.strip()
+    version_value = aggregation_version.strip()
+    if not window_value or not version_value:
+        raise DomainInvariantError("trend window and aggregation version are required")
+    return uuid5(
+        TREND_SNAPSHOT_NAMESPACE,
+        _encode_identity_parts(
+            str(topic_id),
+            as_of_date.isoformat(),
+            window_value,
+            version_value,
+        ),
     )

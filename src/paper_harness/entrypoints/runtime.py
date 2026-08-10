@@ -21,8 +21,10 @@ from paper_harness.adapters.semantic_scholar import (
 from paper_harness.adapters.specter2 import load_specter2_encoder
 from paper_harness.application.analyze_papers import AnalyzePapers
 from paper_harness.application.compare_papers import ComparePapers
+from paper_harness.application.generate_periodic_report import GeneratePeriodicReport
 from paper_harness.application.historical_backfill import HistoricalBackfill
 from paper_harness.application.ingest_arxiv import IngestArxiv
+from paper_harness.application.publish_product import PublishProduct
 from paper_harness.application.read_models import SearchSessionDetail
 from paper_harness.application.related_work import RelatedWorkSearch
 from paper_harness.domain.analysis import AnalysisScope
@@ -32,6 +34,7 @@ from paper_harness.domain.historical import (
     SearchLimits,
 )
 from paper_harness.domain.models import DailyRun
+from paper_harness.domain.reports import Report, ReportNarrativeMode, ReportType
 
 
 def execute_arxiv_ingestion(*, topic_config: Path, logical_date: date | None) -> DailyRun:
@@ -154,6 +157,54 @@ def execute_paper_comparison(
         search_session_id=search_session_id,
         source_paper_version_id=source_paper_version_id,
         target_paper_version_id=target_paper_version_id,
+    )
+
+
+def execute_product_publication(
+    *,
+    topic_config: Path,
+    logical_date: date | None,
+    narrative_mode: ReportNarrativeMode,
+) -> DailyRun:
+    """Build graph/trends/lineage and atomically publish one daily report."""
+
+    llm = (
+        DeepSeekClient(DeepSeekSettings.from_environment())
+        if narrative_mode is ReportNarrativeMode.DEEPSEEK
+        else None
+    )
+    repository = _ready_repository("product publication")
+    topic = load_topic_config(topic_config)
+    return PublishProduct(repository=repository, llm=llm).execute(
+        topic,
+        narrative_mode=narrative_mode,
+        logical_date=logical_date,
+    )
+
+
+def execute_periodic_report(
+    *,
+    topic_config: Path,
+    report_type: ReportType,
+    period_start: date,
+    period_end: date,
+    narrative_mode: ReportNarrativeMode,
+) -> Report:
+    """Publish one eligible weekly or monthly report from persisted daily reports."""
+
+    llm = (
+        DeepSeekClient(DeepSeekSettings.from_environment())
+        if narrative_mode is ReportNarrativeMode.DEEPSEEK
+        else None
+    )
+    repository = _ready_repository("periodic report generation")
+    topic = load_topic_config(topic_config)
+    return GeneratePeriodicReport(repository=repository, llm=llm).execute(
+        topic,
+        report_type=report_type,
+        period_start=period_start,
+        period_end=period_end,
+        narrative_mode=narrative_mode,
     )
 
 

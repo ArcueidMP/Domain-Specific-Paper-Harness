@@ -47,6 +47,7 @@ from paper_harness.domain.identity import (
     stable_parsed_section_id,
 )
 from paper_harness.domain.models import RunStatus, TopicConfig
+from paper_harness.domain.reports import GeneratedReportNarrative, ReportNarrativeRequest
 from paper_harness.entrypoints.api import create_app
 from paper_harness.ports.arxiv import ArxivPaperRecord
 from paper_harness.ports.llm import LLMOutputError
@@ -122,6 +123,9 @@ class SelectiveAnalysisLLM:
 
     def compare_papers(self, request: ComparisonRequest) -> GeneratedComparison:
         raise AssertionError(f"unexpected comparison request: {request}")
+
+    def generate_report(self, request: ReportNarrativeRequest) -> GeneratedReportNarrative:
+        raise AssertionError(f"unexpected report request: {request}")
 
 
 class StaticParser:
@@ -511,12 +515,12 @@ def test_database_upgrades_from_m1_revision_to_current_head(
         with postgres_engine.connect() as connection:
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == ("0003_m3_pasa_semantic_scholar")
+            ).scalar_one() == ("0004_m4_graph_trends_reports")
     finally:
         command.upgrade(config, "head")
 
 
-def test_database_upgrades_from_m2_revision_to_m3_head(
+def test_database_upgrades_from_m2_revision_to_current_head(
     postgres_engine: Engine,
     postgres_repository: PostgresRepository,
 ) -> None:
@@ -532,7 +536,97 @@ def test_database_upgrades_from_m2_revision_to_m3_head(
         with postgres_engine.connect() as connection:
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == ("0003_m3_pasa_semantic_scholar")
+            ).scalar_one() == ("0004_m4_graph_trends_reports")
+    finally:
+        command.upgrade(config, "head")
+
+
+def test_database_upgrades_from_m3_and_backfills_analysis_reports(
+    postgres_engine: Engine,
+    postgres_repository: PostgresRepository,
+    topic_config: TopicConfig,
+) -> None:
+    postgres_repository.upsert_topic(topic_config)
+    config = Config(str(Path("alembic.ini").resolve()))
+    command.downgrade(config, "0003_m3_pasa_semantic_scholar")
+    run_id = UUID("253ee2e9-b72d-4ee7-89a8-e193b2577072")
+    report_id = UUID("63f7dd65-2dd6-4845-a4a0-e89a4a4be5b4")
+    logical_date = date(2026, 1, 10)
+    now = datetime(2026, 1, 10, 5, tzinfo=UTC)
+    try:
+        with postgres_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO daily_runs ("
+                    "id, topic_id, logical_date, operation, analysis_scope, status, "
+                    "started_at, completed_at, cursor_from, cursor_to, discovered_count, "
+                    "normalized_count, selected_count, completed_count, failed_count, "
+                    "schema_version) VALUES ("
+                    ":id, :topic_id, :logical_date, 'STRUCTURED_ANALYSIS', 'FULL_TEXT', "
+                    "'PARTIAL', :now, :now, NULL, NULL, 0, 0, 3, 2, 1, 1)"
+                ),
+                {
+                    "id": run_id,
+                    "topic_id": topic_config.id,
+                    "logical_date": logical_date,
+                    "now": now,
+                },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO reports ("
+                    "id, run_id, topic_id, logical_date, status, title, summary, source, "
+                    "generated_at, schema_version, created_at) VALUES ("
+                    ":id, :run_id, :topic_id, :logical_date, 'PARTIAL', "
+                    "'Legacy analysis report', 'Preserved M2 report', "
+                    "'structured_analysis', :now, 1, :now)"
+                ),
+                {
+                    "id": report_id,
+                    "run_id": run_id,
+                    "topic_id": topic_config.id,
+                    "logical_date": logical_date,
+                    "now": now,
+                },
+            )
+
+        command.upgrade(config, "head")
+        with postgres_engine.connect() as connection:
+            assert (
+                connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                == "0004_m4_graph_trends_reports"
+            )
+            assert connection.execute(
+                text(
+                    "SELECT report_type, period_start, period_end, retrieved_count, "
+                    "selected_count, processed_count, completed_count, failed_count, "
+                    "narrative_mode, verification_status FROM reports WHERE id = :id"
+                ),
+                {"id": report_id},
+            ).one() == (
+                "ANALYSIS",
+                logical_date,
+                logical_date,
+                3,
+                3,
+                3,
+                2,
+                1,
+                "STRUCTURED_ONLY",
+                "UNVERIFIED",
+            )
+            assert connection.scalar(text("SELECT to_regclass('graph_entities')")) == (
+                "graph_entities"
+            )
+            assert connection.scalar(text("SELECT to_regclass('trend_snapshots')")) == (
+                "trend_snapshots"
+            )
+            assert connection.scalar(text("SELECT to_regclass('lineage_snapshots')")) == (
+                "lineage_snapshots"
+            )
+            assert connection.scalar(text("SELECT to_regclass('report_sections')")) == (
+                "report_sections"
+            )
     finally:
         command.upgrade(config, "head")
 
@@ -568,7 +662,7 @@ def test_m2_downgrade_refuses_existing_analysis_without_explicit_data_loss_guard
         command.downgrade(config, "0001_m1_ingestion")
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0003_m3_pasa_semantic_scholar"
+            "0004_m4_graph_trends_reports"
         )
 
 
@@ -616,5 +710,39 @@ def test_m3_downgrade_refuses_existing_historical_data_without_explicit_guard(
         command.downgrade(config, "0002_m2_structured_analysis")
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0003_m3_pasa_semantic_scholar"
+            "0004_m4_graph_trends_reports"
+        )
+
+
+def test_m4_downgrade_refuses_existing_graph_data_without_explicit_guard(
+    postgres_repository: PostgresRepository,
+    postgres_engine: Engine,
+    topic_config: TopicConfig,
+) -> None:
+    postgres_repository.upsert_topic(topic_config)
+    now = datetime(2026, 1, 10, 5, tzinfo=UTC)
+    with postgres_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO graph_entities ("
+                "id, topic_id, entity_type, paper_id, canonical_label, normalized_key, "
+                "display_label, aliases, provenance, source, schema_version, created_at, "
+                "updated_at) VALUES ("
+                ":id, :topic_id, 'METHOD', NULL, 'Tool use', 'tool use', 'Tool use', "
+                "ARRAY['Tool use'], 'DETERMINISTICALLY_DERIVED', "
+                "'persisted_structured_data', 1, :now, :now)"
+            ),
+            {
+                "id": UUID("d614ee67-edc8-43f3-bd0d-55fd01331fb7"),
+                "topic_id": topic_config.id,
+                "now": now,
+            },
+        )
+
+    config = Config(str(Path("alembic.ini").resolve()))
+    with pytest.raises(RuntimeError, match="M4 downgrade refused"):
+        command.downgrade(config, "0003_m3_pasa_semantic_scholar")
+    with postgres_engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0004_m4_graph_trends_reports"
         )

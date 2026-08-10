@@ -582,6 +582,38 @@
         "title": "ComparisonResponse",
         "type": "object"
       },
+      "DailyRunEnvelopeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RunItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReportResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunSummary"
+          }
+        },
+        "required": [
+          "run",
+          "items",
+          "report"
+        ],
+        "title": "DailyRunEnvelopeResponse",
+        "type": "object"
+      },
       "EvidenceListResponse": {
         "additionalProperties": false,
         "properties": {
@@ -887,6 +919,511 @@
         "title": "ExternalPaperResponse",
         "type": "object"
       },
+      "GraphEdgeEvidenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_id": {
+            "format": "uuid",
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_version_id": {
+            "format": "uuid",
+            "title": "Paper Version Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/GraphEvidenceRole"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "paper_id",
+          "paper_version_id",
+          "role"
+        ],
+        "title": "GraphEdgeEvidenceResponse",
+        "type": "object"
+      },
+      "GraphEdgeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Id"
+          },
+          "comparison_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparison Id"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "confidence_meaning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence Meaning"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEdgeEvidenceResponse"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "inferred": {
+            "title": "Inferred",
+            "type": "boolean"
+          },
+          "justification": {
+            "title": "Justification",
+            "type": "string"
+          },
+          "model_provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphModelProvenanceResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paper_relation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Relation Id"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/RelationProvenance"
+          },
+          "relation_type": {
+            "$ref": "#/components/schemas/GraphRelationType"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "source_entity_id": {
+            "format": "uuid",
+            "title": "Source Entity Id",
+            "type": "string"
+          },
+          "source_paper_version_id": {
+            "format": "uuid",
+            "title": "Source Paper Version Id",
+            "type": "string"
+          },
+          "target_entity_id": {
+            "format": "uuid",
+            "title": "Target Entity Id",
+            "type": "string"
+          },
+          "target_paper_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Paper Version Id"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "source_entity_id",
+          "target_entity_id",
+          "relation_type",
+          "source_paper_version_id",
+          "target_paper_version_id",
+          "analysis_id",
+          "comparison_id",
+          "paper_relation_id",
+          "provenance",
+          "inferred",
+          "evidence_ids",
+          "evidence",
+          "justification",
+          "model_provenance",
+          "confidence_meaning",
+          "verification_status",
+          "generated_at",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "GraphEdgeResponse",
+        "type": "object"
+      },
+      "GraphEntityMentionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Id"
+          },
+          "comparison_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparison Id"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "inferred": {
+            "title": "Inferred",
+            "type": "boolean"
+          },
+          "model_provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphModelProvenanceResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observed_label": {
+            "title": "Observed Label",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_version_id": {
+            "format": "uuid",
+            "title": "Paper Version Id",
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/RelationProvenance"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "paper_id",
+          "paper_version_id",
+          "analysis_id",
+          "comparison_id",
+          "observed_label",
+          "provenance",
+          "inferred",
+          "evidence_ids",
+          "model_provenance",
+          "verification_status",
+          "generated_at",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "GraphEntityMentionResponse",
+        "type": "object"
+      },
+      "GraphEntityType": {
+        "enum": [
+          "PAPER",
+          "RESEARCH_PROBLEM",
+          "METHOD",
+          "TASK",
+          "DATASET",
+          "BENCHMARK"
+        ],
+        "title": "GraphEntityType",
+        "type": "string"
+      },
+      "GraphEvidenceRole": {
+        "enum": [
+          "SOURCE",
+          "TARGET",
+          "RELATION"
+        ],
+        "title": "GraphEvidenceRole",
+        "type": "string"
+      },
+      "GraphModelProvenanceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "configured_model": {
+            "title": "Configured Model",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "configured_model",
+          "model_version",
+          "prompt_version"
+        ],
+        "title": "GraphModelProvenanceResponse",
+        "type": "object"
+      },
+      "GraphNodeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "canonical_label": {
+            "title": "Canonical Label",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_label": {
+            "title": "Display Label",
+            "type": "string"
+          },
+          "entity_type": {
+            "$ref": "#/components/schemas/GraphEntityType"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "inferred": {
+            "title": "Inferred",
+            "type": "boolean"
+          },
+          "mention_count": {
+            "minimum": 0.0,
+            "title": "Mention Count",
+            "type": "integer"
+          },
+          "mentions": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEntityMentionResponse"
+            },
+            "title": "Mentions",
+            "type": "array"
+          },
+          "normalized_key": {
+            "title": "Normalized Key",
+            "type": "string"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/RelationProvenance"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "topic_id": {
+            "format": "uuid",
+            "title": "Topic Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topic_id",
+          "entity_type",
+          "paper_id",
+          "canonical_label",
+          "normalized_key",
+          "display_label",
+          "aliases",
+          "provenance",
+          "inferred",
+          "source",
+          "mention_count",
+          "mentions",
+          "schema_version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "GraphNodeResponse",
+        "type": "object"
+      },
+      "GraphRelationType": {
+        "enum": [
+          "CITES",
+          "SIMILAR_TO",
+          "EXTENDS",
+          "COMPARES_WITH",
+          "CONTRADICTS",
+          "IMPROVES_ON",
+          "ADDRESSES",
+          "USES_METHOD",
+          "TARGETS_TASK",
+          "USES_DATASET",
+          "EVALUATES_ON"
+        ],
+        "title": "GraphRelationType",
+        "type": "string"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -898,6 +1435,248 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "KnowledgeGraphResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEdgeResponse"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/GraphNodeResponse"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "topic_id": {
+            "format": "uuid",
+            "title": "Topic Id",
+            "type": "string"
+          },
+          "total_edges": {
+            "minimum": 0.0,
+            "title": "Total Edges",
+            "type": "integer"
+          },
+          "total_mentions": {
+            "minimum": 0.0,
+            "title": "Total Mentions",
+            "type": "integer"
+          },
+          "total_nodes": {
+            "minimum": 0.0,
+            "title": "Total Nodes",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "topic_id",
+          "as_of",
+          "nodes",
+          "edges",
+          "total_nodes",
+          "total_edges",
+          "total_mentions",
+          "truncated"
+        ],
+        "title": "KnowledgeGraphResponse",
+        "type": "object"
+      },
+      "LineageCorpusScope": {
+        "enum": [
+          "CURRENTLY_RETRIEVED_CORPUS"
+        ],
+        "title": "LineageCorpusScope",
+        "type": "string"
+      },
+      "LineageNodeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "depth": {
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "graph_entity_id": {
+            "format": "uuid",
+            "title": "Graph Entity Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "publication_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Date"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "graph_entity_id",
+          "paper_id",
+          "title",
+          "publication_date",
+          "depth"
+        ],
+        "title": "LineageNodeResponse",
+        "type": "object"
+      },
+      "LineageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "corpus_scope": {
+            "$ref": "#/components/schemas/LineageCorpusScope"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEdgeResponse"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "explicit_predecessor_available": {
+            "title": "Explicit Predecessor Available",
+            "type": "boolean"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "lineage_version": {
+            "title": "Lineage Version",
+            "type": "string"
+          },
+          "max_depth": {
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Max Depth",
+            "type": "integer"
+          },
+          "max_edges": {
+            "maximum": 400.0,
+            "minimum": 1.0,
+            "title": "Max Edges",
+            "type": "integer"
+          },
+          "max_nodes": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Nodes",
+            "type": "integer"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/LineageNodeResponse"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "permitted_relation_types": {
+            "items": {
+              "$ref": "#/components/schemas/GraphRelationType"
+            },
+            "title": "Permitted Relation Types",
+            "type": "array"
+          },
+          "root_paper_id": {
+            "format": "uuid",
+            "title": "Root Paper Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "topic_id": {
+            "format": "uuid",
+            "title": "Topic Id",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "verified_predecessor_available": {
+            "title": "Verified Predecessor Available",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "topic_id",
+          "root_paper_id",
+          "as_of_date",
+          "nodes",
+          "edges",
+          "permitted_relation_types",
+          "max_depth",
+          "max_nodes",
+          "max_edges",
+          "truncated",
+          "explicit_predecessor_available",
+          "verified_predecessor_available",
+          "corpus_scope",
+          "limitations",
+          "lineage_version",
+          "generated_at",
+          "schema_version"
+        ],
+        "title": "LineageResponse",
         "type": "object"
       },
       "LiveResponse": {
@@ -1473,6 +2252,8 @@
           "PRIOR_WORK_RETRIEVED",
           "COMPARED",
           "GRAPH_UPDATED",
+          "TREND_SNAPSHOTS_GENERATED",
+          "REPORT_GENERATED",
           "PUBLISHED"
         ],
         "title": "PaperStage",
@@ -1870,6 +2651,157 @@
         "title": "RelationProvenance",
         "type": "string"
       },
+      "ReportComparisonHighlightResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "comparability_status": {
+            "title": "Comparability Status",
+            "type": "string"
+          },
+          "comparison_id": {
+            "format": "uuid",
+            "title": "Comparison Id",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "comparison_id",
+          "summary",
+          "comparability_status",
+          "evidence_ids"
+        ],
+        "title": "ReportComparisonHighlightResponse",
+        "type": "object"
+      },
+      "ReportCountsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "completed": {
+            "minimum": 0.0,
+            "title": "Completed",
+            "type": "integer"
+          },
+          "failed": {
+            "minimum": 0.0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "processed": {
+            "minimum": 0.0,
+            "title": "Processed",
+            "type": "integer"
+          },
+          "retrieved": {
+            "minimum": 0.0,
+            "title": "Retrieved",
+            "type": "integer"
+          },
+          "selected": {
+            "minimum": 0.0,
+            "title": "Selected",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "retrieved",
+          "selected",
+          "processed",
+          "completed",
+          "failed"
+        ],
+        "title": "ReportCountsResponse",
+        "type": "object"
+      },
+      "ReportEntityHighlightResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "distinct_paper_count": {
+            "description": "Distinct papers for this entity in the report's latest 7-day snapshot.",
+            "minimum": 1.0,
+            "title": "Distinct Paper Count",
+            "type": "integer"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "graph_entity_id": {
+            "format": "uuid",
+            "title": "Graph Entity Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "graph_entity_id",
+          "entity_type",
+          "label",
+          "distinct_paper_count"
+        ],
+        "title": "ReportEntityHighlightResponse",
+        "type": "object"
+      },
+      "ReportEvidenceReferenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_type": {
+            "title": "Evidence Type",
+            "type": "string"
+          },
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_version_id": {
+            "format": "uuid",
+            "title": "Paper Version Id",
+            "type": "string"
+          },
+          "section": {
+            "title": "Section",
+            "type": "string"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "paper_id",
+          "paper_version_id",
+          "section",
+          "excerpt",
+          "evidence_type",
+          "verification_status"
+        ],
+        "title": "ReportEvidenceReferenceResponse",
+        "type": "object"
+      },
       "ReportFailureResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1934,13 +2866,182 @@
         "title": "ReportFailureResponse",
         "type": "object"
       },
+      "ReportGraphChangesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "edge_count": {
+            "minimum": 0.0,
+            "title": "Edge Count",
+            "type": "integer"
+          },
+          "entity_count": {
+            "minimum": 0.0,
+            "title": "Entity Count",
+            "type": "integer"
+          },
+          "inferred_edge_count": {
+            "minimum": 0.0,
+            "title": "Inferred Edge Count",
+            "type": "integer"
+          },
+          "new_entity_count": {
+            "minimum": 0.0,
+            "title": "New Entity Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entity_count",
+          "edge_count",
+          "new_entity_count",
+          "inferred_edge_count"
+        ],
+        "title": "ReportGraphChangesResponse",
+        "type": "object"
+      },
+      "ReportLineageHighlightResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "lineage_snapshot_id": {
+            "format": "uuid",
+            "title": "Lineage Snapshot Id",
+            "type": "string"
+          },
+          "root_paper_id": {
+            "format": "uuid",
+            "title": "Root Paper Id",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "uncertain": {
+            "title": "Uncertain",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "lineage_snapshot_id",
+          "root_paper_id",
+          "summary",
+          "uncertain"
+        ],
+        "title": "ReportLineageHighlightResponse",
+        "type": "object"
+      },
+      "ReportListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReportResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "ReportListResponse",
+        "type": "object"
+      },
+      "ReportNarrativeMode": {
+        "enum": [
+          "STRUCTURED_ONLY",
+          "DEEPSEEK"
+        ],
+        "title": "ReportNarrativeMode",
+        "type": "string"
+      },
+      "ReportPaperHighlightResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_version_id": {
+            "format": "uuid",
+            "title": "Paper Version Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paper_id",
+          "paper_version_id",
+          "title",
+          "reason",
+          "evidence_ids"
+        ],
+        "title": "ReportPaperHighlightResponse",
+        "type": "object"
+      },
       "ReportResponse": {
         "additionalProperties": false,
         "properties": {
+          "configured_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configured Model"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ReportCountsResponse"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ReportEvidenceReferenceResponse"
+            },
+            "title": "Evidence",
+            "type": "array"
           },
           "failures": {
             "items": {
@@ -1954,25 +3055,133 @@
             "title": "Generated At",
             "type": "string"
           },
+          "graph_changes": {
+            "$ref": "#/components/schemas/ReportGraphChangesResponse"
+          },
+          "highlighted_papers": {
+            "items": {
+              "$ref": "#/components/schemas/ReportPaperHighlightResponse"
+            },
+            "title": "Highlighted Papers",
+            "type": "array"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "lineage_highlights": {
+            "items": {
+              "$ref": "#/components/schemas/ReportLineageHighlightResponse"
+            },
+            "title": "Lineage Highlights",
+            "type": "array"
           },
           "logical_date": {
             "format": "date",
             "title": "Logical Date",
             "type": "string"
           },
-          "run_id": {
-            "format": "uuid",
-            "title": "Run Id",
+          "major_entities": {
+            "items": {
+              "$ref": "#/components/schemas/ReportEntityHighlightResponse"
+            },
+            "title": "Major Entities",
+            "type": "array"
+          },
+          "missing_sections": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Sections",
+            "type": "array"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "narrative_mode": {
+            "$ref": "#/components/schemas/ReportNarrativeMode"
+          },
+          "notable_comparisons": {
+            "items": {
+              "$ref": "#/components/schemas/ReportComparisonHighlightResponse"
+            },
+            "title": "Notable Comparisons",
+            "type": "array"
+          },
+          "period_end": {
+            "format": "date",
+            "title": "Period End",
             "type": "string"
+          },
+          "period_start": {
+            "format": "date",
+            "title": "Period Start",
+            "type": "string"
+          },
+          "prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Version"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "report_type": {
+            "$ref": "#/components/schemas/ReportType"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
           },
           "schema_version": {
             "minimum": 1.0,
             "title": "Schema Version",
             "type": "integer"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/ReportSectionResponse"
+            },
+            "title": "Sections",
+            "type": "array"
           },
           "source": {
             "title": "Source",
@@ -1993,6 +3202,27 @@
             "format": "uuid",
             "title": "Topic Id",
             "type": "string"
+          },
+          "trend_snapshot_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Trend Snapshot Ids",
+            "type": "array"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelUsageResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
           }
         },
         "required": [
@@ -2007,10 +3237,104 @@
           "generated_at",
           "schema_version",
           "created_at",
-          "failures"
+          "failures",
+          "sections",
+          "report_type",
+          "period_start",
+          "period_end",
+          "counts",
+          "highlighted_papers",
+          "major_entities",
+          "notable_comparisons",
+          "graph_changes",
+          "trend_snapshot_ids",
+          "lineage_highlights",
+          "evidence",
+          "limitations",
+          "missing_sections",
+          "narrative_mode",
+          "provider",
+          "configured_model",
+          "model_version",
+          "prompt_version",
+          "usage",
+          "verification_status"
         ],
         "title": "ReportResponse",
         "type": "object"
+      },
+      "ReportSectionKind": {
+        "enum": [
+          "OVERVIEW",
+          "TRENDS",
+          "COMPARISONS",
+          "LINEAGE",
+          "LIMITATIONS"
+        ],
+        "title": "ReportSectionKind",
+        "type": "string"
+      },
+      "ReportSectionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ReportSectionKind"
+          },
+          "narrative": {
+            "title": "Narrative",
+            "type": "string"
+          },
+          "report_id": {
+            "format": "uuid",
+            "title": "Report Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "report_id",
+          "kind",
+          "narrative",
+          "evidence_ids",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "ReportSectionResponse",
+        "type": "object"
+      },
+      "ReportType": {
+        "description": "Persisted report scopes.\n\n``ANALYSIS`` preserves the M2 per-run publication record. M4 product\npublication uses ``DAILY`` and may create ``WEEKLY`` or ``MONTHLY`` only\nafter the deterministic eligibility checks succeed.",
+        "enum": [
+          "ANALYSIS",
+          "DAILY",
+          "WEEKLY",
+          "MONTHLY"
+        ],
+        "title": "ReportType",
+        "type": "string"
       },
       "RunDetailResponse": {
         "additionalProperties": false,
@@ -2148,6 +3472,18 @@
             "title": "Selected Count",
             "type": "integer"
           },
+          "source_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Run Id"
+          },
           "started_at": {
             "format": "date-time",
             "title": "Started At",
@@ -2165,6 +3501,7 @@
         "required": [
           "id",
           "topic_id",
+          "source_run_id",
           "logical_date",
           "operation",
           "analysis_scope",
@@ -2352,7 +3689,8 @@
       "RunOperation": {
         "enum": [
           "ARXIV_INGESTION",
-          "STRUCTURED_ANALYSIS"
+          "STRUCTURED_ANALYSIS",
+          "PRODUCT_PUBLICATION"
         ],
         "title": "RunOperation",
         "type": "string"
@@ -2486,6 +3824,18 @@
             "title": "Selected Count",
             "type": "integer"
           },
+          "source_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Run Id"
+          },
           "started_at": {
             "format": "date-time",
             "title": "Started At",
@@ -2503,6 +3853,7 @@
         "required": [
           "id",
           "topic_id",
+          "source_run_id",
           "logical_date",
           "operation",
           "analysis_scope",
@@ -3419,6 +4770,373 @@
         "title": "TopicSummary",
         "type": "object"
       },
+      "TrendChangeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "absolute_change": {
+            "title": "Absolute Change",
+            "type": "integer"
+          },
+          "current_count": {
+            "minimum": 0.0,
+            "title": "Current Count",
+            "type": "integer"
+          },
+          "denominator_count": {
+            "minimum": 0.0,
+            "title": "Denominator Count",
+            "type": "integer"
+          },
+          "growth_status": {
+            "$ref": "#/components/schemas/TrendGrowthStatus"
+          },
+          "preceding_count": {
+            "minimum": 0.0,
+            "title": "Preceding Count",
+            "type": "integer"
+          },
+          "relative_change": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relative Change"
+          }
+        },
+        "required": [
+          "current_count",
+          "preceding_count",
+          "absolute_change",
+          "denominator_count",
+          "relative_change",
+          "growth_status"
+        ],
+        "title": "TrendChangeResponse",
+        "type": "object"
+      },
+      "TrendDataSufficiency": {
+        "enum": [
+          "SUFFICIENT",
+          "LIMITED",
+          "INSUFFICIENT"
+        ],
+        "title": "TrendDataSufficiency",
+        "type": "string"
+      },
+      "TrendEntityCountResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/TrendChangeResponse"
+          },
+          "entity_id": {
+            "format": "uuid",
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_type": {
+            "$ref": "#/components/schemas/GraphEntityType"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "newly_appearing": {
+            "title": "Newly Appearing",
+            "type": "boolean"
+          },
+          "recurring": {
+            "title": "Recurring",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entity_id",
+          "entity_type",
+          "label",
+          "change",
+          "newly_appearing",
+          "recurring"
+        ],
+        "title": "TrendEntityCountResponse",
+        "type": "object"
+      },
+      "TrendGrowthStatus": {
+        "enum": [
+          "AVAILABLE",
+          "ZERO_DENOMINATOR",
+          "LIMITED_SAMPLE"
+        ],
+        "title": "TrendGrowthStatus",
+        "type": "string"
+      },
+      "TrendRelationCountResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/TrendChangeResponse"
+          },
+          "relation_type": {
+            "$ref": "#/components/schemas/GraphRelationType"
+          }
+        },
+        "required": [
+          "relation_type",
+          "change"
+        ],
+        "title": "TrendRelationCountResponse",
+        "type": "object"
+      },
+      "TrendRepresentativePaperResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "activity_date": {
+            "format": "date",
+            "title": "Activity Date",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_version_id": {
+            "format": "uuid",
+            "title": "Paper Version Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paper_id",
+          "paper_version_id",
+          "activity_date",
+          "title"
+        ],
+        "title": "TrendRepresentativePaperResponse",
+        "type": "object"
+      },
+      "TrendSnapshotResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregation_version": {
+            "title": "Aggregation Version",
+            "type": "string"
+          },
+          "as_of_date": {
+            "format": "date",
+            "title": "As Of Date",
+            "type": "string"
+          },
+          "data_sufficiency": {
+            "$ref": "#/components/schemas/TrendDataSufficiency"
+          },
+          "entity_counts": {
+            "items": {
+              "$ref": "#/components/schemas/TrendEntityCountResponse"
+            },
+            "title": "Entity Counts",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "included_paper_count": {
+            "minimum": 0.0,
+            "title": "Included Paper Count",
+            "type": "integer"
+          },
+          "new_entity_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "New Entity Ids",
+            "type": "array"
+          },
+          "paper_count_change": {
+            "$ref": "#/components/schemas/TrendChangeResponse"
+          },
+          "preceding_data_sufficiency": {
+            "$ref": "#/components/schemas/TrendDataSufficiency"
+          },
+          "preceding_paper_count": {
+            "minimum": 0.0,
+            "title": "Preceding Paper Count",
+            "type": "integer"
+          },
+          "preceding_window_end": {
+            "format": "date",
+            "title": "Preceding Window End",
+            "type": "string"
+          },
+          "preceding_window_start": {
+            "format": "date",
+            "title": "Preceding Window Start",
+            "type": "string"
+          },
+          "recurring_entity_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Recurring Entity Ids",
+            "type": "array"
+          },
+          "relation_counts": {
+            "items": {
+              "$ref": "#/components/schemas/TrendRelationCountResponse"
+            },
+            "title": "Relation Counts",
+            "type": "array"
+          },
+          "representative_papers": {
+            "items": {
+              "$ref": "#/components/schemas/TrendRepresentativePaperResponse"
+            },
+            "title": "Representative Papers",
+            "type": "array"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "thresholds": {
+            "$ref": "#/components/schemas/TrendThresholdsResponse"
+          },
+          "topic_id": {
+            "format": "uuid",
+            "title": "Topic Id",
+            "type": "string"
+          },
+          "total_entities": {
+            "minimum": 0.0,
+            "title": "Total Entities",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "window": {
+            "$ref": "#/components/schemas/TrendWindow"
+          },
+          "window_end": {
+            "format": "date",
+            "title": "Window End",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topic_id",
+          "as_of_date",
+          "window",
+          "window_start",
+          "window_end",
+          "preceding_window_start",
+          "preceding_window_end",
+          "included_paper_count",
+          "preceding_paper_count",
+          "paper_count_change",
+          "entity_counts",
+          "total_entities",
+          "truncated",
+          "relation_counts",
+          "new_entity_ids",
+          "recurring_entity_ids",
+          "representative_papers",
+          "data_sufficiency",
+          "preceding_data_sufficiency",
+          "thresholds",
+          "aggregation_version",
+          "generated_at",
+          "schema_version"
+        ],
+        "title": "TrendSnapshotResponse",
+        "type": "object"
+      },
+      "TrendThresholdsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "limited_paper_count": {
+            "minimum": 1.0,
+            "title": "Limited Paper Count",
+            "type": "integer"
+          },
+          "minimum_growth_denominator": {
+            "minimum": 1.0,
+            "title": "Minimum Growth Denominator",
+            "type": "integer"
+          },
+          "sufficient_paper_count": {
+            "minimum": 1.0,
+            "title": "Sufficient Paper Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "limited_paper_count",
+          "sufficient_paper_count",
+          "minimum_growth_denominator"
+        ],
+        "title": "TrendThresholdsResponse",
+        "type": "object"
+      },
+      "TrendWindow": {
+        "enum": [
+          "7D",
+          "30D",
+          "90D"
+        ],
+        "title": "TrendWindow",
+        "type": "string"
+      },
+      "TrendsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TrendSnapshotResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "TrendsResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -3535,6 +5253,473 @@
           }
         },
         "summary": " Get Comparison"
+      }
+    },
+    "/api/v1/daily/latest": {
+      "get": {
+        "operationId": "getLatestDailyReport",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DailyRunEnvelopeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Product publication run not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Daily report storage unavailable"
+          }
+        },
+        "summary": " Get Latest Daily"
+      }
+    },
+    "/api/v1/daily/{logical_date}": {
+      "get": {
+        "operationId": "getDailyReport",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "logical_date",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Logical Date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DailyRunEnvelopeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Product publication run not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Daily report storage unavailable"
+          }
+        },
+        "summary": " Get Daily"
+      }
+    },
+    "/api/v1/graph": {
+      "get": {
+        "operationId": "getKnowledgeGraph",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
+            }
+          },
+          {
+            "in": "query",
+            "name": "paper_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Paper Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entity_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entity_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/GraphEntityType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "relation_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/GraphRelationType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Relation Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provenance",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RelationProvenance"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provenance"
+            }
+          },
+          {
+            "in": "query",
+            "name": "verification_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/VerificationStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Verification Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_nodes",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Max Nodes",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_edges",
+            "required": false,
+            "schema": {
+              "default": 400,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Max Edges",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeGraphResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Knowledge graph not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Graph storage unavailable"
+          }
+        },
+        "summary": " Get Graph"
+      }
+    },
+    "/api/v1/lineages/{entity_or_paper_id}": {
+      "get": {
+        "operationId": "getLineage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_or_paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Entity Or Paper Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_depth",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "maximum": 5,
+              "minimum": 1,
+              "title": "Max Depth",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_nodes",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Max Nodes",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_edges",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 400,
+              "minimum": 1,
+              "title": "Max Edges",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LineageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Lineage not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Lineage storage unavailable"
+          }
+        },
+        "summary": " Get Lineage"
       }
     },
     "/api/v1/papers": {
@@ -3921,6 +6106,321 @@
         "summary": " Get Paper Related Work"
       }
     },
+    "/api/v1/reports/daily": {
+      "get": {
+        "operationId": "listDailyReports",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Report storage unavailable"
+          }
+        },
+        "summary": " List Daily Reports"
+      }
+    },
+    "/api/v1/reports/daily/{logical_date}": {
+      "get": {
+        "operationId": "getDailyReportPublication",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "logical_date",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "title": "Logical Date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Daily report not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Report storage unavailable"
+          }
+        },
+        "summary": " Get Daily Report"
+      }
+    },
+    "/api/v1/reports/monthly/{period}": {
+      "get": {
+        "operationId": "getMonthlyReport",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "period",
+            "required": true,
+            "schema": {
+              "pattern": "^\\d{4}-\\d{2}$",
+              "title": "Period",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Monthly report not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Report storage unavailable"
+          }
+        },
+        "summary": " Get Monthly Report"
+      }
+    },
+    "/api/v1/reports/weekly/{period}": {
+      "get": {
+        "operationId": "getWeeklyReport",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "period",
+            "required": true,
+            "schema": {
+              "pattern": "^\\d{4}-W\\d{2}$",
+              "title": "Period",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Weekly report not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Report storage unavailable"
+          }
+        },
+        "summary": " Get Weekly Report"
+      }
+    },
     "/api/v1/runs": {
       "get": {
         "operationId": "listRuns",
@@ -4040,6 +6540,66 @@
         "summary": " Latest Run"
       }
     },
+    "/api/v1/runs/{run_id}": {
+      "get": {
+        "operationId": "getRun",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Run not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Run storage unavailable"
+          }
+        },
+        "summary": " Get Run"
+      }
+    },
     "/api/v1/topics": {
       "get": {
         "operationId": "listTopics",
@@ -4056,6 +6616,128 @@
           }
         },
         "summary": " List Topics"
+      }
+    },
+    "/api/v1/trends": {
+      "get": {
+        "operationId": "listTrends",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "topic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic"
+            }
+          },
+          {
+            "in": "query",
+            "name": "as_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
+            }
+          },
+          {
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/TrendWindow"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Window"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entity_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/GraphEntityType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_entities",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Max Entities",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrendsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Trend storage unavailable"
+          }
+        },
+        "summary": " List Trends"
       }
     },
     "/health/live": {

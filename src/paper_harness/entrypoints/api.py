@@ -1,14 +1,17 @@
-"""Read-oriented FastAPI entrypoint for the M1 product surface."""
+"""Read-oriented FastAPI entrypoint for the private research product."""
 
 # pyright: reportUnusedFunction=false
 
 import os
+from calendar import monthrange
 from collections.abc import Callable
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Path as ApiPath
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
@@ -20,23 +23,52 @@ from paper_harness.application.read_models import (
     AnalysisDetail,
     ComparisonDetail,
     ComparisonEvidenceReference,
+    GraphEdgeDetail,
+    GraphEdgeEvidenceReference,
+    GraphNodeDetail,
+    GraphView,
+    LineageDetail,
     PaperDetail,
+    ProductRunDetail,
     RelatedWorkDetail,
+    ReportDetail,
     RunDetail,
     StoredTopic,
+    TrendDetail,
 )
-from paper_harness.domain.analysis import AnalysisClaim, AnalysisScope, Evidence, PaperAnalysis
+from paper_harness.domain.analysis import (
+    AnalysisClaim,
+    AnalysisScope,
+    Evidence,
+    PaperAnalysis,
+    VerificationStatus,
+)
 from paper_harness.domain.historical import (
     ComparisonDimension,
     ExternalPaperStub,
     PaperRelation,
+    RelationProvenance,
     SearchAction,
     SearchCandidate,
     SearchCandidateDiscovery,
     SearchSession,
 )
+from paper_harness.domain.knowledge import (
+    GRAPH_CONFIDENCE_MEANING,
+    GraphEdge,
+    GraphEntityMention,
+    GraphEntityType,
+    GraphRelationType,
+    TrendChange,
+    TrendWindow,
+)
 from paper_harness.domain.models import DailyRun, Paper, PaperSourceIdentity, PaperVersion, RunItem
-from paper_harness.domain.reports import Report, ReportFailure
+from paper_harness.domain.reports import (
+    Report,
+    ReportEvidenceReference,
+    ReportFailure,
+    ReportType,
+)
 from paper_harness.entrypoints.api_schemas import (
     AnalysisClaimResponse,
     ApiErrorResponse,
@@ -45,9 +77,18 @@ from paper_harness.entrypoints.api_schemas import (
     ComparisonDimensionResponse,
     ComparisonEvidenceResponse,
     ComparisonResponse,
+    DailyRunEnvelopeResponse,
     EvidenceListResponse,
     EvidenceResponse,
     ExternalPaperResponse,
+    GraphEdgeEvidenceResponse,
+    GraphEdgeResponse,
+    GraphEntityMentionResponse,
+    GraphModelProvenanceResponse,
+    GraphNodeResponse,
+    KnowledgeGraphResponse,
+    LineageNodeResponse,
+    LineageResponse,
     LiveResponse,
     ModelUsageResponse,
     PageCoordinatesResponse,
@@ -61,8 +102,17 @@ from paper_harness.entrypoints.api_schemas import (
     RelatedComparisonSummaryResponse,
     RelatedWorkItemResponse,
     RelatedWorkResponse,
+    ReportComparisonHighlightResponse,
+    ReportCountsResponse,
+    ReportEntityHighlightResponse,
+    ReportEvidenceReferenceResponse,
     ReportFailureResponse,
+    ReportGraphChangesResponse,
+    ReportLineageHighlightResponse,
+    ReportListResponse,
+    ReportPaperHighlightResponse,
     ReportResponse,
+    ReportSectionResponse,
     RunDetailResponse,
     RunItemResponse,
     RunListResponse,
@@ -74,6 +124,13 @@ from paper_harness.entrypoints.api_schemas import (
     SourceIdentityResponse,
     TopicListResponse,
     TopicSummary,
+    TrendChangeResponse,
+    TrendEntityCountResponse,
+    TrendRelationCountResponse,
+    TrendRepresentativePaperResponse,
+    TrendSnapshotResponse,
+    TrendsResponse,
+    TrendThresholdsResponse,
 )
 from paper_harness.ports.repository import (
     MigrationIncompatibleError,
@@ -308,6 +365,239 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
             )
         return _comparison_response(detail)
 
+    @app.get(
+        "/api/v1/graph",
+        response_model=KnowledgeGraphResponse,
+        operation_id="getKnowledgeGraph",
+        responses={
+            404: {"model": ApiErrorResponse, "description": "Knowledge graph not found"},
+            503: {"model": ApiErrorResponse, "description": "Graph storage unavailable"},
+        },
+    )
+    def _get_graph(
+        repo: Annotated[RepositoryPort, Depends(get_repository)],
+        topic: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+        as_of: Annotated[date | None, Query()] = None,
+        paper_id: Annotated[UUID | None, Query()] = None,
+        entity_id: Annotated[UUID | None, Query()] = None,
+        entity_type: Annotated[GraphEntityType | None, Query()] = None,
+        relation_type: Annotated[GraphRelationType | None, Query()] = None,
+        provenance: Annotated[RelationProvenance | None, Query()] = None,
+        verification_status: Annotated[VerificationStatus | None, Query()] = None,
+        max_nodes: Annotated[int, Query(ge=1, le=500)] = 200,
+        max_edges: Annotated[int, Query(ge=1, le=1000)] = 400,
+    ) -> KnowledgeGraphResponse:
+        graph = repo.get_graph(
+            topic_slug=topic,
+            as_of=as_of,
+            paper_id=paper_id,
+            entity_id=entity_id,
+            entity_type=entity_type,
+            relation_type=relation_type,
+            provenance=provenance,
+            verification_status=verification_status,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+        )
+        if graph is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "GRAPH_NOT_FOUND",
+                    "message": "no matching persisted knowledge graph was found",
+                },
+            )
+        return _graph_response(graph)
+
+    @app.get(
+        "/api/v1/trends",
+        response_model=TrendsResponse,
+        operation_id="listTrends",
+        responses={
+            503: {"model": ApiErrorResponse, "description": "Trend storage unavailable"},
+        },
+    )
+    def _list_trends(
+        repo: Annotated[RepositoryPort, Depends(get_repository)],
+        topic: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+        as_of: Annotated[date | None, Query()] = None,
+        window: Annotated[list[TrendWindow] | None, Query()] = None,
+        entity_type: Annotated[GraphEntityType | None, Query()] = None,
+        max_entities: Annotated[int, Query(ge=1, le=200)] = 50,
+    ) -> TrendsResponse:
+        requested = tuple(TrendWindow) if window is None else tuple(dict.fromkeys(window))
+        details = repo.list_trends(
+            topic_slug=topic,
+            as_of=as_of,
+            windows=requested,
+            entity_type=entity_type,
+            max_entities=max_entities,
+        )
+        return TrendsResponse(
+            items=[_trend_response(item) for item in details],
+            total=len(details),
+        )
+
+    @app.get(
+        "/api/v1/lineages/{entity_or_paper_id}",
+        response_model=LineageResponse,
+        operation_id="getLineage",
+        responses={
+            404: {"model": ApiErrorResponse, "description": "Lineage not found"},
+            503: {"model": ApiErrorResponse, "description": "Lineage storage unavailable"},
+        },
+    )
+    def _get_lineage(
+        entity_or_paper_id: UUID,
+        repo: Annotated[RepositoryPort, Depends(get_repository)],
+        topic: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+        max_depth: Annotated[int, Query(ge=1, le=5)] = 5,
+        max_nodes: Annotated[int, Query(ge=1, le=100)] = 100,
+        max_edges: Annotated[int, Query(ge=1, le=400)] = 200,
+    ) -> LineageResponse:
+        lineage = repo.get_lineage(
+            entity_or_paper_id,
+            topic_slug=topic,
+            max_depth=max_depth,
+            max_nodes=max_nodes,
+            max_edges=max_edges,
+        )
+        if lineage is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "LINEAGE_NOT_FOUND",
+                    "message": f"lineage {entity_or_paper_id} was not found",
+                },
+            )
+        return _lineage_response(lineage)
+
+    @app.get(
+        "/api/v1/daily/latest",
+        response_model=DailyRunEnvelopeResponse,
+        operation_id="getLatestDailyReport",
+        responses={
+            404: {"model": ApiErrorResponse, "description": "Product publication run not found"},
+            503: {"model": ApiErrorResponse, "description": "Daily report storage unavailable"},
+        },
+    )
+    def _get_latest_daily(
+        repo: Annotated[RepositoryPort, Depends(get_repository)],
+        topic: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+    ) -> DailyRunEnvelopeResponse:
+        return _product_run_or_404(repo, logical_date=None, topic_slug=topic)
+
+    @app.get(
+        "/api/v1/daily/{logical_date}",
+        response_model=DailyRunEnvelopeResponse,
+        operation_id="getDailyReport",
+        responses={
+            404: {"model": ApiErrorResponse, "description": "Product publication run not found"},
+            503: {"model": ApiErrorResponse, "description": "Daily report storage unavailable"},
+        },
+    )
+    def _get_daily(
+        logical_date: date,
+        repo: Annotated[RepositoryPort, Depends(get_repository)],
+        topic: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+    ) -> DailyRunEnvelopeResponse:
+        return _product_run_or_404(repo, logical_date=logical_date, topic_slug=topic)
+
+    @app.get(
+        "/api/v1/reports/daily",
+        response_model=ReportListResponse,
+        operation_id="listDailyReports",
+        responses={
+            503: {"model": ApiErrorResponse, "description": "Report storage unavailable"},
+        },
+    )
+    def _list_daily_reports(
+        repo: Annotated[RepositoryPort, Depends(get_repository)],
+        topic: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        offset: Annotated[int, Query(ge=0)] = 0,
+    ) -> ReportListResponse:
+        reports, total = repo.list_reports(
+            report_type=ReportType.DAILY,
+            topic_slug=topic,
+            limit=limit,
+            offset=offset,
+        )
+        return ReportListResponse(
+            items=[_report_detail_response(item) for item in reports],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    @app.get(
+        "/api/v1/reports/daily/{logical_date}",
+        response_model=ReportResponse,
+        operation_id="getDailyReportPublication",
+        responses={
+            404: {"model": ApiErrorResponse, "description": "Daily report not found"},
+            503: {"model": ApiErrorResponse, "description": "Report storage unavailable"},
+        },
+    )
+    def _get_daily_report(
+        logical_date: date,
+        repo: Annotated[RepositoryPort, Depends(get_repository)],
+        topic: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+    ) -> ReportResponse:
+        return _report_or_404(
+            repo,
+            report_type=ReportType.DAILY,
+            period_start=logical_date,
+            period_end=logical_date,
+            topic_slug=topic,
+        )
+
+    @app.get(
+        "/api/v1/reports/weekly/{period}",
+        response_model=ReportResponse,
+        operation_id="getWeeklyReport",
+        responses={
+            404: {"model": ApiErrorResponse, "description": "Weekly report not found"},
+            503: {"model": ApiErrorResponse, "description": "Report storage unavailable"},
+        },
+    )
+    def _get_weekly_report(
+        period: Annotated[str, ApiPath(pattern=r"^\d{4}-W\d{2}$")],
+        repo: Annotated[RepositoryPort, Depends(get_repository)],
+        topic: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+    ) -> ReportResponse:
+        period_start, period_end = _iso_week_bounds(period)
+        return _report_or_404(
+            repo,
+            report_type=ReportType.WEEKLY,
+            period_start=period_start,
+            period_end=period_end,
+            topic_slug=topic,
+        )
+
+    @app.get(
+        "/api/v1/reports/monthly/{period}",
+        response_model=ReportResponse,
+        operation_id="getMonthlyReport",
+        responses={
+            404: {"model": ApiErrorResponse, "description": "Monthly report not found"},
+            503: {"model": ApiErrorResponse, "description": "Report storage unavailable"},
+        },
+    )
+    def _get_monthly_report(
+        period: Annotated[str, ApiPath(pattern=r"^\d{4}-\d{2}$")],
+        repo: Annotated[RepositoryPort, Depends(get_repository)],
+        topic: Annotated[str | None, Query(min_length=1, max_length=80)] = None,
+    ) -> ReportResponse:
+        period_start, period_end = _month_bounds(period)
+        return _report_or_404(
+            repo,
+            report_type=ReportType.MONTHLY,
+            period_start=period_start,
+            period_end=period_end,
+            topic_slug=topic,
+        )
+
     @app.get("/api/v1/runs", response_model=RunListResponse, operation_id="listRuns")
     def _list_runs(
         repo: Annotated[RepositoryPort, Depends(get_repository)],
@@ -340,6 +630,27 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
             )
         return _run_detail_response(detail)
 
+    @app.get(
+        "/api/v1/runs/{run_id}",
+        response_model=RunDetailResponse,
+        operation_id="getRun",
+        responses={
+            404: {"model": ApiErrorResponse, "description": "Run not found"},
+            503: {"model": ApiErrorResponse, "description": "Run storage unavailable"},
+        },
+    )
+    def _get_run(
+        run_id: UUID,
+        repo: Annotated[RepositoryPort, Depends(get_repository)],
+    ) -> RunDetailResponse:
+        detail = repo.get_run(run_id)
+        if detail is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "RUN_NOT_FOUND", "message": f"run {run_id} was not found"},
+            )
+        return _run_detail_response(detail)
+
     static_directory = os.environ.get("PAPER_HARNESS_STATIC_DIR")
     if static_directory:
         resolved_static_directory = Path(static_directory).resolve()
@@ -348,6 +659,82 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
         app.mount("/", SpaStaticFiles(directory=resolved_static_directory, html=True), name="web")
 
     return app
+
+
+def _product_run_or_404(
+    repository: RepositoryPort,
+    *,
+    logical_date: date | None,
+    topic_slug: str | None,
+) -> DailyRunEnvelopeResponse:
+    detail = repository.get_product_run(logical_date=logical_date, topic_slug=topic_slug)
+    if detail is None:
+        qualifier = "latest" if logical_date is None else logical_date.isoformat()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "PRODUCT_RUN_NOT_FOUND",
+                "message": f"product publication run {qualifier} was not found",
+            },
+        )
+    return _product_run_response(detail)
+
+
+def _report_or_404(
+    repository: RepositoryPort,
+    *,
+    report_type: ReportType,
+    period_start: date,
+    period_end: date,
+    topic_slug: str | None,
+) -> ReportResponse:
+    detail = repository.get_report(
+        report_type=report_type,
+        period_start=period_start,
+        period_end=period_end,
+        topic_slug=topic_slug,
+    )
+    if detail is None:
+        period = (
+            period_start.isoformat()
+            if period_start == period_end
+            else f"{period_start.isoformat()} to {period_end.isoformat()}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "REPORT_NOT_FOUND",
+                "message": f"{report_type.value.lower()} report for {period} was not found",
+            },
+        )
+    return _report_detail_response(detail)
+
+
+def _iso_week_bounds(period: str) -> tuple[date, date]:
+    year_text, week_text = period.split("-W", maxsplit=1)
+    try:
+        start = date.fromisocalendar(int(year_text), int(week_text), 1)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "INVALID_REPORT_PERIOD", "message": "invalid ISO week period"},
+        ) from error
+    return start, start + timedelta(days=6)
+
+
+def _month_bounds(period: str) -> tuple[date, date]:
+    year_text, month_text = period.split("-", maxsplit=1)
+    year = int(year_text)
+    month = int(month_text)
+    try:
+        start = date(year, month, 1)
+        end = date(year, month, monthrange(year, month)[1])
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "INVALID_REPORT_PERIOD", "message": "invalid calendar month"},
+        ) from error
+    return start, end
 
 
 class SpaStaticFiles(StaticFiles):
@@ -460,6 +847,7 @@ def _run_response(run: DailyRun) -> RunSummary:
     return RunSummary(
         id=run.id,
         topic_id=run.topic_id,
+        source_run_id=run.source_run_id,
         logical_date=run.logical_date,
         operation=run.operation,
         analysis_scope=run.analysis_scope,
@@ -513,6 +901,21 @@ def _run_detail_response(detail: RunDetail) -> RunDetailResponse:
             for item in detail.items
         ],
         report=None if detail.report is None else _report_response(detail.report),
+    )
+
+
+def _product_run_response(detail: ProductRunDetail) -> DailyRunEnvelopeResponse:
+    return DailyRunEnvelopeResponse(
+        run=_run_response(detail.run),
+        items=[
+            _item_response(
+                item.item,
+                canonical_arxiv_id=item.canonical_arxiv_id,
+                paper_title=item.paper_title,
+            )
+            for item in detail.items
+        ],
+        report=None if detail.report is None else _report_detail_response(detail.report),
     )
 
 
@@ -909,6 +1312,227 @@ def _related_work_response(paper_id: UUID, detail: RelatedWorkDetail) -> Related
     )
 
 
+def _graph_model_provenance_response(
+    mention_or_edge: GraphEntityMention | GraphEdge,
+) -> GraphModelProvenanceResponse | None:
+    provenance = mention_or_edge.model_provenance
+    if provenance is None:
+        return None
+    return GraphModelProvenanceResponse(
+        provider=provenance.provider,
+        configured_model=provenance.configured_model,
+        model_version=provenance.model_version,
+        prompt_version=provenance.prompt_version,
+    )
+
+
+def _graph_mention_response(mention: GraphEntityMention) -> GraphEntityMentionResponse:
+    return GraphEntityMentionResponse(
+        id=mention.id,
+        paper_id=mention.paper_id,
+        paper_version_id=mention.paper_version_id,
+        analysis_id=mention.analysis_id,
+        comparison_id=mention.comparison_id,
+        observed_label=mention.observed_label,
+        provenance=mention.provenance,
+        inferred=mention.provenance is RelationProvenance.LLM_INFERRED,
+        evidence_ids=list(mention.evidence_ids),
+        model_provenance=_graph_model_provenance_response(mention),
+        confidence=mention.confidence,
+        verification_status=mention.verification_status,
+        generated_at=mention.generated_at,
+        schema_version=mention.schema_version,
+        created_at=mention.created_at,
+    )
+
+
+def _graph_node_response(detail: GraphNodeDetail) -> GraphNodeResponse:
+    entity = detail.entity
+    return GraphNodeResponse(
+        id=entity.id,
+        topic_id=entity.topic_id,
+        entity_type=entity.entity_type,
+        paper_id=entity.paper_id,
+        canonical_label=entity.canonical_label,
+        normalized_key=entity.normalized_key,
+        display_label=entity.display_label,
+        aliases=list(entity.aliases),
+        provenance=entity.provenance,
+        inferred=entity.provenance is RelationProvenance.LLM_INFERRED,
+        source=entity.source,
+        mention_count=detail.total_mentions,
+        mentions=[_graph_mention_response(item) for item in detail.mentions],
+        schema_version=entity.schema_version,
+        created_at=entity.created_at,
+        updated_at=entity.updated_at,
+    )
+
+
+def _graph_edge_evidence_response(
+    reference: GraphEdgeEvidenceReference,
+) -> GraphEdgeEvidenceResponse:
+    return GraphEdgeEvidenceResponse(
+        evidence_id=reference.evidence_id,
+        paper_id=reference.paper_id,
+        paper_version_id=reference.paper_version_id,
+        role=reference.role,
+    )
+
+
+def _graph_edge_response(detail: GraphEdgeDetail) -> GraphEdgeResponse:
+    edge = detail.edge
+    inferred = edge.provenance is RelationProvenance.LLM_INFERRED
+    return GraphEdgeResponse(
+        id=edge.id,
+        source_entity_id=edge.source_entity_id,
+        target_entity_id=edge.target_entity_id,
+        relation_type=edge.relation_type,
+        source_paper_version_id=edge.source_paper_version_id,
+        target_paper_version_id=edge.target_paper_version_id,
+        analysis_id=edge.analysis_id,
+        comparison_id=edge.comparison_id,
+        paper_relation_id=edge.paper_relation_id,
+        provenance=edge.provenance,
+        inferred=inferred,
+        evidence_ids=list(edge.evidence_ids),
+        evidence=[_graph_edge_evidence_response(item) for item in detail.evidence],
+        justification=edge.justification,
+        model_provenance=_graph_model_provenance_response(edge),
+        confidence=edge.confidence,
+        confidence_meaning=GRAPH_CONFIDENCE_MEANING if inferred else None,
+        verification_status=edge.verification_status,
+        generated_at=edge.generated_at,
+        schema_version=edge.schema_version,
+        created_at=edge.created_at,
+    )
+
+
+def _graph_response(graph: GraphView) -> KnowledgeGraphResponse:
+    return KnowledgeGraphResponse(
+        topic_id=graph.topic_id,
+        as_of=graph.as_of,
+        nodes=[_graph_node_response(item) for item in graph.nodes],
+        edges=[_graph_edge_response(item) for item in graph.edges],
+        total_nodes=graph.total_nodes,
+        total_edges=graph.total_edges,
+        total_mentions=graph.total_mentions,
+        truncated=graph.truncated,
+    )
+
+
+def _trend_change_response(change: TrendChange) -> TrendChangeResponse:
+    return TrendChangeResponse(
+        current_count=change.current_count,
+        preceding_count=change.preceding_count,
+        absolute_change=change.absolute_change,
+        denominator_count=change.denominator_count,
+        relative_change=change.relative_change,
+        growth_status=change.growth_status,
+    )
+
+
+def _trend_response(detail: TrendDetail) -> TrendSnapshotResponse:
+    snapshot = detail.snapshot
+    return TrendSnapshotResponse(
+        id=snapshot.id,
+        topic_id=snapshot.topic_id,
+        as_of_date=snapshot.as_of_date,
+        window=snapshot.window,
+        window_start=snapshot.window_start,
+        window_end=snapshot.window_end,
+        preceding_window_start=snapshot.preceding_window_start,
+        preceding_window_end=snapshot.preceding_window_end,
+        included_paper_count=snapshot.included_paper_count,
+        preceding_paper_count=snapshot.preceding_paper_count,
+        paper_count_change=_trend_change_response(snapshot.paper_count_change),
+        entity_counts=[
+            TrendEntityCountResponse(
+                entity_id=item.entity_id,
+                entity_type=item.entity_type,
+                label=item.label,
+                change=_trend_change_response(item.change),
+                newly_appearing=item.newly_appearing,
+                recurring=item.recurring,
+            )
+            for item in snapshot.entity_counts
+        ],
+        total_entities=detail.total_entities,
+        truncated=detail.truncated,
+        relation_counts=[
+            TrendRelationCountResponse(
+                relation_type=item.relation_type,
+                change=_trend_change_response(item.change),
+            )
+            for item in snapshot.relation_counts
+        ],
+        new_entity_ids=list(snapshot.new_entity_ids),
+        recurring_entity_ids=list(snapshot.recurring_entity_ids),
+        representative_papers=[
+            TrendRepresentativePaperResponse(
+                paper_id=item.paper_id,
+                paper_version_id=item.paper_version_id,
+                activity_date=item.activity_date,
+                title=item.title,
+            )
+            for item in detail.representative_papers
+        ],
+        data_sufficiency=snapshot.data_sufficiency,
+        preceding_data_sufficiency=snapshot.preceding_data_sufficiency,
+        thresholds=TrendThresholdsResponse(
+            limited_paper_count=snapshot.thresholds.limited_paper_count,
+            sufficient_paper_count=snapshot.thresholds.sufficient_paper_count,
+            minimum_growth_denominator=snapshot.thresholds.minimum_growth_denominator,
+        ),
+        aggregation_version=snapshot.aggregation_version,
+        generated_at=snapshot.generated_at,
+        schema_version=snapshot.schema_version,
+    )
+
+
+def _lineage_response(detail: LineageDetail) -> LineageResponse:
+    snapshot = detail.snapshot
+    evidence_by_edge: dict[UUID, list[GraphEdgeEvidenceReference]] = {}
+    for item in detail.evidence:
+        evidence_by_edge.setdefault(item.edge_id, []).append(item)
+    return LineageResponse(
+        id=snapshot.id,
+        topic_id=snapshot.topic_id,
+        root_paper_id=snapshot.root_paper_id,
+        as_of_date=snapshot.as_of_date,
+        nodes=[
+            LineageNodeResponse(
+                graph_entity_id=item.graph_entity_id,
+                paper_id=item.paper_id,
+                title=item.title,
+                publication_date=item.publication_date,
+                depth=item.depth,
+            )
+            for item in snapshot.nodes
+        ],
+        edges=[
+            _graph_edge_response(
+                GraphEdgeDetail(
+                    edge=item,
+                    evidence=tuple(evidence_by_edge.get(item.id, ())),
+                )
+            )
+            for item in snapshot.edges
+        ],
+        permitted_relation_types=list(snapshot.permitted_relation_types),
+        max_depth=snapshot.max_depth,
+        max_nodes=snapshot.max_nodes,
+        max_edges=snapshot.max_edges,
+        truncated=snapshot.truncated,
+        explicit_predecessor_available=snapshot.explicit_predecessor_available,
+        verified_predecessor_available=snapshot.verified_predecessor_available,
+        corpus_scope=snapshot.corpus_scope,
+        limitations=list(snapshot.limitations),
+        lineage_version=snapshot.lineage_version,
+        generated_at=snapshot.generated_at,
+        schema_version=snapshot.schema_version,
+    )
+
+
 def _report_failure_response(failure: ReportFailure) -> ReportFailureResponse:
     return ReportFailureResponse(
         id=failure.id,
@@ -924,7 +1548,25 @@ def _report_failure_response(failure: ReportFailure) -> ReportFailureResponse:
     )
 
 
-def _report_response(report: Report) -> ReportResponse:
+def _report_evidence_response(
+    evidence: ReportEvidenceReference,
+) -> ReportEvidenceReferenceResponse:
+    return ReportEvidenceReferenceResponse(
+        id=evidence.id,
+        paper_id=evidence.paper_id,
+        paper_version_id=evidence.paper_version_id,
+        section=evidence.section,
+        excerpt=evidence.excerpt,
+        evidence_type=evidence.evidence_type,
+        verification_status=evidence.verification_status,
+    )
+
+
+def _report_response(
+    report: Report,
+    *,
+    evidence: tuple[ReportEvidenceReference, ...] = (),
+) -> ReportResponse:
     return ReportResponse(
         id=report.id,
         run_id=report.run_id,
@@ -938,7 +1580,98 @@ def _report_response(report: Report) -> ReportResponse:
         schema_version=report.schema_version,
         created_at=report.created_at,
         failures=[_report_failure_response(failure) for failure in report.failures],
+        sections=[
+            ReportSectionResponse(
+                id=section.id,
+                report_id=section.report_id,
+                kind=section.kind,
+                narrative=section.narrative,
+                evidence_ids=list(section.evidence_ids),
+                schema_version=section.schema_version,
+                created_at=section.created_at,
+            )
+            for section in report.sections
+        ],
+        report_type=report.report_type,
+        period_start=report.period_start or report.logical_date,
+        period_end=report.period_end or report.logical_date,
+        counts=ReportCountsResponse(
+            retrieved=report.counts.retrieved,
+            selected=report.counts.selected,
+            processed=report.counts.processed,
+            completed=report.counts.completed,
+            failed=report.counts.failed,
+        ),
+        highlighted_papers=[
+            ReportPaperHighlightResponse(
+                paper_id=item.paper_id,
+                paper_version_id=item.paper_version_id,
+                title=item.title,
+                reason=item.reason,
+                evidence_ids=list(item.evidence_ids),
+            )
+            for item in report.highlighted_papers
+        ],
+        major_entities=[
+            ReportEntityHighlightResponse(
+                graph_entity_id=item.graph_entity_id,
+                entity_type=item.entity_type,
+                label=item.label,
+                distinct_paper_count=item.distinct_paper_count,
+            )
+            for item in report.major_entities
+        ],
+        notable_comparisons=[
+            ReportComparisonHighlightResponse(
+                comparison_id=item.comparison_id,
+                summary=item.summary,
+                comparability_status=item.comparability_status,
+                evidence_ids=list(item.evidence_ids),
+            )
+            for item in report.notable_comparisons
+        ],
+        graph_changes=ReportGraphChangesResponse(
+            entity_count=report.graph_changes.entity_count,
+            edge_count=report.graph_changes.edge_count,
+            new_entity_count=report.graph_changes.new_entity_count,
+            inferred_edge_count=report.graph_changes.inferred_edge_count,
+        ),
+        trend_snapshot_ids=list(report.trend_snapshot_ids),
+        lineage_highlights=[
+            ReportLineageHighlightResponse(
+                lineage_snapshot_id=item.lineage_snapshot_id,
+                root_paper_id=item.root_paper_id,
+                summary=item.summary,
+                uncertain=item.uncertain,
+            )
+            for item in report.lineage_highlights
+        ],
+        evidence=[_report_evidence_response(item) for item in evidence],
+        limitations=list(report.limitations),
+        missing_sections=list(report.missing_sections),
+        narrative_mode=report.narrative_mode,
+        provider=report.provider,
+        configured_model=report.configured_model,
+        model_version=report.model_version,
+        prompt_version=report.prompt_version,
+        usage=(
+            None
+            if report.usage is None
+            else ModelUsageResponse(
+                prompt_tokens=report.usage.prompt_tokens,
+                completion_tokens=report.usage.completion_tokens,
+                total_tokens=report.usage.total_tokens,
+                call_count=report.usage.call_count,
+                duration_ms=report.usage.duration_ms,
+                estimated_cost_usd=report.usage.estimated_cost_usd,
+            )
+        ),
+        verification_status=report.verification_status,
     )
+
+
+def _report_detail_response(detail: ReportDetail) -> ReportResponse:
+    return _report_response(detail.report, evidence=detail.evidence)
 
 
 app = create_app()

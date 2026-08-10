@@ -46,6 +46,7 @@ from paper_harness.domain.models import (
     RunStatus,
     TopicConfig,
 )
+from paper_harness.domain.reports import GeneratedReportNarrative, ReportNarrativeRequest
 from paper_harness.ports.arxiv import ArxivPaperRecord, ArxivUnavailableError
 from paper_harness.ports.llm import LLMAuthenticationError, LLMOutputError
 from paper_harness.ports.pdf_parser import (
@@ -178,6 +179,10 @@ class FakeLLM:
     def compare_papers(self, request: ComparisonRequest) -> GeneratedComparison:
         del request
         raise AssertionError("paper comparison is outside the M2 analysis test")
+
+    def generate_report(self, request: ReportNarrativeRequest) -> GeneratedReportNarrative:
+        del request
+        raise AssertionError("report generation is outside the M2 analysis test")
 
 
 class FailingFailureWriteRepository(FakeRepository):
