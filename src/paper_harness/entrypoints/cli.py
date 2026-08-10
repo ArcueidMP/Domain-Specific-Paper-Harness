@@ -13,16 +13,29 @@ from uuid import UUID
 import typer
 
 from paper_harness.application.compare_papers import ComparisonInputMissingError
+from paper_harness.application.generate_periodic_report import (
+    PeriodicReportInsufficientDataError,
+)
 from paper_harness.application.historical_backfill import HistoricalBackfillTimeoutError
+from paper_harness.application.publish_product import (
+    ProductGraphError,
+    ProductInputMissingError,
+    ProductReportError,
+    ProductTrendError,
+)
 from paper_harness.application.related_work import RelatedWorkInputError
+from paper_harness.application.reporting import ReportNarrativeModeConflictError
 from paper_harness.domain.analysis import AnalysisScope
 from paper_harness.domain.errors import DomainInvariantError, DuplicateDailyRunError
 from paper_harness.domain.historical import SearchLimits, SelectionDecision
 from paper_harness.domain.models import RunStatus
+from paper_harness.domain.reports import ReportNarrativeMode, ReportType
 from paper_harness.entrypoints.runtime import (
     execute_arxiv_ingestion,
     execute_historical_backfill,
     execute_paper_comparison,
+    execute_periodic_report,
+    execute_product_publication,
     execute_related_work_search,
     execute_structured_analysis,
 )
@@ -84,6 +97,173 @@ def ingest_arxiv(
                 "discovered_count": run.discovered_count,
                 "normalized_count": run.normalized_count,
                 "failed_count": run.failed_count,
+            },
+            separators=(",", ":"),
+        )
+    )
+
+
+@app.command("publish-product")
+def publish_product(
+    topic_config: Annotated[
+        Path,
+        typer.Option(
+            "--topic-config",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            envvar="TOPIC_CONFIG_PATH",
+        ),
+    ] = Path("configs/topics/broad-llm-agents.yaml"),
+    logical_date: Annotated[
+        str | None,
+        typer.Option("--logical-date", help="Logical publication date in YYYY-MM-DD format."),
+    ] = None,
+    narrative_mode: Annotated[
+        str,
+        typer.Option(
+            "--narrative-mode",
+            help="Use deepseek or the explicit deterministic structured_only mode.",
+        ),
+    ] = "deepseek",
+) -> None:
+    """Publish the persisted M2/M3 corpus as the M4 daily product."""
+
+    try:
+        parsed_date = None if logical_date is None else date.fromisoformat(logical_date)
+        parsed_mode = ReportNarrativeMode(narrative_mode.strip().upper())
+        run = execute_product_publication(
+            topic_config=topic_config,
+            logical_date=parsed_date,
+            narrative_mode=parsed_mode,
+        )
+    except (
+        ValueError,
+        OSError,
+        DomainInvariantError,
+        DuplicateDailyRunError,
+        ProductInputMissingError,
+        ProductGraphError,
+        ProductTrendError,
+        ProductReportError,
+        ReportNarrativeModeConflictError,
+        LLMPortError,
+        RepositoryError,
+    ) as error:
+        typer.echo(
+            json.dumps(
+                {"level": "ERROR", "event": "product_publication_failed", "detail": str(error)},
+                separators=(",", ":"),
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from error
+    level = (
+        "ERROR"
+        if run.status is RunStatus.FAILED
+        else "WARNING"
+        if run.status is RunStatus.PARTIAL
+        else "INFO"
+    )
+    event = (
+        "product_publication_failed"
+        if run.status is RunStatus.FAILED
+        else "product_publication_partial"
+        if run.status is RunStatus.PARTIAL
+        else "product_publication_completed"
+    )
+    typer.echo(
+        json.dumps(
+            {
+                "level": level,
+                "event": event,
+                "run_id": str(run.id),
+                "status": run.status.value,
+                "completed_count": run.completed_count,
+                "failed_count": run.failed_count,
+            },
+            separators=(",", ":"),
+        ),
+        err=run.status in (RunStatus.PARTIAL, RunStatus.FAILED),
+    )
+    if run.status is RunStatus.FAILED:
+        raise typer.Exit(code=1)
+
+
+@app.command("generate-periodic-report")
+def generate_periodic_report(
+    report_type: Annotated[
+        str,
+        typer.Option("--report-type", help="Eligible aggregate scope: weekly or monthly."),
+    ],
+    period_start: Annotated[
+        str,
+        typer.Option("--period-start", help="Inclusive period start in YYYY-MM-DD format."),
+    ],
+    period_end: Annotated[
+        str,
+        typer.Option("--period-end", help="Inclusive period end in YYYY-MM-DD format."),
+    ],
+    topic_config: Annotated[
+        Path,
+        typer.Option(
+            "--topic-config",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            envvar="TOPIC_CONFIG_PATH",
+        ),
+    ] = Path("configs/topics/broad-llm-agents.yaml"),
+    narrative_mode: Annotated[
+        str,
+        typer.Option(
+            "--narrative-mode",
+            help="Use deepseek or the explicit deterministic structured_only mode.",
+        ),
+    ] = "deepseek",
+) -> None:
+    """Generate an eligible weekly or monthly report from persisted daily reports."""
+
+    try:
+        parsed_type = ReportType(report_type.strip().upper())
+        parsed_mode = ReportNarrativeMode(narrative_mode.strip().upper())
+        report = execute_periodic_report(
+            topic_config=topic_config,
+            report_type=parsed_type,
+            period_start=date.fromisoformat(period_start),
+            period_end=date.fromisoformat(period_end),
+            narrative_mode=parsed_mode,
+        )
+    except (
+        ValueError,
+        OSError,
+        DomainInvariantError,
+        PeriodicReportInsufficientDataError,
+        ReportNarrativeModeConflictError,
+        LLMPortError,
+        RepositoryError,
+    ) as error:
+        typer.echo(
+            json.dumps(
+                {"level": "ERROR", "event": "periodic_report_failed", "detail": str(error)},
+                separators=(",", ":"),
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        json.dumps(
+            {
+                "level": "INFO",
+                "event": "periodic_report_completed",
+                "report_id": str(report.id),
+                "report_type": report.report_type.value,
+                "period_start": report.period_start.isoformat() if report.period_start else None,
+                "period_end": report.period_end.isoformat() if report.period_end else None,
             },
             separators=(",", ":"),
         )

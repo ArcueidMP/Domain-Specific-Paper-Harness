@@ -223,5 +223,37 @@ audits:
       - Persist and query with the complete embedding contract so a changed tokenizer or preprocessing policy cannot overwrite or resume an older run.
       - Preserve THIRD_PARTY_NOTICES.md and the Apache-2.0 license in the distributed image.
   storm:
-    status: pending-m4
+    status: reviewed-architecture-only-no-code-reuse
+    upstream: https://github.com/stanford-oval/storm
+    revision: main
+    commit: fb951af7744dab086e34962e9bc6fe878e145f83
+    license: MIT
     source_copied: false
+    copied_files: []
+    local_changes: none
+    reviewed_at: "2026-08-10"
+    release_provenance:
+      github_release: v1.1.0
+      github_release_commit: e80d9bbea7362141a479940dabb751c1f244e4b6
+      pypi_release: knowledge-storm 1.1.1, published 2025-09-29
+      pypi_sdist_sha256: 68a112e2183324ccc8c6ffa5ab88bc0f810ab5425d84154f5f85f181d8a60c57
+      note: The 1.1.1 source distribution matches the audited main source after line-ending normalization, while the package's internal version remains 1.1.0.
+    architecture:
+      - Classic STORM runs research, outline generation, section article generation, and final polishing over internet retrieval.
+      - Co-STORM maintains an in-memory hierarchical knowledge base and writes one section per node for interactive discourse.
+      - The useful M4 idea is a coverage-aware outline followed by bounded per-section synthesis over a selected corpus.
+    dependency_graph: knowledge-storm pulls DSPy, LiteLLM, Wikipedia and arbitrary-web retrieval, sentence-transformers and PyTorch, LangChain components, Qdrant, datasets/pandas/pyarrow, and provider clients. A CPython 3.13.13 verification environment installed 120 packages.
+    python_compatibility: PyPI 1.1.1 installed on exact CPython 3.13.13, all 33 package modules imported, and focused outline/citation helper smokes passed. Upstream declares Python 3.10 or newer but lists only 3.10/3.11 classifiers, tests no runtime behavior in CI, and provides no test suite; this proves packaging/import compatibility only, not supported production compatibility.
+    decision: Do not install, vendor, or copy STORM source or prompts. Reimplement only the two-stage outline-to-section behavior as first-party typed report assembly over persisted local graph, trends, lineages, comparisons, and Evidence IDs through the existing DeepSeek LLMPort.
+    reasons:
+      - Upstream research is internet-first and includes Wikipedia, Google-oriented prompts, arbitrary webpage extraction, and multiple unapproved search providers.
+      - Its model layer bypasses the project DeepSeek adapter, strict structured-output contract, bounded retry policy, and logging rules.
+      - Numeric URL citations are renumbered but do not validate entailment, paper/version identity, source coordinates, or persisted Evidence ownership.
+      - Persistence is local text and JSON rather than normalized PostgreSQL transactions with stable publication identity and provenance.
+      - Article generation adds an independent sentence-transformer/PyTorch retrieval stack and final polishing can detach claims from their citations.
+    update_strategy: Re-audit an exact future revision only if it provides a provider-neutral, retriever-independent, strict structured section-synthesis module with persisted evidence-ID validation and exact CPython 3.13.13 tests.
+    constraints:
+      - Never call STORM retrievers, Wikipedia personas, arbitrary-web readers, provider wrappers, embeddings, vector stores, or filesystem persistence.
+      - Synthesize only from sufficient persisted daily reports and the selected local corpus; no arbitrary search or source expansion is permitted.
+      - Deterministic statistics remain authoritative and every generated claim may cite only the Evidence IDs supplied in the request.
+      - Do not apply a final whole-report polish that can detach section claims from their citations.

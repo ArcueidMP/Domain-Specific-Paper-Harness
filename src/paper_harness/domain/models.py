@@ -27,6 +27,8 @@ class PaperStage(StrEnum):
     PRIOR_WORK_RETRIEVED = "PRIOR_WORK_RETRIEVED"
     COMPARED = "COMPARED"
     GRAPH_UPDATED = "GRAPH_UPDATED"
+    TREND_SNAPSHOTS_GENERATED = "TREND_SNAPSHOTS_GENERATED"
+    REPORT_GENERATED = "REPORT_GENERATED"
     PUBLISHED = "PUBLISHED"
 
 
@@ -46,6 +48,7 @@ class RunItemStatus(StrEnum):
 class RunOperation(StrEnum):
     ARXIV_INGESTION = "ARXIV_INGESTION"
     STRUCTURED_ANALYSIS = "STRUCTURED_ANALYSIS"
+    PRODUCT_PUBLICATION = "PRODUCT_PUBLICATION"
 
 
 def _require_aware(value: datetime, name: str) -> None:
@@ -210,6 +213,7 @@ class DailyRun:
     error_detail: str | None
     schema_version: int
     created_at: datetime
+    source_run_id: UUID | None = None
 
     def __post_init__(self) -> None:
         _require_aware(self.started_at, "started_at")
@@ -232,6 +236,8 @@ class DailyRun:
         ):
             raise DomainInvariantError("run counts cannot be negative")
         if self.operation is RunOperation.ARXIV_INGESTION:
+            if self.source_run_id is not None:
+                raise DomainInvariantError("arXiv ingestion run cannot reference a source run")
             if self.analysis_scope is not None:
                 raise DomainInvariantError("arXiv ingestion run cannot carry an analysis scope")
             if self.cursor_from is None or self.cursor_to is None:
@@ -240,16 +246,29 @@ class DailyRun:
                 raise DomainInvariantError("run cursor window is reversed")
             if self.selected_count or self.completed_count:
                 raise DomainInvariantError("ingestion run cannot carry analysis counts")
-        else:
+        elif self.operation is RunOperation.STRUCTURED_ANALYSIS:
+            if self.source_run_id is not None:
+                raise DomainInvariantError("structured analysis run cannot reference a source run")
             if self.analysis_scope is None:
                 raise DomainInvariantError("structured analysis run requires a preselected scope")
             if self.cursor_from is not None or self.cursor_to is not None:
                 raise DomainInvariantError("analysis run cannot carry an ingestion cursor window")
+        else:
+            if self.source_run_id is None:
+                raise DomainInvariantError("product publication run requires a source run")
+            if self.analysis_scope is not None:
+                raise DomainInvariantError("product publication run cannot carry an analysis scope")
+            if self.cursor_from is not None or self.cursor_to is not None:
+                raise DomainInvariantError(
+                    "product publication run cannot carry an ingestion cursor window"
+                )
+            if self.discovered_count or self.normalized_count:
+                raise DomainInvariantError("product publication run cannot carry ingestion counts")
         if self.completed_count > self.selected_count:
             raise DomainInvariantError("completed count cannot exceed selected count")
-        if (
-            self.failed_count > self.selected_count
-            and self.operation is RunOperation.STRUCTURED_ANALYSIS
+        if self.failed_count > self.selected_count and self.operation in (
+            RunOperation.STRUCTURED_ANALYSIS,
+            RunOperation.PRODUCT_PUBLICATION,
         ):
             raise DomainInvariantError("failed count cannot exceed selected count")
         if self.status is RunStatus.RUNNING and self.completed_at is not None:

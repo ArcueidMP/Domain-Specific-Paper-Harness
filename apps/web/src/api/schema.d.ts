@@ -21,6 +21,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/daily/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Latest Daily */
+        get: operations["getLatestDailyReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/daily/{logical_date}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Daily */
+        get: operations["getDailyReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Graph */
+        get: operations["getKnowledgeGraph"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lineages/{entity_or_paper_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Lineage */
+        get: operations["getLineage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/papers": {
         parameters: {
             query?: never;
@@ -106,6 +174,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reports/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Daily Reports */
+        get: operations["listDailyReports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/reports/daily/{logical_date}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Daily Report */
+        get: operations["getDailyReportPublication"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/reports/monthly/{period}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Monthly Report */
+        get: operations["getMonthlyReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/reports/weekly/{period}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Weekly Report */
+        get: operations["getWeeklyReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs": {
         parameters: {
             query?: never;
@@ -140,6 +276,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run */
+        get: operations["getRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/topics": {
         parameters: {
             query?: never;
@@ -149,6 +302,23 @@ export interface paths {
         };
         /** List Topics */
         get: operations["listTopics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/trends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Trends */
+        get: operations["listTrends"];
         put?: never;
         post?: never;
         delete?: never;
@@ -463,6 +633,13 @@ export interface components {
             usage: components["schemas"]["ModelUsageResponse"];
             verification_status: components["schemas"]["VerificationStatus"];
         };
+        /** DailyRunEnvelopeResponse */
+        DailyRunEnvelopeResponse: {
+            /** Items */
+            items: components["schemas"]["RunItemResponse"][];
+            report: components["schemas"]["ReportResponse"] | null;
+            run: components["schemas"]["RunSummary"];
+        };
         /** EvidenceListResponse */
         EvidenceListResponse: {
             /** Items */
@@ -585,10 +762,303 @@ export interface components {
             /** Year */
             year: number | null;
         };
+        /** GraphEdgeEvidenceResponse */
+        GraphEdgeEvidenceResponse: {
+            /**
+             * Evidence Id
+             * Format: uuid
+             */
+            evidence_id: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Paper Version Id
+             * Format: uuid
+             */
+            paper_version_id: string;
+            role: components["schemas"]["GraphEvidenceRole"];
+        };
+        /** GraphEdgeResponse */
+        GraphEdgeResponse: {
+            /** Analysis Id */
+            analysis_id: string | null;
+            /** Comparison Id */
+            comparison_id: string | null;
+            /** Confidence */
+            confidence?: number | null;
+            /** Confidence Meaning */
+            confidence_meaning: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Evidence */
+            evidence: components["schemas"]["GraphEdgeEvidenceResponse"][];
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Inferred */
+            inferred: boolean;
+            /** Justification */
+            justification: string;
+            model_provenance: components["schemas"]["GraphModelProvenanceResponse"] | null;
+            /** Paper Relation Id */
+            paper_relation_id: string | null;
+            provenance: components["schemas"]["RelationProvenance"];
+            relation_type: components["schemas"]["GraphRelationType"];
+            /** Schema Version */
+            schema_version: number;
+            /**
+             * Source Entity Id
+             * Format: uuid
+             */
+            source_entity_id: string;
+            /**
+             * Source Paper Version Id
+             * Format: uuid
+             */
+            source_paper_version_id: string;
+            /**
+             * Target Entity Id
+             * Format: uuid
+             */
+            target_entity_id: string;
+            /** Target Paper Version Id */
+            target_paper_version_id: string | null;
+            verification_status: components["schemas"]["VerificationStatus"];
+        };
+        /** GraphEntityMentionResponse */
+        GraphEntityMentionResponse: {
+            /** Analysis Id */
+            analysis_id: string | null;
+            /** Comparison Id */
+            comparison_id: string | null;
+            /** Confidence */
+            confidence?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Inferred */
+            inferred: boolean;
+            model_provenance: components["schemas"]["GraphModelProvenanceResponse"] | null;
+            /** Observed Label */
+            observed_label: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Paper Version Id
+             * Format: uuid
+             */
+            paper_version_id: string;
+            provenance: components["schemas"]["RelationProvenance"];
+            /** Schema Version */
+            schema_version: number;
+            verification_status: components["schemas"]["VerificationStatus"];
+        };
+        /**
+         * GraphEntityType
+         * @enum {string}
+         */
+        GraphEntityType: "PAPER" | "RESEARCH_PROBLEM" | "METHOD" | "TASK" | "DATASET" | "BENCHMARK";
+        /**
+         * GraphEvidenceRole
+         * @enum {string}
+         */
+        GraphEvidenceRole: "SOURCE" | "TARGET" | "RELATION";
+        /** GraphModelProvenanceResponse */
+        GraphModelProvenanceResponse: {
+            /** Configured Model */
+            configured_model: string;
+            /** Model Version */
+            model_version: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provider */
+            provider: string;
+        };
+        /** GraphNodeResponse */
+        GraphNodeResponse: {
+            /** Aliases */
+            aliases: string[];
+            /** Canonical Label */
+            canonical_label: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Display Label */
+            display_label: string;
+            entity_type: components["schemas"]["GraphEntityType"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Inferred */
+            inferred: boolean;
+            /** Mention Count */
+            mention_count: number;
+            /** Mentions */
+            mentions: components["schemas"]["GraphEntityMentionResponse"][];
+            /** Normalized Key */
+            normalized_key: string;
+            /** Paper Id */
+            paper_id: string | null;
+            provenance: components["schemas"]["RelationProvenance"];
+            /** Schema Version */
+            schema_version: number;
+            /** Source */
+            source: string;
+            /**
+             * Topic Id
+             * Format: uuid
+             */
+            topic_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * GraphRelationType
+         * @enum {string}
+         */
+        GraphRelationType: "CITES" | "SIMILAR_TO" | "EXTENDS" | "COMPARES_WITH" | "CONTRADICTS" | "IMPROVES_ON" | "ADDRESSES" | "USES_METHOD" | "TARGETS_TASK" | "USES_DATASET" | "EVALUATES_ON";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** KnowledgeGraphResponse */
+        KnowledgeGraphResponse: {
+            /** As Of */
+            as_of: string | null;
+            /** Edges */
+            edges: components["schemas"]["GraphEdgeResponse"][];
+            /** Nodes */
+            nodes: components["schemas"]["GraphNodeResponse"][];
+            /**
+             * Topic Id
+             * Format: uuid
+             */
+            topic_id: string;
+            /** Total Edges */
+            total_edges: number;
+            /** Total Mentions */
+            total_mentions: number;
+            /** Total Nodes */
+            total_nodes: number;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /**
+         * LineageCorpusScope
+         * @enum {string}
+         */
+        LineageCorpusScope: "CURRENTLY_RETRIEVED_CORPUS";
+        /** LineageNodeResponse */
+        LineageNodeResponse: {
+            /** Depth */
+            depth: number;
+            /**
+             * Graph Entity Id
+             * Format: uuid
+             */
+            graph_entity_id: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /** Publication Date */
+            publication_date: string | null;
+            /** Title */
+            title: string;
+        };
+        /** LineageResponse */
+        LineageResponse: {
+            /**
+             * As Of Date
+             * Format: date
+             */
+            as_of_date: string;
+            corpus_scope: components["schemas"]["LineageCorpusScope"];
+            /** Edges */
+            edges: components["schemas"]["GraphEdgeResponse"][];
+            /** Explicit Predecessor Available */
+            explicit_predecessor_available: boolean;
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Limitations */
+            limitations: string[];
+            /** Lineage Version */
+            lineage_version: string;
+            /** Max Depth */
+            max_depth: number;
+            /** Max Edges */
+            max_edges: number;
+            /** Max Nodes */
+            max_nodes: number;
+            /** Nodes */
+            nodes: components["schemas"]["LineageNodeResponse"][];
+            /** Permitted Relation Types */
+            permitted_relation_types: components["schemas"]["GraphRelationType"][];
+            /**
+             * Root Paper Id
+             * Format: uuid
+             */
+            root_paper_id: string;
+            /** Schema Version */
+            schema_version: number;
+            /**
+             * Topic Id
+             * Format: uuid
+             */
+            topic_id: string;
+            /** Truncated */
+            truncated: boolean;
+            /** Verified Predecessor Available */
+            verified_predecessor_available: boolean;
         };
         /** LiveResponse */
         LiveResponse: {
@@ -812,7 +1282,7 @@ export interface components {
          * PaperStage
          * @enum {string}
          */
-        PaperStage: "DISCOVERED" | "NORMALIZED" | "ENRICHED" | "RELEVANCE_SCORED" | "SELECTED" | "PDF_DOWNLOADED" | "PARSED" | "ANALYZED" | "EVIDENCE_EXTRACTED" | "PRIOR_WORK_RETRIEVED" | "COMPARED" | "GRAPH_UPDATED" | "PUBLISHED";
+        PaperStage: "DISCOVERED" | "NORMALIZED" | "ENRICHED" | "RELEVANCE_SCORED" | "SELECTED" | "PDF_DOWNLOADED" | "PARSED" | "ANALYZED" | "EVIDENCE_EXTRACTED" | "PRIOR_WORK_RETRIEVED" | "COMPARED" | "GRAPH_UPDATED" | "TREND_SNAPSHOTS_GENERATED" | "REPORT_GENERATED" | "PUBLISHED";
         /** PaperSummary */
         PaperSummary: {
             /** Abstract */
@@ -995,6 +1465,75 @@ export interface components {
          * @enum {string}
          */
         RelationProvenance: "METADATA_EXPLICIT" | "TEXT_EXPLICIT" | "DETERMINISTICALLY_DERIVED" | "LLM_INFERRED" | "HUMAN_VERIFIED";
+        /** ReportComparisonHighlightResponse */
+        ReportComparisonHighlightResponse: {
+            /** Comparability Status */
+            comparability_status: string;
+            /**
+             * Comparison Id
+             * Format: uuid
+             */
+            comparison_id: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /** Summary */
+            summary: string;
+        };
+        /** ReportCountsResponse */
+        ReportCountsResponse: {
+            /** Completed */
+            completed: number;
+            /** Failed */
+            failed: number;
+            /** Processed */
+            processed: number;
+            /** Retrieved */
+            retrieved: number;
+            /** Selected */
+            selected: number;
+        };
+        /** ReportEntityHighlightResponse */
+        ReportEntityHighlightResponse: {
+            /**
+             * Distinct Paper Count
+             * @description Distinct papers for this entity in the report's latest 7-day snapshot.
+             */
+            distinct_paper_count: number;
+            /** Entity Type */
+            entity_type: string;
+            /**
+             * Graph Entity Id
+             * Format: uuid
+             */
+            graph_entity_id: string;
+            /** Label */
+            label: string;
+        };
+        /** ReportEvidenceReferenceResponse */
+        ReportEvidenceReferenceResponse: {
+            /** Evidence Type */
+            evidence_type: string;
+            /** Excerpt */
+            excerpt: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Paper Version Id
+             * Format: uuid
+             */
+            paper_version_id: string;
+            /** Section */
+            section: string;
+            verification_status: components["schemas"]["VerificationStatus"];
+        };
         /** ReportFailureResponse */
         ReportFailureResponse: {
             /**
@@ -1032,13 +1571,81 @@ export interface components {
             /** Schema Version */
             schema_version: number;
         };
+        /** ReportGraphChangesResponse */
+        ReportGraphChangesResponse: {
+            /** Edge Count */
+            edge_count: number;
+            /** Entity Count */
+            entity_count: number;
+            /** Inferred Edge Count */
+            inferred_edge_count: number;
+            /** New Entity Count */
+            new_entity_count: number;
+        };
+        /** ReportLineageHighlightResponse */
+        ReportLineageHighlightResponse: {
+            /**
+             * Lineage Snapshot Id
+             * Format: uuid
+             */
+            lineage_snapshot_id: string;
+            /**
+             * Root Paper Id
+             * Format: uuid
+             */
+            root_paper_id: string;
+            /** Summary */
+            summary: string;
+            /** Uncertain */
+            uncertain: boolean;
+        };
+        /** ReportListResponse */
+        ReportListResponse: {
+            /** Items */
+            items: components["schemas"]["ReportResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /**
+         * ReportNarrativeMode
+         * @enum {string}
+         */
+        ReportNarrativeMode: "STRUCTURED_ONLY" | "DEEPSEEK";
+        /** ReportPaperHighlightResponse */
+        ReportPaperHighlightResponse: {
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Paper Version Id
+             * Format: uuid
+             */
+            paper_version_id: string;
+            /** Reason */
+            reason: string;
+            /** Title */
+            title: string;
+        };
         /** ReportResponse */
         ReportResponse: {
+            /** Configured Model */
+            configured_model: string | null;
+            counts: components["schemas"]["ReportCountsResponse"];
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+            /** Evidence */
+            evidence: components["schemas"]["ReportEvidenceReferenceResponse"][];
             /** Failures */
             failures: components["schemas"]["ReportFailureResponse"][];
             /**
@@ -1046,23 +1653,53 @@ export interface components {
              * Format: date-time
              */
             generated_at: string;
+            graph_changes: components["schemas"]["ReportGraphChangesResponse"];
+            /** Highlighted Papers */
+            highlighted_papers: components["schemas"]["ReportPaperHighlightResponse"][];
             /**
              * Id
              * Format: uuid
              */
             id: string;
+            /** Limitations */
+            limitations: string[];
+            /** Lineage Highlights */
+            lineage_highlights: components["schemas"]["ReportLineageHighlightResponse"][];
             /**
              * Logical Date
              * Format: date
              */
             logical_date: string;
+            /** Major Entities */
+            major_entities: components["schemas"]["ReportEntityHighlightResponse"][];
+            /** Missing Sections */
+            missing_sections: string[];
+            /** Model Version */
+            model_version: string | null;
+            narrative_mode: components["schemas"]["ReportNarrativeMode"];
+            /** Notable Comparisons */
+            notable_comparisons: components["schemas"]["ReportComparisonHighlightResponse"][];
             /**
-             * Run Id
-             * Format: uuid
+             * Period End
+             * Format: date
              */
-            run_id: string;
+            period_end: string;
+            /**
+             * Period Start
+             * Format: date
+             */
+            period_start: string;
+            /** Prompt Version */
+            prompt_version: string | null;
+            /** Provider */
+            provider: string | null;
+            report_type: components["schemas"]["ReportType"];
+            /** Run Id */
+            run_id: string | null;
             /** Schema Version */
             schema_version: number;
+            /** Sections */
+            sections: components["schemas"]["ReportSectionResponse"][];
             /** Source */
             source: string;
             status: components["schemas"]["RunStatus"];
@@ -1075,7 +1712,51 @@ export interface components {
              * Format: uuid
              */
             topic_id: string;
+            /** Trend Snapshot Ids */
+            trend_snapshot_ids: string[];
+            usage: components["schemas"]["ModelUsageResponse"] | null;
+            verification_status: components["schemas"]["VerificationStatus"];
         };
+        /**
+         * ReportSectionKind
+         * @enum {string}
+         */
+        ReportSectionKind: "OVERVIEW" | "TRENDS" | "COMPARISONS" | "LINEAGE" | "LIMITATIONS";
+        /** ReportSectionResponse */
+        ReportSectionResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["ReportSectionKind"];
+            /** Narrative */
+            narrative: string;
+            /**
+             * Report Id
+             * Format: uuid
+             */
+            report_id: string;
+            /** Schema Version */
+            schema_version: number;
+        };
+        /**
+         * ReportType
+         * @description Persisted report scopes.
+         *
+         *     ``ANALYSIS`` preserves the M2 per-run publication record. M4 product
+         *     publication uses ``DAILY`` and may create ``WEEKLY`` or ``MONTHLY`` only
+         *     after the deterministic eligibility checks succeed.
+         * @enum {string}
+         */
+        ReportType: "ANALYSIS" | "DAILY" | "WEEKLY" | "MONTHLY";
         /** RunDetailResponse */
         RunDetailResponse: {
             analysis_scope: components["schemas"]["AnalysisScope"] | null;
@@ -1120,6 +1801,8 @@ export interface components {
             schema_version: number;
             /** Selected Count */
             selected_count: number;
+            /** Source Run Id */
+            source_run_id: string | null;
             /**
              * Started At
              * Format: date-time
@@ -1200,7 +1883,7 @@ export interface components {
          * RunOperation
          * @enum {string}
          */
-        RunOperation: "ARXIV_INGESTION" | "STRUCTURED_ANALYSIS";
+        RunOperation: "ARXIV_INGESTION" | "STRUCTURED_ANALYSIS" | "PRODUCT_PUBLICATION";
         /**
          * RunStatus
          * @enum {string}
@@ -1247,6 +1930,8 @@ export interface components {
             schema_version: number;
             /** Selected Count */
             selected_count: number;
+            /** Source Run Id */
+            source_run_id: string | null;
             /**
              * Started At
              * Format: date-time
@@ -1552,6 +2237,162 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /** TrendChangeResponse */
+        TrendChangeResponse: {
+            /** Absolute Change */
+            absolute_change: number;
+            /** Current Count */
+            current_count: number;
+            /** Denominator Count */
+            denominator_count: number;
+            growth_status: components["schemas"]["TrendGrowthStatus"];
+            /** Preceding Count */
+            preceding_count: number;
+            /** Relative Change */
+            relative_change: string | null;
+        };
+        /**
+         * TrendDataSufficiency
+         * @enum {string}
+         */
+        TrendDataSufficiency: "SUFFICIENT" | "LIMITED" | "INSUFFICIENT";
+        /** TrendEntityCountResponse */
+        TrendEntityCountResponse: {
+            change: components["schemas"]["TrendChangeResponse"];
+            /**
+             * Entity Id
+             * Format: uuid
+             */
+            entity_id: string;
+            entity_type: components["schemas"]["GraphEntityType"];
+            /** Label */
+            label: string;
+            /** Newly Appearing */
+            newly_appearing: boolean;
+            /** Recurring */
+            recurring: boolean;
+        };
+        /**
+         * TrendGrowthStatus
+         * @enum {string}
+         */
+        TrendGrowthStatus: "AVAILABLE" | "ZERO_DENOMINATOR" | "LIMITED_SAMPLE";
+        /** TrendRelationCountResponse */
+        TrendRelationCountResponse: {
+            change: components["schemas"]["TrendChangeResponse"];
+            relation_type: components["schemas"]["GraphRelationType"];
+        };
+        /** TrendRepresentativePaperResponse */
+        TrendRepresentativePaperResponse: {
+            /**
+             * Activity Date
+             * Format: date
+             */
+            activity_date: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Paper Version Id
+             * Format: uuid
+             */
+            paper_version_id: string;
+            /** Title */
+            title: string;
+        };
+        /** TrendSnapshotResponse */
+        TrendSnapshotResponse: {
+            /** Aggregation Version */
+            aggregation_version: string;
+            /**
+             * As Of Date
+             * Format: date
+             */
+            as_of_date: string;
+            data_sufficiency: components["schemas"]["TrendDataSufficiency"];
+            /** Entity Counts */
+            entity_counts: components["schemas"]["TrendEntityCountResponse"][];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Included Paper Count */
+            included_paper_count: number;
+            /** New Entity Ids */
+            new_entity_ids: string[];
+            paper_count_change: components["schemas"]["TrendChangeResponse"];
+            preceding_data_sufficiency: components["schemas"]["TrendDataSufficiency"];
+            /** Preceding Paper Count */
+            preceding_paper_count: number;
+            /**
+             * Preceding Window End
+             * Format: date
+             */
+            preceding_window_end: string;
+            /**
+             * Preceding Window Start
+             * Format: date
+             */
+            preceding_window_start: string;
+            /** Recurring Entity Ids */
+            recurring_entity_ids: string[];
+            /** Relation Counts */
+            relation_counts: components["schemas"]["TrendRelationCountResponse"][];
+            /** Representative Papers */
+            representative_papers: components["schemas"]["TrendRepresentativePaperResponse"][];
+            /** Schema Version */
+            schema_version: number;
+            thresholds: components["schemas"]["TrendThresholdsResponse"];
+            /**
+             * Topic Id
+             * Format: uuid
+             */
+            topic_id: string;
+            /** Total Entities */
+            total_entities: number;
+            /** Truncated */
+            truncated: boolean;
+            window: components["schemas"]["TrendWindow"];
+            /**
+             * Window End
+             * Format: date
+             */
+            window_end: string;
+            /**
+             * Window Start
+             * Format: date
+             */
+            window_start: string;
+        };
+        /** TrendThresholdsResponse */
+        TrendThresholdsResponse: {
+            /** Limited Paper Count */
+            limited_paper_count: number;
+            /** Minimum Growth Denominator */
+            minimum_growth_denominator: number;
+            /** Sufficient Paper Count */
+            sufficient_paper_count: number;
+        };
+        /**
+         * TrendWindow
+         * @enum {string}
+         */
+        TrendWindow: "7D" | "30D" | "90D";
+        /** TrendsResponse */
+        TrendsResponse: {
+            /** Items */
+            items: components["schemas"]["TrendSnapshotResponse"][];
+            /** Total */
+            total: number;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -1618,6 +2459,218 @@ export interface operations {
                 };
             };
             /** @description Comparison storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    getLatestDailyReport: {
+        parameters: {
+            query?: {
+                topic?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyRunEnvelopeResponse"];
+                };
+            };
+            /** @description Product publication run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Daily report storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    getDailyReport: {
+        parameters: {
+            query?: {
+                topic?: string | null;
+            };
+            header?: never;
+            path: {
+                logical_date: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyRunEnvelopeResponse"];
+                };
+            };
+            /** @description Product publication run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Daily report storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    getKnowledgeGraph: {
+        parameters: {
+            query?: {
+                topic?: string | null;
+                as_of?: string | null;
+                paper_id?: string | null;
+                entity_id?: string | null;
+                entity_type?: components["schemas"]["GraphEntityType"] | null;
+                relation_type?: components["schemas"]["GraphRelationType"] | null;
+                provenance?: components["schemas"]["RelationProvenance"] | null;
+                verification_status?: components["schemas"]["VerificationStatus"] | null;
+                max_nodes?: number;
+                max_edges?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGraphResponse"];
+                };
+            };
+            /** @description Knowledge graph not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Graph storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    getLineage: {
+        parameters: {
+            query?: {
+                topic?: string | null;
+                max_depth?: number;
+                max_nodes?: number;
+                max_edges?: number;
+            };
+            header?: never;
+            path: {
+                entity_or_paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LineageResponse"];
+                };
+            };
+            /** @description Lineage not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Lineage storage unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -1848,6 +2901,201 @@ export interface operations {
             };
         };
     };
+    listDailyReports: {
+        parameters: {
+            query?: {
+                topic?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Report storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    getDailyReportPublication: {
+        parameters: {
+            query?: {
+                topic?: string | null;
+            };
+            header?: never;
+            path: {
+                logical_date: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportResponse"];
+                };
+            };
+            /** @description Daily report not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Report storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    getMonthlyReport: {
+        parameters: {
+            query?: {
+                topic?: string | null;
+            };
+            header?: never;
+            path: {
+                period: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportResponse"];
+                };
+            };
+            /** @description Monthly report not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Report storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    getWeeklyReport: {
+        parameters: {
+            query?: {
+                topic?: string | null;
+            };
+            header?: never;
+            path: {
+                period: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportResponse"];
+                };
+            };
+            /** @description Weekly report not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Report storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
     listRuns: {
         parameters: {
             query?: {
@@ -1912,6 +3160,55 @@ export interface operations {
             };
         };
     };
+    getRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunDetailResponse"];
+                };
+            };
+            /** @description Run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Run storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
     listTopics: {
         parameters: {
             query?: never;
@@ -1928,6 +3225,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TopicListResponse"];
+                };
+            };
+        };
+    };
+    listTrends: {
+        parameters: {
+            query?: {
+                topic?: string | null;
+                as_of?: string | null;
+                window?: components["schemas"]["TrendWindow"][] | null;
+                entity_type?: components["schemas"]["GraphEntityType"] | null;
+                max_entities?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrendsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Trend storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };

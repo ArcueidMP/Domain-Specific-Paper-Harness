@@ -1,5 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import {
+  dailyRun,
+  knowledgeGraph,
+  lineage,
+  ninetyDayTrend,
+  report,
+  runDetail,
+  sevenDayTrend,
+  thirtyDayTrend,
+} from "../../apps/web/src/test/m4-fixtures";
+
 const paper = {
   id: "00511b3e-1303-4e03-b846-d29fd641942d",
   canonical_arxiv_id: "2608.01234",
@@ -463,94 +474,43 @@ async function installApiFixtures(page: Page) {
       await route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
     },
   );
-  await page.route("**/api/v1/runs/latest*", async (route) => {
+  await page.route("**/api/v1/daily/**", async (route) => {
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(dailyRun) });
+  });
+  await page.route("**/api/v1/reports/daily*", async (route) => {
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({
-        id: "df0b73ea-cea0-4eb5-9501-e5680b472f85",
-        topic_id: "cc6caeba-3832-42c4-8fbf-607a183490f8",
-        logical_date: "2026-08-08",
-        operation: "STRUCTURED_ANALYSIS",
-        analysis_scope: "FULL_TEXT",
-        status: "PARTIAL",
-        started_at: "2026-08-08T05:00:00+08:00",
-        completed_at: "2026-08-08T05:02:00+08:00",
-        cursor_from: null,
-        cursor_to: null,
-        discovered_count: 0,
-        normalized_count: 0,
-        selected_count: 2,
-        completed_count: 1,
-        failed_count: 1,
-        error_code: null,
-        error_detail: null,
-        schema_version: 1,
-        created_at: "2026-08-08T05:00:00+08:00",
-        items: [
-          {
-            id: "125790a2-7520-492f-a6ad-b3f10ce9075c",
-            run_id: "df0b73ea-cea0-4eb5-9501-e5680b472f85",
-            paper_id: paper.id,
-            paper_version_id: paperVersionId,
-            canonical_arxiv_id: paper.canonical_arxiv_id,
-            paper_title: paper.title,
-            stage: "EVIDENCE_EXTRACTED",
-            status: "COMPLETED",
-            failed_stage: null,
-            error_code: null,
-            retryable: null,
-            error_detail: null,
-            schema_version: 1,
-            created_at: "2026-08-08T05:01:00+08:00",
-            updated_at: "2026-08-08T05:01:20+08:00",
-          },
-          {
-            id: "8e21d299-e8db-4182-9e95-bb6281b2623e",
-            run_id: "df0b73ea-cea0-4eb5-9501-e5680b472f85",
-            paper_id: "39a22c66-6d3e-4237-b93d-e29898f66574",
-            paper_version_id: "d74f0699-b2df-4fce-9453-d615993d02e9",
-            canonical_arxiv_id: "2608.05678",
-            paper_title: "A Failed Parser Fixture",
-            stage: "PDF_DOWNLOADED",
-            status: "FAILED",
-            failed_stage: "PARSED",
-            error_code: "GROBID_INVALID_TEI",
-            retryable: false,
-            error_detail: "The parser returned TEI without a body section.",
-            schema_version: 1,
-            created_at: "2026-08-08T05:01:00+08:00",
-            updated_at: "2026-08-08T05:01:30+08:00",
-          },
-        ],
-        report: {
-          id: "a7673fa1-7de4-445b-b214-2232362eb584",
-          run_id: "df0b73ea-cea0-4eb5-9501-e5680b472f85",
-          topic_id: "cc6caeba-3832-42c4-8fbf-607a183490f8",
-          logical_date: "2026-08-08",
-          status: "PARTIAL",
-          title: "Structured analysis report for 2026-08-08",
-          summary: "1 of 2 selected papers completed evidence extraction; 1 failed.",
-          source: "structured_analysis_pipeline",
-          generated_at: "2026-08-08T05:02:00+08:00",
-          schema_version: 1,
-          created_at: "2026-08-08T05:02:00+08:00",
-          failures: [
-            {
-              id: "c7276cc5-8134-49d6-a95e-2ee73c4025f8",
-              report_id: "a7673fa1-7de4-445b-b214-2232362eb584",
-              paper_id: "39a22c66-6d3e-4237-b93d-e29898f66574",
-              paper_version_id: "d74f0699-b2df-4fce-9453-d615993d02e9",
-              failed_stage: "PARSED",
-              error_code: "GROBID_INVALID_TEI",
-              retryable: false,
-              error_detail: "The parser returned TEI without a body section.",
-              schema_version: 1,
-              created_at: "2026-08-08T05:02:00+08:00",
-            },
-          ],
-        },
-      }),
+      body: JSON.stringify({ items: [report], total: 1, limit: 20, offset: 0 }),
     });
+  });
+  await page.route("**/api/v1/graph*", async (route) => {
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(knowledgeGraph) });
+  });
+  await page.route("**/api/v1/trends*", async (route) => {
+    const requestedWindow = new URL(route.request().url()).searchParams.get("window");
+    const snapshots =
+      requestedWindow === "7D"
+        ? [sevenDayTrend]
+        : requestedWindow === "30D"
+          ? [thirtyDayTrend]
+          : requestedWindow === "90D"
+            ? [ninetyDayTrend]
+            : [sevenDayTrend, thirtyDayTrend, ninetyDayTrend];
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ items: snapshots, total: snapshots.length }),
+    });
+  });
+  await page.route("**/api/v1/lineages/**", async (route) => {
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(lineage) });
+  });
+  await page.route(/\/api\/v1\/runs(?:\/[^/?]+)?(?:\?.*)?$/, async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    const body =
+      pathname === "/api/v1/runs"
+        ? { items: [dailyRun.run], total: 1, limit: 50, offset: 0 }
+        : runDetail;
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(body) });
   });
 }
 
@@ -560,8 +520,8 @@ test("partial run and grounded paper analysis render without live credentials", 
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "What changed in agent research?" })).toBeVisible();
-  await expect(page.getByRole("link", { name: paper.title, exact: true })).toBeVisible();
-  await expect(page.getByText("PARTIAL", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: paper.title, exact: true }).first()).toBeVisible();
+  await expect(page.getByText("PARTIAL", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Partial daily run")).toBeVisible();
   await expect(page.getByText("GROBID_INVALID_TEI")).toBeVisible();
 
@@ -614,4 +574,60 @@ test("partial run and grounded paper analysis render without live credentials", 
     "href",
     `#comparison-evidence-${sourceEvidenceId}`,
   );
+});
+
+test("M4 reports, graph, trends, lineage, and run failures remain traceable", async ({ page }) => {
+  await installApiFixtures(page);
+
+  await page.goto("/reports/daily");
+
+  await expect(page.getByRole("heading", { name: "Research report" })).toBeVisible();
+  await expect(page.getByText("Partial report")).toBeVisible();
+  await expect(page.getByText("GROBID_INVALID_TEI").last()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open evidence in paper" })).toHaveAttribute(
+    "href",
+    `/papers/${paper.id}#evidence-${sourceEvidenceId}`,
+  );
+
+  await page.getByRole("link", { name: "Graph", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "Research connections" })).toBeVisible();
+  await expect(page.getByRole("img", { name: /3 visible nodes and 2 visible relations/ })).toBeVisible();
+  await expect(page.getByText("AI-inferred").first()).toBeVisible();
+  await expect(page.getByText("llm inferred / unverified", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Evidence 1 (source)" }).first()).toHaveAttribute(
+    "href",
+    `/papers/${paper.id}#evidence-${sourceEvidenceId}`,
+  );
+  await expect(page.getByRole("link", { name: "Evidence 2 (target)" })).toHaveAttribute(
+    "href",
+    `/papers/${targetPaperId}#evidence-${targetEvidenceId}`,
+  );
+  await page.getByRole("link", { name: "View related paper lineage" }).click();
+
+  await expect(page.getByRole("heading", { name: "How this work connects" })).toBeVisible();
+  await expect(page.getByText("Lineage uncertainty")).toBeVisible();
+  await expect(page.getByText("AI-inferred")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Evidence 1 (source)" })).toHaveAttribute(
+    "href",
+    `/papers/${paper.id}#evidence-${sourceEvidenceId}`,
+  );
+  await expect(page.getByRole("link", { name: "Evidence 2 (target)" })).toHaveAttribute(
+    "href",
+    `/papers/${targetPaperId}#evidence-${targetEvidenceId}`,
+  );
+
+  await page.getByRole("link", { name: "Trends", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "Corpus trends" })).toBeVisible();
+  await page.getByRole("button", { name: "30 days" }).click();
+  await expect(page.getByText("Insufficient data").last()).toBeVisible();
+  await expect(page.getByText(/preceding window has zero papers/)).toBeVisible();
+
+  await page.getByRole("link", { name: "Runs", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "Run status" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Item stages" })).toBeVisible();
+  await expect(page.getByText("GROBID_INVALID_TEI").last()).toBeVisible();
+  await expect(page.getByText("parsed").last()).toBeVisible();
 });

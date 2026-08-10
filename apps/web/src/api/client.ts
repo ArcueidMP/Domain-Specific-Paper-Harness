@@ -178,6 +178,182 @@ export type Comparison = components["schemas"]["ComparisonResponse"];
 export type ComparisonDimension = components["schemas"]["ComparisonDimensionResponse"];
 export type PaperRelation = components["schemas"]["PaperRelationResponse"];
 
+type LatestDailyQuery = NonNullable<
+  paths["/api/v1/daily/latest"]["get"]["parameters"]["query"]
+>;
+type DailyQuery = NonNullable<
+  paths["/api/v1/daily/{logical_date}"]["get"]["parameters"]["query"]
+>;
+
+export async function getLatestDaily(query: LatestDailyQuery = {}) {
+  const { data, error, response } = await api.GET("/api/v1/daily/latest", {
+    params: { query },
+  });
+
+  if (response.status === 404) {
+    const detail = readErrorDetail(error);
+    if (detail.code === "PRODUCT_RUN_NOT_FOUND") {
+      return null;
+    }
+  }
+
+  if (!response.ok || data === undefined) {
+    throw requestError(response.status, error);
+  }
+
+  return data;
+}
+
+export async function getDaily(logicalDate: string, query: DailyQuery = {}) {
+  const { data, error, response } = await api.GET("/api/v1/daily/{logical_date}", {
+    params: { path: { logical_date: logicalDate }, query },
+  });
+
+  if (response.status === 404) {
+    const detail = readErrorDetail(error);
+    if (detail.code === "PRODUCT_RUN_NOT_FOUND") {
+      return null;
+    }
+  }
+
+  if (!response.ok || data === undefined) {
+    throw requestError(response.status, error);
+  }
+
+  return data;
+}
+
+export type DailyRunEnvelope = Exclude<Awaited<ReturnType<typeof getLatestDaily>>, null>;
+export type Report = components["schemas"]["ReportResponse"];
+export type ReportEvidenceReference = components["schemas"]["ReportEvidenceReferenceResponse"];
+export type RunSummary = components["schemas"]["RunSummary"];
+export type RunItem = components["schemas"]["RunItemResponse"];
+
+type DailyReportsQuery = NonNullable<
+  paths["/api/v1/reports/daily"]["get"]["parameters"]["query"]
+>;
+
+export async function getDailyReports(query: DailyReportsQuery = {}) {
+  const { data, error, response } = await api.GET("/api/v1/reports/daily", {
+    params: { query },
+  });
+
+  if (!response.ok || data === undefined) {
+    throw requestError(response.status, error);
+  }
+
+  return data;
+}
+
+type GraphQuery = NonNullable<paths["/api/v1/graph"]["get"]["parameters"]["query"]>;
+
+export async function getKnowledgeGraph(query: GraphQuery = {}) {
+  const { data, error, response } = await api.GET("/api/v1/graph", {
+    params: { query },
+  });
+
+  if (response.status === 404) {
+    const detail = readErrorDetail(error);
+    if (detail.code === "GRAPH_NOT_FOUND") {
+      return null;
+    }
+  }
+
+  if (!response.ok || data === undefined) {
+    throw requestError(response.status, error);
+  }
+
+  return data;
+}
+
+export type KnowledgeGraph = Exclude<Awaited<ReturnType<typeof getKnowledgeGraph>>, null>;
+export type GraphNode = components["schemas"]["GraphNodeResponse"];
+export type GraphEdge = components["schemas"]["GraphEdgeResponse"];
+export type GraphEntityType = components["schemas"]["GraphEntityType"];
+export type GraphRelationType = components["schemas"]["GraphRelationType"];
+export type RelationProvenance = components["schemas"]["RelationProvenance"];
+
+type TrendsQuery = NonNullable<paths["/api/v1/trends"]["get"]["parameters"]["query"]>;
+
+export async function getTrends(query: TrendsQuery = {}) {
+  const { data, error, response } = await api.GET("/api/v1/trends", {
+    params: { query },
+  });
+
+  if (!response.ok || data === undefined) {
+    throw requestError(response.status, error);
+  }
+
+  return data;
+}
+
+export type Trends = Awaited<ReturnType<typeof getTrends>>;
+export type TrendSnapshot = components["schemas"]["TrendSnapshotResponse"];
+export type TrendWindow = components["schemas"]["TrendWindow"];
+
+type LineageQuery = NonNullable<
+  paths["/api/v1/lineages/{entity_or_paper_id}"]["get"]["parameters"]["query"]
+>;
+
+export async function getLineage(entityOrPaperId: string, query: LineageQuery = {}) {
+  const { data, error, response } = await api.GET(
+    "/api/v1/lineages/{entity_or_paper_id}",
+    {
+      params: { path: { entity_or_paper_id: entityOrPaperId }, query },
+    },
+  );
+
+  if (response.status === 404) {
+    const detail = readErrorDetail(error);
+    if (detail.code === "LINEAGE_NOT_FOUND") {
+      return null;
+    }
+  }
+
+  if (!response.ok || data === undefined) {
+    throw requestError(response.status, error);
+  }
+
+  return data;
+}
+
+export type Lineage = Exclude<Awaited<ReturnType<typeof getLineage>>, null>;
+
+type RunsQuery = NonNullable<paths["/api/v1/runs"]["get"]["parameters"]["query"]>;
+
+export async function getRuns(query: RunsQuery = {}) {
+  const { data, error, response } = await api.GET("/api/v1/runs", {
+    params: { query },
+  });
+
+  if (!response.ok || data === undefined) {
+    throw requestError(response.status, error);
+  }
+
+  return data;
+}
+
+export async function getRun(runId: string) {
+  const { data, error, response } = await api.GET("/api/v1/runs/{run_id}", {
+    params: { path: { run_id: runId } },
+  });
+
+  if (response.status === 404) {
+    const detail = readErrorDetail(error);
+    if (detail.code === "RUN_NOT_FOUND") {
+      return null;
+    }
+  }
+
+  if (!response.ok || data === undefined) {
+    throw requestError(response.status, error);
+  }
+
+  return data;
+}
+
+export type RunDetail = Exclude<Awaited<ReturnType<typeof getRun>>, null>;
+
 export async function getLatestRun() {
   const { data, error, response } = await api.GET("/api/v1/runs/latest");
 

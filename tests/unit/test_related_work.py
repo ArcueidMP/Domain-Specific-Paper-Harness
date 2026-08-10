@@ -49,6 +49,7 @@ from paper_harness.domain.historical import (
     SelectionDecision,
 )
 from paper_harness.domain.models import Paper, TopicConfig
+from paper_harness.domain.reports import GeneratedReportNarrative, ReportNarrativeRequest
 from paper_harness.ports.llm import LLMOutputError, LLMPort
 from paper_harness.ports.repository import RepositoryPort
 from paper_harness.ports.scholarly_search import (
@@ -512,6 +513,10 @@ class _LLM:
     def compare_papers(self, request: ComparisonRequest) -> GeneratedComparison:
         del request
         raise AssertionError("comparison is a separate application use case")
+
+    def generate_report(self, request: ReportNarrativeRequest) -> GeneratedReportNarrative:
+        del request
+        raise AssertionError("report generation is a separate application use case")
 
 
 def _usage() -> ModelUsage:

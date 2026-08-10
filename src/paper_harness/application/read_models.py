@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
+from enum import StrEnum
 from uuid import UUID
 
 from paper_harness.domain.analysis import (
@@ -26,15 +27,24 @@ from paper_harness.domain.historical import (
     SearchCandidateDiscovery,
     SearchSession,
 )
+from paper_harness.domain.knowledge import (
+    GraphEdge,
+    GraphEntity,
+    GraphEntityMention,
+    LineageSnapshot,
+    TrendPaperRecord,
+    TrendSnapshot,
+)
 from paper_harness.domain.models import (
     DailyRun,
     Paper,
     PaperSourceIdentity,
     PaperVersion,
     RunItem,
+    RunOperation,
     TopicConfig,
 )
-from paper_harness.domain.reports import Report
+from paper_harness.domain.reports import Report, ReportEvidenceReference
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +101,157 @@ class RunDetail:
     run: DailyRun
     items: tuple[RunItemDetail, ...]
     report: Report | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReportDetail:
+    report: Report
+    evidence: tuple[ReportEvidenceReference, ...]
+
+    def __post_init__(self) -> None:
+        expected_ids = set(self.report.evidence_ids)
+        actual_ids = {item.id for item in self.evidence}
+        if expected_ids != actual_ids or len(actual_ids) != len(self.evidence):
+            raise DomainInvariantError(
+                "report detail must expose every referenced evidence record exactly once"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ProductRunDetail:
+    run: DailyRun
+    items: tuple[RunItemDetail, ...]
+    report: ReportDetail | None
+
+    def __post_init__(self) -> None:
+        if self.run.operation is not RunOperation.PRODUCT_PUBLICATION:
+            raise DomainInvariantError("product run projection requires PRODUCT_PUBLICATION")
+        if any(item.item.run_id != self.run.id for item in self.items):
+            raise DomainInvariantError("product run items must belong to the projected run")
+        if self.report is not None and self.report.report.run_id != self.run.id:
+            raise DomainInvariantError("product run report must belong to the projected run")
+
+
+@dataclass(frozen=True, slots=True)
+class GraphNodeDetail:
+    entity: GraphEntity
+    mentions: tuple[GraphEntityMention, ...]
+    total_mentions: int
+
+    def __post_init__(self) -> None:
+        if not self.mentions:
+            raise DomainInvariantError("graph node projection requires a persisted mention")
+        if any(item.entity_id != self.entity.id for item in self.mentions):
+            raise DomainInvariantError("graph node mentions must belong to the projected entity")
+        if self.total_mentions < len(self.mentions):
+            raise DomainInvariantError("graph node mention total cannot be smaller than its page")
+
+
+class GraphEvidenceRole(StrEnum):
+    SOURCE = "SOURCE"
+    TARGET = "TARGET"
+    RELATION = "RELATION"
+
+
+@dataclass(frozen=True, slots=True)
+class GraphEdgeEvidenceReference:
+    edge_id: UUID
+    evidence_id: UUID
+    paper_id: UUID
+    paper_version_id: UUID
+    role: GraphEvidenceRole
+
+
+@dataclass(frozen=True, slots=True)
+class GraphEdgeDetail:
+    edge: GraphEdge
+    evidence: tuple[GraphEdgeEvidenceReference, ...]
+
+    def __post_init__(self) -> None:
+        expected_ids = set(self.edge.evidence_ids)
+        actual_ids = {item.evidence_id for item in self.evidence}
+        if expected_ids != actual_ids or len(actual_ids) != len(self.evidence):
+            raise DomainInvariantError(
+                "graph edge detail must expose every evidence owner exactly once"
+            )
+        if any(item.edge_id != self.edge.id for item in self.evidence):
+            raise DomainInvariantError("graph edge evidence must belong to the projected edge")
+
+
+@dataclass(frozen=True, slots=True)
+class GraphView:
+    topic_id: UUID
+    as_of: date | None
+    nodes: tuple[GraphNodeDetail, ...]
+    edges: tuple[GraphEdgeDetail, ...]
+    total_nodes: int
+    total_edges: int
+    total_mentions: int
+    truncated: bool
+
+    def __post_init__(self) -> None:
+        if (
+            self.total_nodes < len(self.nodes)
+            or self.total_edges < len(self.edges)
+            or self.total_mentions < sum(item.total_mentions for item in self.nodes)
+        ):
+            raise DomainInvariantError("graph projection totals cannot be smaller than its page")
+        node_ids = {item.entity.id for item in self.nodes}
+        if len(node_ids) != len(self.nodes):
+            raise DomainInvariantError("graph projection nodes must be unique")
+        if any(
+            item.edge.source_entity_id not in node_ids or item.edge.target_entity_id not in node_ids
+            for item in self.edges
+        ):
+            raise DomainInvariantError("graph projection edges cannot reference omitted nodes")
+        expected_truncated = (
+            self.total_nodes > len(self.nodes)
+            or self.total_edges > len(self.edges)
+            or self.total_mentions > sum(len(item.mentions) for item in self.nodes)
+        )
+        if self.truncated is not expected_truncated:
+            raise DomainInvariantError("graph projection truncation flag is inconsistent")
+
+
+@dataclass(frozen=True, slots=True)
+class LineageDetail:
+    snapshot: LineageSnapshot
+    evidence: tuple[GraphEdgeEvidenceReference, ...]
+
+    def __post_init__(self) -> None:
+        edge_by_id = {item.id: item for item in self.snapshot.edges}
+        if any(item.edge_id not in edge_by_id for item in self.evidence):
+            raise DomainInvariantError("lineage evidence references an omitted edge")
+        expected_pairs = {
+            (edge.id, evidence_id)
+            for edge in self.snapshot.edges
+            for evidence_id in edge.evidence_ids
+        }
+        actual_pairs = {(item.edge_id, item.evidence_id) for item in self.evidence}
+        if expected_pairs != actual_pairs or len(actual_pairs) != len(self.evidence):
+            raise DomainInvariantError(
+                "lineage detail must expose every edge evidence owner exactly once"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class TrendDetail:
+    snapshot: TrendSnapshot
+    representative_papers: tuple[TrendPaperRecord, ...]
+    total_entities: int
+    truncated: bool
+
+    def __post_init__(self) -> None:
+        expected_ids = set(self.snapshot.representative_paper_ids)
+        actual_ids = {item.paper_id for item in self.representative_papers}
+        if expected_ids != actual_ids or len(actual_ids) != len(self.representative_papers):
+            raise DomainInvariantError(
+                "trend detail must expose every representative paper exactly once"
+            )
+        if self.total_entities < len(self.snapshot.entity_counts):
+            raise DomainInvariantError("trend entity total cannot be smaller than its page")
+        if self.truncated is not (self.total_entities > len(self.snapshot.entity_counts)):
+            raise DomainInvariantError("trend entity truncation flag is inconsistent")
 
 
 @dataclass(frozen=True, slots=True)

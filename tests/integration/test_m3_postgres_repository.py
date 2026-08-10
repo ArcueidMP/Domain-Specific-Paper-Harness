@@ -83,6 +83,7 @@ from paper_harness.domain.identity import (
     stable_search_candidate_id,
 )
 from paper_harness.domain.models import TopicConfig
+from paper_harness.domain.reports import GeneratedReportNarrative, ReportNarrativeRequest
 from paper_harness.ports.arxiv import ArxivPaperRecord
 from paper_harness.ports.repository import RepositoryIntegrityError
 
@@ -155,6 +156,10 @@ class GroundedAnalysisLLM:
     def compare_papers(self, request: ComparisonRequest) -> GeneratedComparison:
         del request
         raise AssertionError("structured analysis must not invoke M3 comparison")
+
+    def generate_report(self, request: ReportNarrativeRequest) -> GeneratedReportNarrative:
+        del request
+        raise AssertionError("structured analysis must not invoke M4 reporting")
 
 
 class RevisedGroundedAnalysisLLM(GroundedAnalysisLLM):

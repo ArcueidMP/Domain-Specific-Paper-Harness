@@ -8,12 +8,15 @@ from pathlib import Path
 import pytest
 
 from paper_harness.domain.analysis import AnalysisScope
+from paper_harness.domain.reports import ReportNarrativeMode
 from paper_harness.entrypoints import runtime as runtime_module
 from paper_harness.entrypoints.runtime import (
     _grobid_parser,
     _scholarly_retry_policy,
     execute_historical_backfill,
+    execute_product_publication,
 )
+from paper_harness.ports.llm import LLMConfigurationError
 from paper_harness.ports.scholarly_search import ScholarlySearchConfigurationError
 from paper_harness.ports.scientific_embedding import ScientificEmbeddingConfigurationError
 
@@ -116,3 +119,33 @@ def test_related_work_semantic_scholar_policy_uses_the_operator_timeout() -> Non
 
     assert policy.request_timeout_seconds == 7
     assert policy.total_timeout_seconds == 7
+
+
+def test_deepseek_product_publication_fails_before_database_work_without_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-flash")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    with pytest.raises(LLMConfigurationError, match="DEEPSEEK_API_KEY"):
+        execute_product_publication(
+            topic_config=Path("unused.yaml"),
+            logical_date=date(2026, 8, 10),
+            narrative_mode=ReportNarrativeMode.DEEPSEEK,
+        )
+
+
+def test_structured_only_product_publication_does_not_require_deepseek_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        execute_product_publication(
+            topic_config=Path("unused.yaml"),
+            logical_date=date(2026, 8, 10),
+            narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        )

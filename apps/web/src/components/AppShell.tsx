@@ -2,7 +2,11 @@ import { NavLink, Outlet } from "react-router-dom";
 
 const navigation = [
   { to: "/", label: "Dashboard", end: true },
+  { to: "/reports/daily", label: "Reports", end: false },
   { to: "/papers", label: "Papers", end: false },
+  { to: "/graph", label: "Graph", end: false },
+  { to: "/trends", label: "Trends", end: false },
+  { to: "/runs", label: "Runs", end: false },
 ] as const;
 
 export function AppShell() {

@@ -7,18 +7,35 @@ from datetime import date, datetime
 from typing import Protocol
 from uuid import UUID
 
+from paper_harness.application.product_models import (
+    GraphCorpusInput,
+    GraphWriteResult,
+    PeriodicReportInput,
+    ProductPublicationInput,
+)
 from paper_harness.application.read_models import (
     AnalysisDetail,
     AnalysisTarget,
     ComparisonDetail,
+    GraphView,
     HistoricalRetrievalMatch,
+    LineageDetail,
     PaperDetail,
+    ProductRunDetail,
     RelatedWorkDetail,
+    ReportDetail,
     RunDetail,
     SearchSessionDetail,
     StoredTopic,
+    TrendDetail,
 )
-from paper_harness.domain.analysis import AnalysisBundle, AnalysisScope, Evidence, ParsedPaper
+from paper_harness.domain.analysis import (
+    AnalysisBundle,
+    AnalysisScope,
+    Evidence,
+    ParsedPaper,
+    VerificationStatus,
+)
 from paper_harness.domain.historical import (
     ComparisonBundle,
     ComparisonPaperInput,
@@ -26,6 +43,7 @@ from paper_harness.domain.historical import (
     GeneratedCrawlerPlan,
     HistoricalBackfillRun,
     HistoricalCorpusEntry,
+    RelationProvenance,
     ScientificEmbedding,
     SearchAction,
     SearchCandidate,
@@ -34,7 +52,16 @@ from paper_harness.domain.historical import (
     SearchSession,
     SearchStopReason,
 )
+from paper_harness.domain.knowledge import (
+    GraphEntityType,
+    GraphRelationType,
+    KnowledgeGraphBundle,
+    LineageSnapshot,
+    TrendSnapshot,
+    TrendWindow,
+)
 from paper_harness.domain.models import DailyRun, IngestionCursor, Paper, PaperStage, TopicConfig
+from paper_harness.domain.reports import Report, ReportType
 from paper_harness.ports.arxiv import ArxivPaperRecord
 
 
@@ -120,6 +147,164 @@ class RepositoryPort(Protocol):
     ) -> tuple[tuple[DailyRun, ...], int]: ...
 
     def get_latest_run(self, *, topic_slug: str | None) -> RunDetail | None: ...
+
+    def get_run(self, run_id: UUID) -> RunDetail | None: ...
+
+    def get_graph(
+        self,
+        *,
+        topic_slug: str | None,
+        as_of: date | None,
+        paper_id: UUID | None,
+        entity_id: UUID | None,
+        entity_type: GraphEntityType | None,
+        relation_type: GraphRelationType | None,
+        provenance: RelationProvenance | None,
+        verification_status: VerificationStatus | None,
+        max_nodes: int,
+        max_edges: int,
+    ) -> GraphView | None: ...
+
+    def list_trends(
+        self,
+        *,
+        topic_slug: str | None,
+        as_of: date | None,
+        windows: tuple[TrendWindow, ...],
+        entity_type: GraphEntityType | None,
+        max_entities: int,
+    ) -> tuple[TrendDetail, ...]: ...
+
+    def get_lineage(
+        self,
+        entity_or_paper_id: UUID,
+        *,
+        topic_slug: str | None,
+        max_depth: int,
+        max_nodes: int,
+        max_edges: int,
+    ) -> LineageDetail | None: ...
+
+    def get_product_run(
+        self,
+        *,
+        logical_date: date | None,
+        topic_slug: str | None,
+    ) -> ProductRunDetail | None: ...
+
+    def list_reports(
+        self,
+        *,
+        report_type: ReportType,
+        topic_slug: str | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[tuple[ReportDetail, ...], int]: ...
+
+    def get_report(
+        self,
+        *,
+        report_type: ReportType,
+        period_start: date,
+        period_end: date,
+        topic_slug: str | None,
+    ) -> ReportDetail | None: ...
+
+    def get_product_run_for_date(self, topic_id: UUID, logical_date: date) -> DailyRun | None: ...
+
+    def get_product_publication_input(
+        self, topic_id: UUID, logical_date: date
+    ) -> ProductPublicationInput | None: ...
+
+    def start_product_run(
+        self,
+        *,
+        topic_id: UUID,
+        logical_date: date,
+        source: ProductPublicationInput,
+        started_at: datetime,
+    ) -> DailyRun: ...
+
+    def restart_product_run(
+        self,
+        run_id: UUID,
+        *,
+        source: ProductPublicationInput,
+        started_at: datetime,
+    ) -> DailyRun: ...
+
+    def advance_product_item(
+        self,
+        *,
+        run_id: UUID,
+        paper_version_id: UUID,
+        expected_stage: PaperStage,
+        next_stage: PaperStage,
+        updated_at: datetime,
+    ) -> None: ...
+
+    def persist_product_graph(
+        self,
+        *,
+        run_id: UUID,
+        paper_version_id: UUID,
+        bundle: KnowledgeGraphBundle,
+        expected_stage: PaperStage,
+        updated_at: datetime,
+    ) -> GraphWriteResult: ...
+
+    def fail_product_item(
+        self,
+        *,
+        run_id: UUID,
+        paper_version_id: UUID,
+        failed_stage: PaperStage,
+        error_code: str,
+        retryable: bool,
+        error_detail: str,
+        updated_at: datetime,
+    ) -> None: ...
+
+    def get_graph_corpus(self, topic_id: UUID, *, as_of_date: date) -> GraphCorpusInput: ...
+
+    def persist_product_aggregates(
+        self,
+        *,
+        run_id: UUID,
+        trends: tuple[TrendSnapshot, ...],
+        lineages: tuple[LineageSnapshot, ...],
+        updated_at: datetime,
+    ) -> RunDetail: ...
+
+    def finalize_product_publication(
+        self,
+        *,
+        run_id: UUID,
+        report: Report,
+        completed_at: datetime,
+    ) -> DailyRun: ...
+
+    def fail_product_run(
+        self,
+        run_id: UUID,
+        *,
+        completed_at: datetime,
+        failed_stage: PaperStage,
+        error_code: str,
+        retryable: bool,
+        error_detail: str,
+    ) -> DailyRun: ...
+
+    def get_periodic_report_input(
+        self,
+        topic_id: UUID,
+        *,
+        report_type: ReportType,
+        period_start: date,
+        period_end: date,
+    ) -> PeriodicReportInput | None: ...
+
+    def persist_periodic_report(self, report: Report) -> Report: ...
 
     def get_analysis_targets(
         self, topic_id: UUID, paper_ids: tuple[UUID, ...]

@@ -1,3 +1,4 @@
+# pyright: reportUnknownArgumentType=false
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false
 
 from __future__ import annotations
@@ -19,11 +20,22 @@ from paper_harness.application.read_models import (
     AnalysisDetail,
     ComparisonDetail,
     ComparisonEvidenceReference,
+    GraphEdgeDetail,
+    GraphEdgeEvidenceReference,
+    GraphEvidenceRole,
+    GraphNodeDetail,
+    GraphView,
+    LineageDetail,
     PaperDetail,
+    ProductRunDetail,
     RelatedWorkDetail,
     RelatedWorkItem,
+    ReportDetail,
+    RunItemDetail,
+    TrendDetail,
 )
 from paper_harness.domain.analysis import (
+    AnalysisBundle,
     AnalysisPassage,
     AnalysisRequest,
     AnalysisScope,
@@ -60,7 +72,42 @@ from paper_harness.domain.historical import (
     SelectionDecision,
 )
 from paper_harness.domain.identity import stable_paper_id, stable_paper_version_id
-from paper_harness.domain.models import Paper, PaperVersion, TopicConfig
+from paper_harness.domain.knowledge import (
+    GraphEdge,
+    GraphEntityType,
+    LineagePaper,
+    TrendPaperRecord,
+    aggregate_trend_snapshots,
+    build_lineage_snapshot,
+    extract_analysis_graph,
+    extract_comparison_graph,
+    merge_knowledge_graph_bundles,
+)
+from paper_harness.domain.models import (
+    DailyRun,
+    Paper,
+    PaperStage,
+    PaperVersion,
+    RunItem,
+    RunItemStatus,
+    RunOperation,
+    RunStatus,
+    TopicConfig,
+)
+from paper_harness.domain.reports import (
+    Report,
+    ReportComparisonHighlight,
+    ReportCounts,
+    ReportEntityHighlight,
+    ReportEvidenceReference,
+    ReportGraphChanges,
+    ReportLineageHighlight,
+    ReportNarrativeMode,
+    ReportPaperHighlight,
+    ReportSection,
+    ReportSectionKind,
+    ReportType,
+)
 from paper_harness.entrypoints.api import create_app
 from paper_harness.ports.arxiv import ArxivPaperRecord
 from paper_harness.ports.repository import (
@@ -418,6 +465,368 @@ def _m3_read_fixture(
     return related, detail
 
 
+def _m4_read_fixture(
+    paper: Paper,
+    version: PaperVersion,
+    analysis_detail: AnalysisDetail,
+) -> tuple[
+    GraphView,
+    tuple[TrendDetail, ...],
+    LineageDetail,
+    ProductRunDetail,
+    tuple[ReportDetail, ...],
+]:
+    generated_at = datetime(2026, 1, 10, 6, tzinfo=UTC)
+    topic_id = _fixture_id("topic")
+    _, comparison_detail = _m3_read_fixture(paper, version)
+    analysis_graph = extract_analysis_graph(
+        topic_id,
+        AnalysisBundle(
+            analysis=analysis_detail.analysis,
+            claims=analysis_detail.claims,
+            evidence=analysis_detail.evidence,
+        ),
+        paper_title=paper.title,
+    )
+    comparison_graph = extract_comparison_graph(
+        topic_id,
+        ComparisonBundle(
+            comparison=comparison_detail.comparison,
+            relations=comparison_detail.relations,
+        ),
+        source_paper_title=paper.title,
+        target_paper_title="Historical Evaluation of Tool-Using Agents",
+    )
+    graph = merge_knowledge_graph_bundles((analysis_graph.bundle, comparison_graph.bundle))
+    graph_evidence_by_id = {
+        item.id: item for item in (*analysis_detail.evidence, *comparison_detail.evidence)
+    }
+
+    def edge_detail(edge: GraphEdge) -> GraphEdgeDetail:
+        return GraphEdgeDetail(
+            edge=edge,
+            evidence=tuple(
+                GraphEdgeEvidenceReference(
+                    edge_id=edge.id,
+                    evidence_id=evidence_id,
+                    paper_id=graph_evidence_by_id[evidence_id].paper_id,
+                    paper_version_id=graph_evidence_by_id[evidence_id].paper_version_id,
+                    role=(
+                        GraphEvidenceRole.SOURCE
+                        if graph_evidence_by_id[evidence_id].paper_version_id
+                        == edge.source_paper_version_id
+                        else GraphEvidenceRole.TARGET
+                        if graph_evidence_by_id[evidence_id].paper_version_id
+                        == edge.target_paper_version_id
+                        else GraphEvidenceRole.RELATION
+                    ),
+                )
+                for evidence_id in edge.evidence_ids
+            ),
+        )
+
+    graph_view = GraphView(
+        topic_id=topic_id,
+        as_of=date(2026, 1, 10),
+        nodes=tuple(
+            GraphNodeDetail(
+                entity=entity,
+                mentions=tuple(item for item in graph.mentions if item.entity_id == entity.id),
+                total_mentions=sum(item.entity_id == entity.id for item in graph.mentions),
+            )
+            for entity in graph.entities
+        ),
+        edges=tuple(edge_detail(edge) for edge in graph.edges),
+        total_nodes=len(graph.entities),
+        total_edges=len(graph.edges),
+        total_mentions=len(graph.mentions),
+        truncated=False,
+    )
+    target_paper_id = comparison_detail.comparison.target_paper_id
+    target_version_id = comparison_detail.comparison.target_paper_version_id
+    trend_papers = (
+        TrendPaperRecord(
+            paper_id=target_paper_id,
+            paper_version_id=target_version_id,
+            activity_date=date(2025, 9, 1),
+            title="Historical Evaluation of Tool-Using Agents",
+        ),
+        TrendPaperRecord(
+            paper_id=paper.id,
+            paper_version_id=version.id,
+            activity_date=date(2026, 1, 10),
+            title=paper.title,
+        ),
+    )
+    snapshots = aggregate_trend_snapshots(
+        topic_id,
+        as_of_date=date(2026, 1, 10),
+        papers=trend_papers,
+        entities=graph.entities,
+        mentions=graph.mentions,
+        edges=graph.edges,
+        mention_activity_dates={
+            item.id: next(
+                paper.activity_date
+                for paper in trend_papers
+                if paper.paper_version_id == item.paper_version_id
+            )
+            for item in graph.mentions
+        },
+        edge_activity_dates={
+            item.id: next(
+                paper.activity_date
+                for paper in trend_papers
+                if paper.paper_version_id == item.source_paper_version_id
+            )
+            for item in graph.edges
+        },
+        generated_at=generated_at,
+    )
+    trend_details = tuple(
+        TrendDetail(
+            snapshot=snapshot,
+            representative_papers=tuple(
+                item for item in trend_papers if item.paper_id in snapshot.representative_paper_ids
+            ),
+            total_entities=len(snapshot.entity_counts),
+            truncated=False,
+        )
+        for snapshot in snapshots
+    )
+    paper_entities = {
+        entity.paper_id: entity
+        for entity in graph.entities
+        if entity.entity_type is GraphEntityType.PAPER
+    }
+    lineage = build_lineage_snapshot(
+        topic_id,
+        paper.id,
+        as_of_date=date(2026, 1, 10),
+        papers=(
+            LineagePaper(
+                graph_entity_id=paper_entities[target_paper_id].id,
+                paper_id=target_paper_id,
+                title="Historical Evaluation of Tool-Using Agents",
+                publication_date=date(2025, 9, 1),
+            ),
+            LineagePaper(
+                graph_entity_id=paper_entities[paper.id].id,
+                paper_id=paper.id,
+                title=paper.title,
+                publication_date=date(2026, 1, 10),
+            ),
+        ),
+        edges=graph.edges,
+        generated_at=generated_at,
+        max_depth=5,
+        max_nodes=100,
+        max_edges=100,
+    )
+    lineage_detail = LineageDetail(
+        snapshot=lineage,
+        evidence=tuple(
+            reference for edge in lineage.edges for reference in edge_detail(edge).evidence
+        ),
+    )
+    product_run_id = _fixture_id("product-run")
+    product_run = DailyRun(
+        id=product_run_id,
+        topic_id=topic_id,
+        source_run_id=_fixture_id("analysis-run"),
+        logical_date=date(2026, 1, 10),
+        operation=RunOperation.PRODUCT_PUBLICATION,
+        analysis_scope=None,
+        status=RunStatus.COMPLETE,
+        started_at=generated_at,
+        completed_at=generated_at,
+        cursor_from=None,
+        cursor_to=None,
+        discovered_count=0,
+        normalized_count=0,
+        selected_count=1,
+        completed_count=1,
+        failed_count=0,
+        error_code=None,
+        error_detail=None,
+        schema_version=1,
+        created_at=generated_at,
+    )
+    run_item = RunItem(
+        id=_fixture_id("product-run-item"),
+        run_id=product_run_id,
+        paper_id=paper.id,
+        paper_version_id=version.id,
+        stage=PaperStage.PUBLISHED,
+        status=RunItemStatus.COMPLETED,
+        failed_stage=None,
+        error_code=None,
+        retryable=None,
+        error_detail=None,
+        schema_version=1,
+        created_at=generated_at,
+        updated_at=generated_at,
+    )
+    evidence = (
+        ReportEvidenceReference(
+            id=analysis_detail.evidence[0].id,
+            paper_id=paper.id,
+            paper_version_id=version.id,
+            section=analysis_detail.evidence[0].section,
+            excerpt=analysis_detail.evidence[0].excerpt,
+            evidence_type=analysis_detail.evidence[0].evidence_type.value,
+            verification_status=analysis_detail.evidence[0].verification_status,
+        ),
+        *(
+            ReportEvidenceReference(
+                id=item.id,
+                paper_id=item.paper_id,
+                paper_version_id=item.paper_version_id,
+                section=item.section,
+                excerpt=item.excerpt,
+                evidence_type=item.evidence_type.value,
+                verification_status=item.verification_status,
+            )
+            for item in comparison_detail.evidence
+        ),
+    )
+
+    def report_detail(
+        report_type: ReportType,
+        *,
+        period_start: date,
+        period_end: date,
+        run_id: UUID | None,
+    ) -> ReportDetail:
+        report_id = _fixture_id(f"{report_type.value}-report")
+        sections = tuple(
+            ReportSection(
+                id=uuid5(report_id, kind.value),
+                report_id=report_id,
+                kind=kind,
+                narrative=f"Persisted {kind.value.lower()} section.",
+                evidence_ids=(
+                    (analysis_detail.evidence[0].id,)
+                    if kind is ReportSectionKind.OVERVIEW
+                    else (
+                        tuple(item.id for item in comparison_detail.evidence)
+                        if kind is ReportSectionKind.COMPARISONS
+                        else ()
+                    )
+                ),
+                schema_version=1,
+                created_at=generated_at,
+            )
+            for kind in ReportSectionKind
+        )
+        method_entity = next(
+            entity for entity in graph.entities if entity.entity_type is GraphEntityType.METHOD
+        )
+        report = Report(
+            id=report_id,
+            run_id=run_id,
+            topic_id=topic_id,
+            logical_date=period_end,
+            status=RunStatus.COMPLETE,
+            title=f"{report_type.value.title()} agent research report",
+            summary="Evidence-linked graph, trend, comparison, and lineage summary.",
+            source="m4_structured_report",
+            generated_at=generated_at,
+            schema_version=1,
+            created_at=generated_at,
+            sections=sections,
+            report_type=report_type,
+            period_start=period_start,
+            period_end=period_end,
+            counts=ReportCounts(2, 1, 1, 1, 0),
+            highlighted_papers=(
+                ReportPaperHighlight(
+                    paper_id=paper.id,
+                    paper_version_id=version.id,
+                    title=paper.title,
+                    reason="Selected for an evidence-linked method contribution.",
+                    evidence_ids=(analysis_detail.evidence[0].id,),
+                ),
+            ),
+            major_entities=(
+                ReportEntityHighlight(
+                    graph_entity_id=method_entity.id,
+                    entity_type=method_entity.entity_type.value,
+                    label=method_entity.display_label,
+                    distinct_paper_count=1,
+                ),
+            ),
+            notable_comparisons=(
+                ReportComparisonHighlight(
+                    comparison_id=comparison_detail.comparison.id,
+                    source_paper_id=comparison_detail.comparison.source_paper_id,
+                    source_paper_version_id=(comparison_detail.comparison.source_paper_version_id),
+                    target_paper_id=comparison_detail.comparison.target_paper_id,
+                    target_paper_version_id=(comparison_detail.comparison.target_paper_version_id),
+                    summary=comparison_detail.comparison.summary,
+                    comparability_status=comparison_detail.comparison.comparability_status.value,
+                    evidence_ids=tuple(item.id for item in comparison_detail.evidence),
+                ),
+            ),
+            graph_changes=ReportGraphChanges(
+                entity_count=len(graph.entities),
+                edge_count=len(graph.edges),
+                new_entity_count=len(graph.entities),
+                inferred_edge_count=sum(
+                    item.provenance is RelationProvenance.LLM_INFERRED for item in graph.edges
+                ),
+            ),
+            trend_snapshot_ids=tuple(item.id for item in snapshots),
+            lineage_highlights=(
+                ReportLineageHighlight(
+                    lineage_snapshot_id=lineage.id,
+                    root_paper_id=paper.id,
+                    summary="Lineage is scoped to the currently retrieved corpus.",
+                    uncertain=True,
+                ),
+            ),
+            evidence_ids=tuple(item.id for item in evidence),
+            limitations=("Currently retrieved corpus only.",),
+            missing_sections=(),
+            narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+            verification_status=VerificationStatus.UNVERIFIED,
+        )
+        return ReportDetail(report=report, evidence=evidence)
+
+    reports = (
+        report_detail(
+            ReportType.DAILY,
+            period_start=date(2026, 1, 10),
+            period_end=date(2026, 1, 10),
+            run_id=product_run_id,
+        ),
+        report_detail(
+            ReportType.WEEKLY,
+            period_start=date(2026, 1, 5),
+            period_end=date(2026, 1, 11),
+            run_id=None,
+        ),
+        report_detail(
+            ReportType.MONTHLY,
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 1, 31),
+            run_id=None,
+        ),
+    )
+    product_detail = ProductRunDetail(
+        run=product_run,
+        items=(
+            RunItemDetail(
+                item=run_item,
+                canonical_arxiv_id=paper.canonical_arxiv_id,
+                paper_title=paper.title,
+            ),
+        ),
+        report=reports[0],
+    )
+    return graph_view, trend_details, lineage_detail, product_detail, reports
+
+
 def test_m1_read_api_exposes_persisted_topics_papers_and_latest_run(
     topic_config: TopicConfig, arxiv_record_v1: ArxivPaperRecord
 ) -> None:
@@ -446,6 +855,7 @@ def test_m1_read_api_exposes_persisted_topics_papers_and_latest_run(
     assert run["status"] == "COMPLETE"
     assert run["analysis_scope"] is None
     assert run["items"][0]["stage"] == "NORMALIZED"
+    assert client.get(f"/api/v1/runs/{run['id']}").json()["id"] == run["id"]
 
 
 def test_readiness_reports_incompatible_migration() -> None:
@@ -783,6 +1193,281 @@ def test_m3_read_api_starts_without_semantic_scholar_key(
     response = TestClient(create_app(repository)).get(f"/api/v1/papers/{paper.id}/related")
     assert response.status_code == 200
     assert response.json()["session"] is None
+
+
+def test_m4_graph_trend_and_lineage_contracts_are_bounded_and_provenance_aware(
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    repository = FakeRepository()
+    paper = _paper(arxiv_record_v1)
+    version = _paper_version(arxiv_record_v1, paper)
+    analysis = _analysis_detail(arxiv_record_v1, paper)
+    graph, trends, lineage, _, _ = _m4_read_fixture(paper, version, analysis)
+    repository.graph_view = graph
+    repository.trends = trends
+    paper_entity_id = next(
+        item.entity.id
+        for item in graph.nodes
+        if item.entity.entity_type is GraphEntityType.PAPER and item.entity.paper_id == paper.id
+    )
+    repository.lineages[paper.id] = lineage
+    repository.lineages[paper_entity_id] = lineage
+    client = TestClient(create_app(repository))
+
+    graph_response = client.get(
+        "/api/v1/graph",
+        params={
+            "topic": "broad-llm-agents",
+            "as_of": "2026-01-10",
+            "paper_id": str(paper.id),
+            "entity_id": str(paper_entity_id),
+            "entity_type": "PAPER",
+            "relation_type": "EXTENDS",
+            "provenance": "LLM_INFERRED",
+            "verification_status": "UNVERIFIED",
+            "max_nodes": 50,
+            "max_edges": 80,
+        },
+    )
+    assert graph_response.status_code == 200
+    graph_body = graph_response.json()
+    assert graph_body["as_of"] == "2026-01-10"
+    assert graph_body["total_nodes"] == len(graph.nodes)
+    assert graph_body["total_mentions"] == sum(item.total_mentions for item in graph.nodes)
+    assert all(node["mention_count"] == len(node["mentions"]) for node in graph_body["nodes"])
+    inferred = next(edge for edge in graph_body["edges"] if edge["inferred"])
+    assert inferred["provenance"] == "LLM_INFERRED"
+    assert inferred["relation_type"] == "EXTENDS"
+    assert inferred["confidence"] == 0.72
+    assert "not a probability" in inferred["confidence_meaning"]
+    assert inferred["evidence_ids"]
+    assert {item["role"] for item in inferred["evidence"]} == {"SOURCE", "TARGET"}
+    assert {item["paper_version_id"] for item in inferred["evidence"]} == {
+        str(_m3_read_fixture(paper, version)[1].comparison.source_paper_version_id),
+        str(_m3_read_fixture(paper, version)[1].comparison.target_paper_version_id),
+    }
+    assert inferred["model_provenance"]["prompt_version"] == "m3-comparison-v1"
+    assert repository.graph_read == (
+        "broad-llm-agents",
+        date(2026, 1, 10),
+        paper.id,
+        paper_entity_id,
+        GraphEntityType.PAPER,
+        next(
+            item.edge.relation_type
+            for item in graph.edges
+            if item.edge.relation_type.value == "EXTENDS"
+        ),
+        RelationProvenance.LLM_INFERRED,
+        VerificationStatus.UNVERIFIED,
+        50,
+        80,
+    )
+
+    trend_response = client.get("/api/v1/trends")
+    assert trend_response.status_code == 200
+    trend_body = trend_response.json()
+    assert [item["window"] for item in trend_body["items"]] == ["7D", "30D", "90D"]
+    assert all(item["data_sufficiency"] == "INSUFFICIENT" for item in trend_body["items"])
+    assert [item["paper_count_change"]["growth_status"] for item in trend_body["items"]] == [
+        "ZERO_DENOMINATOR",
+        "ZERO_DENOMINATOR",
+        "LIMITED_SAMPLE",
+    ]
+    assert all(
+        item["paper_count_change"]["relative_change"] is None for item in trend_body["items"]
+    )
+    assert all(
+        item["total_entities"] == len(item["entity_counts"]) and not item["truncated"]
+        for item in trend_body["items"]
+    )
+    assert trend_body["items"][0]["representative_papers"][0]["paper_id"] == str(paper.id)
+    filtered_trends = client.get(
+        "/api/v1/trends",
+        params=[
+            ("window", "7D"),
+            ("window", "90D"),
+            ("entity_type", "METHOD"),
+            ("max_entities", "1"),
+        ],
+    ).json()
+    assert [item["window"] for item in filtered_trends["items"]] == ["7D", "90D"]
+
+    lineage_response = client.get(
+        f"/api/v1/lineages/{paper.id}",
+        params={"max_depth": 5, "max_nodes": 100, "max_edges": 100},
+    )
+    assert lineage_response.status_code == 200
+    lineage_body = lineage_response.json()
+    assert lineage_body["root_paper_id"] == str(paper.id)
+    assert lineage_body["max_edges"] == 100
+    assert lineage_body["corpus_scope"] == "CURRENTLY_RETRIEVED_CORPUS"
+    assert lineage_body["nodes"][0]["publication_date"] == "2025-09-01"
+    assert lineage_body["nodes"][-1]["depth"] == 0
+    assert lineage_body["edges"][0]["inferred"] is True
+    assert {item["role"] for item in lineage_body["edges"][0]["evidence"]} == {
+        "SOURCE",
+        "TARGET",
+    }
+    assert lineage_body["limitations"]
+
+    invalid_requests = (
+        "/api/v1/graph?max_nodes=501",
+        "/api/v1/graph?max_edges=1001",
+        "/api/v1/graph?entity_type=UNKNOWN",
+        "/api/v1/trends?window=14D",
+        "/api/v1/trends?max_entities=201",
+        f"/api/v1/lineages/{paper.id}?max_depth=6",
+        f"/api/v1/lineages/{paper.id}?max_nodes=101",
+        f"/api/v1/lineages/{paper.id}?max_edges=401",
+    )
+    assert all(client.get(path).status_code == 422 for path in invalid_requests)
+
+
+def test_m4_daily_and_historical_report_contracts_expose_complete_structure(
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    repository = FakeRepository()
+    paper = _paper(arxiv_record_v1)
+    version = _paper_version(arxiv_record_v1, paper)
+    analysis = _analysis_detail(arxiv_record_v1, paper)
+    _, _, _, product_run, reports = _m4_read_fixture(paper, version, analysis)
+    repository.product_run = product_run
+    repository.reports = reports
+    client = TestClient(create_app(repository))
+
+    latest = client.get("/api/v1/daily/latest")
+    assert latest.status_code == 200
+    latest_body = latest.json()
+    assert latest_body["run"]["operation"] == "PRODUCT_PUBLICATION"
+    assert latest_body["run"]["source_run_id"] == str(_fixture_id("analysis-run"))
+    assert latest_body["items"][0]["stage"] == "PUBLISHED"
+    report = latest_body["report"]
+    assert report["report_type"] == "DAILY"
+    assert [section["kind"] for section in report["sections"]] == [
+        item.value for item in ReportSectionKind
+    ]
+    assert report["counts"] == {
+        "retrieved": 2,
+        "selected": 1,
+        "processed": 1,
+        "completed": 1,
+        "failed": 0,
+    }
+    assert report["highlighted_papers"][0]["evidence_ids"]
+    assert report["major_entities"][0]["entity_type"] == "METHOD"
+    assert report["notable_comparisons"][0]["comparability_status"] == ("DIRECTLY_COMPARABLE")
+    assert report["graph_changes"]["inferred_edge_count"] >= 1
+    assert len(report["trend_snapshot_ids"]) == 3
+    assert report["lineage_highlights"][0]["uncertain"] is True
+    assert report["evidence"][0]["excerpt"]
+    assert report["narrative_mode"] == "STRUCTURED_ONLY"
+    assert report["provider"] is None
+    assert report["verification_status"] == "UNVERIFIED"
+
+    history = client.get("/api/v1/reports/daily?limit=1&offset=0")
+    assert history.status_code == 200
+    assert history.json()["total"] == 1
+    assert history.json()["items"][0]["id"] == report["id"]
+    assert client.get("/api/v1/daily/2026-01-10").status_code == 200
+    assert client.get("/api/v1/reports/daily/2026-01-10").status_code == 200
+    weekly = client.get("/api/v1/reports/weekly/2026-W02")
+    assert weekly.status_code == 200
+    assert weekly.json()["period_start"] == "2026-01-05"
+    assert weekly.json()["period_end"] == "2026-01-11"
+    monthly = client.get("/api/v1/reports/monthly/2026-01")
+    assert monthly.status_code == 200
+    assert monthly.json()["period_end"] == "2026-01-31"
+    assert client.get("/api/v1/reports/weekly/2026-W54").status_code == 422
+    assert client.get("/api/v1/reports/monthly/2026-13").status_code == 422
+    assert client.get("/api/v1/reports/monthly/not-a-month").status_code == 422
+
+
+def test_failed_product_publication_run_is_visible_without_a_report(
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    repository = FakeRepository()
+    paper = _paper(arxiv_record_v1)
+    version = _paper_version(arxiv_record_v1, paper)
+    analysis = _analysis_detail(arxiv_record_v1, paper)
+    _, _, _, product_run, _ = _m4_read_fixture(paper, version, analysis)
+    failed_item = replace(
+        product_run.items[0].item,
+        stage=PaperStage.COMPARED,
+        status=RunItemStatus.FAILED,
+        failed_stage=PaperStage.GRAPH_UPDATED,
+        error_code="GRAPH_REFERENCE_INVALID",
+        retryable=False,
+        error_detail="Graph edge referenced an unavailable entity.",
+    )
+    repository.product_run = ProductRunDetail(
+        run=replace(
+            product_run.run,
+            status=RunStatus.FAILED,
+            completed_count=0,
+            failed_count=1,
+            error_code="NO_SELECTED_PAPER_COMPLETED",
+            error_detail="No selected paper completed publication.",
+        ),
+        items=(replace(product_run.items[0], item=failed_item),),
+        report=None,
+    )
+
+    response = TestClient(create_app(repository)).get("/api/v1/daily/latest")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run"]["status"] == "FAILED"
+    assert body["run"]["error_code"] == "NO_SELECTED_PAPER_COMPLETED"
+    assert body["items"][0]["error_code"] == "GRAPH_REFERENCE_INVALID"
+    assert body["report"] is None
+
+
+def test_m4_read_routes_document_explicit_errors_and_limits() -> None:
+    app = create_app(FakeRepository())
+    client = TestClient(app)
+    missing_id = _fixture_id("missing-m4-read")
+    missing_requests = {
+        "/api/v1/graph": "GRAPH_NOT_FOUND",
+        f"/api/v1/lineages/{missing_id}": "LINEAGE_NOT_FOUND",
+        "/api/v1/daily/latest": "PRODUCT_RUN_NOT_FOUND",
+        "/api/v1/daily/2026-01-10": "PRODUCT_RUN_NOT_FOUND",
+        "/api/v1/reports/daily/2026-01-10": "REPORT_NOT_FOUND",
+        "/api/v1/reports/weekly/2026-W02": "REPORT_NOT_FOUND",
+        "/api/v1/reports/monthly/2026-01": "REPORT_NOT_FOUND",
+        f"/api/v1/runs/{missing_id}": "RUN_NOT_FOUND",
+    }
+    for path, code in missing_requests.items():
+        response = client.get(path)
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == code
+    assert client.get("/api/v1/trends").json() == {"items": [], "total": 0}
+
+    openapi = app.openapi()
+    for path in (
+        "/api/v1/graph",
+        "/api/v1/lineages/{entity_or_paper_id}",
+        "/api/v1/daily/latest",
+        "/api/v1/daily/{logical_date}",
+        "/api/v1/reports/daily/{logical_date}",
+        "/api/v1/reports/weekly/{period}",
+        "/api/v1/reports/monthly/{period}",
+    ):
+        responses = openapi["paths"][path]["get"]["responses"]
+        for status_code in ("404", "503"):
+            assert responses[status_code]["content"]["application/json"]["schema"] == {
+                "$ref": "#/components/schemas/ApiErrorResponse"
+            }
+    graph_parameters = {
+        item["name"]: item["schema"]
+        for item in openapi["paths"]["/api/v1/graph"]["get"]["parameters"]
+    }
+    assert graph_parameters["max_nodes"]["maximum"] == 500
+    assert graph_parameters["max_edges"]["maximum"] == 1000
+    lineage_parameters = {
+        item["name"]: item["schema"]
+        for item in openapi["paths"]["/api/v1/lineages/{entity_or_paper_id}"]["get"]["parameters"]
+    }
+    assert lineage_parameters["max_edges"]["maximum"] == 400
 
 
 def test_checked_in_openapi_is_generated_from_fastapi() -> None:

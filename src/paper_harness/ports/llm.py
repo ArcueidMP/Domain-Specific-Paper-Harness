@@ -13,6 +13,7 @@ from paper_harness.domain.historical import (
     GeneratedComparison,
     GeneratedCrawlerPlan,
 )
+from paper_harness.domain.reports import GeneratedReportNarrative, ReportNarrativeRequest
 
 
 class LLMPortError(RuntimeError):
@@ -59,3 +60,5 @@ class LLMPort(Protocol):
     ) -> GeneratedCandidateSelection: ...
 
     def compare_papers(self, request: ComparisonRequest) -> GeneratedComparison: ...
+
+    def generate_report(self, request: ReportNarrativeRequest) -> GeneratedReportNarrative: ...

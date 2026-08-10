@@ -990,7 +990,10 @@ class HistoricalRepositoryMixin:
                 evidence_rows = tuple(
                     session.scalars(
                         select(EvidenceRow)
-                        .where(EvidenceRow.analysis_id == analysis.id)
+                        .where(
+                            EvidenceRow.analysis_id == analysis.id,
+                            EvidenceRow.verification_status != VerificationStatus.REJECTED.value,
+                        )
                         .order_by(EvidenceRow.evidence_key, EvidenceRow.id)
                     )
                 )
@@ -1084,6 +1087,11 @@ class HistoricalRepositoryMixin:
                 evidence_by_id = {row.id: row for row in evidence_rows}
                 if set(evidence_by_id) != evidence_ids:
                     raise RepositoryIntegrityError("comparison references missing evidence")
+                if any(
+                    row.verification_status == VerificationStatus.REJECTED.value
+                    for row in evidence_rows
+                ):
+                    raise RepositoryIntegrityError("comparison references rejected evidence")
                 session.add(ComparisonRow(**_comparison_values(comparison)))
                 session.flush()
                 for dimension in comparison.dimensions:
@@ -2603,6 +2611,12 @@ def _comparison_bundle_from_session(session: Session, row: ComparisonRow) -> Com
         for relation in relation_rows
     )
     return ComparisonBundle(comparison=comparison, relations=relations)
+
+
+def comparison_bundle_from_session(session: Session, row: ComparisonRow) -> ComparisonBundle:
+    """Load a comparison bundle for another PostgreSQL adapter concern."""
+
+    return _comparison_bundle_from_session(session, row)
 
 
 def _comparison_detail_from_session(session: Session, row: ComparisonRow) -> ComparisonDetail:
