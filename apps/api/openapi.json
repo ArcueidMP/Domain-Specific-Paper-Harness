@@ -134,6 +134,127 @@
         "title": "ApiErrorResponse",
         "type": "object"
       },
+      "CandidateDiscoveryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Id"
+          },
+          "candidate_id": {
+            "format": "uuid",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "discovered_at": {
+            "format": "date-time",
+            "title": "Discovered At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/CandidateOrigin"
+          },
+          "relation_depth": {
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Relation Depth",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "candidate_id",
+          "action_id",
+          "origin",
+          "relation_depth",
+          "discovered_at"
+        ],
+        "title": "CandidateDiscoveryResponse",
+        "type": "object"
+      },
+      "CandidateOrigin": {
+        "enum": [
+          "SEARCH",
+          "REFERENCES",
+          "CITATIONS",
+          "RECOMMENDATIONS",
+          "LOCAL_LEXICAL",
+          "LOCAL_VECTOR"
+        ],
+        "title": "CandidateOrigin",
+        "type": "string"
+      },
+      "CandidateScoreComponentsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "citation": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Citation",
+            "type": "number"
+          },
+          "entity_overlap": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Entity Overlap",
+            "type": "number"
+          },
+          "final": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Final",
+            "type": "number"
+          },
+          "lexical": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Lexical",
+            "type": "number"
+          },
+          "recommendation": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Recommendation",
+            "type": "number"
+          },
+          "semantic_scholar": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Semantic Scholar",
+            "type": "number"
+          },
+          "vector": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Vector",
+            "type": "number"
+          }
+        },
+        "required": [
+          "semantic_scholar",
+          "lexical",
+          "vector",
+          "entity_overlap",
+          "citation",
+          "recommendation",
+          "final"
+        ],
+        "title": "CandidateScoreComponentsResponse",
+        "type": "object"
+      },
       "ClaimType": {
         "enum": [
           "RESEARCH_PROBLEM",
@@ -144,6 +265,322 @@
         ],
         "title": "ClaimType",
         "type": "string"
+      },
+      "ComparabilityStatus": {
+        "enum": [
+          "DIRECTLY_COMPARABLE",
+          "PARTIALLY_COMPARABLE",
+          "NOT_DIRECTLY_COMPARABLE",
+          "INSUFFICIENT_EVIDENCE"
+        ],
+        "title": "ComparabilityStatus",
+        "type": "string"
+      },
+      "ComparisonDimensionName": {
+        "enum": [
+          "RESEARCH_PROBLEM",
+          "TASK",
+          "METHOD",
+          "ARCHITECTURE",
+          "DATASETS",
+          "BENCHMARKS",
+          "BASELINES",
+          "METRICS",
+          "REPORTED_RESULTS",
+          "COMPUTE_OR_INFERENCE_BUDGET",
+          "CLAIMED_NOVELTY",
+          "LIMITATIONS",
+          "CODE_AVAILABILITY",
+          "RESULT_COMPARABILITY"
+        ],
+        "title": "ComparisonDimensionName",
+        "type": "string"
+      },
+      "ComparisonDimensionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "assessment": {
+            "title": "Assessment",
+            "type": "string"
+          },
+          "comparison_id": {
+            "format": "uuid",
+            "title": "Comparison Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ComparisonDimensionName"
+          },
+          "position": {
+            "maximum": 13.0,
+            "minimum": 0.0,
+            "title": "Position",
+            "type": "integer"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "source_evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Source Evidence Ids",
+            "type": "array"
+          },
+          "source_value": {
+            "title": "Source Value",
+            "type": "string"
+          },
+          "target_evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Target Evidence Ids",
+            "type": "array"
+          },
+          "target_value": {
+            "title": "Target Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "comparison_id",
+          "name",
+          "position",
+          "source_value",
+          "target_value",
+          "assessment",
+          "source_evidence_ids",
+          "target_evidence_ids",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "ComparisonDimensionResponse",
+        "type": "object"
+      },
+      "ComparisonEvidenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "analysis_scope": {
+            "$ref": "#/components/schemas/AnalysisScope"
+          },
+          "evidence_type": {
+            "$ref": "#/components/schemas/EvidenceType"
+          },
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "paper_version_id": {
+            "format": "uuid",
+            "title": "Paper Version Id",
+            "type": "string"
+          },
+          "section": {
+            "title": "Section",
+            "type": "string"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "analysis_id",
+          "paper_id",
+          "paper_version_id",
+          "analysis_scope",
+          "section",
+          "excerpt",
+          "evidence_type",
+          "verification_status"
+        ],
+        "title": "ComparisonEvidenceResponse",
+        "type": "object"
+      },
+      "ComparisonResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "comparability_reason": {
+            "title": "Comparability Reason",
+            "type": "string"
+          },
+          "comparability_status": {
+            "$ref": "#/components/schemas/ComparabilityStatus"
+          },
+          "configured_model": {
+            "title": "Configured Model",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "dimensions": {
+            "items": {
+              "$ref": "#/components/schemas/ComparisonDimensionResponse"
+            },
+            "title": "Dimensions",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ComparisonEvidenceResponse"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/PaperRelationResponse"
+            },
+            "title": "Relations",
+            "type": "array"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "search_session_id": {
+            "format": "uuid",
+            "title": "Search Session Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_analysis_id": {
+            "format": "uuid",
+            "title": "Source Analysis Id",
+            "type": "string"
+          },
+          "source_analysis_scope": {
+            "$ref": "#/components/schemas/AnalysisScope"
+          },
+          "source_paper_id": {
+            "format": "uuid",
+            "title": "Source Paper Id",
+            "type": "string"
+          },
+          "source_paper_version_id": {
+            "format": "uuid",
+            "title": "Source Paper Version Id",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "target_analysis_id": {
+            "format": "uuid",
+            "title": "Target Analysis Id",
+            "type": "string"
+          },
+          "target_analysis_scope": {
+            "$ref": "#/components/schemas/AnalysisScope"
+          },
+          "target_paper_id": {
+            "format": "uuid",
+            "title": "Target Paper Id",
+            "type": "string"
+          },
+          "target_paper_version_id": {
+            "format": "uuid",
+            "title": "Target Paper Version Id",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/ModelUsageResponse"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "search_session_id",
+          "source_paper_id",
+          "source_paper_version_id",
+          "source_analysis_id",
+          "source_analysis_scope",
+          "target_paper_id",
+          "target_paper_version_id",
+          "target_analysis_id",
+          "target_analysis_scope",
+          "comparability_status",
+          "comparability_reason",
+          "summary",
+          "dimensions",
+          "relations",
+          "evidence",
+          "provider",
+          "configured_model",
+          "model_version",
+          "prompt_version",
+          "generated_at",
+          "source",
+          "verification_status",
+          "usage",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "ComparisonResponse",
+        "type": "object"
       },
       "EvidenceListResponse": {
         "additionalProperties": false,
@@ -292,6 +729,163 @@
         ],
         "title": "EvidenceType",
         "type": "string"
+      },
+      "ExternalPaperResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "abstract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abstract"
+          },
+          "arxiv_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arxiv Id"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "citation_count": {
+            "minimum": 0.0,
+            "title": "Citation Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "doi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doi"
+          },
+          "external_ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "External Ids",
+            "type": "object"
+          },
+          "full_text_available": {
+            "title": "Full Text Available",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "influential_citation_count": {
+            "minimum": 0.0,
+            "title": "Influential Citation Count",
+            "type": "integer"
+          },
+          "publication_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Date"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "semantic_scholar_id": {
+            "title": "Semantic Scholar Id",
+            "type": "string"
+          },
+          "source": {
+            "const": "semantic_scholar",
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "venue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Venue"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "maximum": 9999.0,
+                "minimum": 1000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "id",
+          "semantic_scholar_id",
+          "title",
+          "abstract",
+          "year",
+          "publication_date",
+          "venue",
+          "authors",
+          "external_ids",
+          "arxiv_id",
+          "doi",
+          "citation_count",
+          "influential_citation_count",
+          "full_text_available",
+          "source",
+          "schema_version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ExternalPaperResponse",
+        "type": "object"
       },
       "HTTPValidationError": {
         "properties": {
@@ -720,6 +1314,151 @@
         "title": "PaperListResponse",
         "type": "object"
       },
+      "PaperRelationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "justification": {
+            "title": "Justification",
+            "type": "string"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Version"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/RelationProvenance"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "relation_type": {
+            "$ref": "#/components/schemas/PaperRelationType"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "source_paper_id": {
+            "format": "uuid",
+            "title": "Source Paper Id",
+            "type": "string"
+          },
+          "source_paper_version_id": {
+            "format": "uuid",
+            "title": "Source Paper Version Id",
+            "type": "string"
+          },
+          "target_paper_id": {
+            "format": "uuid",
+            "title": "Target Paper Id",
+            "type": "string"
+          },
+          "target_paper_version_id": {
+            "format": "uuid",
+            "title": "Target Paper Version Id",
+            "type": "string"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "source_paper_id",
+          "source_paper_version_id",
+          "target_paper_id",
+          "target_paper_version_id",
+          "relation_type",
+          "provenance",
+          "evidence_ids",
+          "justification",
+          "provider",
+          "model_version",
+          "prompt_version",
+          "confidence",
+          "verification_status",
+          "generated_at",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "PaperRelationResponse",
+        "type": "object"
+      },
+      "PaperRelationType": {
+        "enum": [
+          "CITES",
+          "SIMILAR_TO",
+          "EXTENDS",
+          "COMPARES_WITH",
+          "CONTRADICTS",
+          "IMPROVES_ON"
+        ],
+        "title": "PaperRelationType",
+        "type": "string"
+      },
       "PaperStage": {
         "enum": [
           "DISCOVERED",
@@ -946,6 +1685,190 @@
         },
         "title": "ReadyResponse",
         "type": "object"
+      },
+      "RelatedComparisonSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "comparability_status": {
+            "$ref": "#/components/schemas/ComparabilityStatus"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "target_analysis_id": {
+            "format": "uuid",
+            "title": "Target Analysis Id",
+            "type": "string"
+          },
+          "target_analysis_scope": {
+            "$ref": "#/components/schemas/AnalysisScope"
+          },
+          "target_paper_id": {
+            "format": "uuid",
+            "title": "Target Paper Id",
+            "type": "string"
+          },
+          "target_paper_version_id": {
+            "format": "uuid",
+            "title": "Target Paper Version Id",
+            "type": "string"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "target_paper_id",
+          "target_paper_version_id",
+          "target_analysis_id",
+          "target_analysis_scope",
+          "comparability_status",
+          "summary",
+          "provider",
+          "model_version",
+          "prompt_version",
+          "generated_at",
+          "verification_status"
+        ],
+        "title": "RelatedComparisonSummaryResponse",
+        "type": "object"
+      },
+      "RelatedWorkItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/SearchCandidateResponse"
+          },
+          "comparison_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparison Id"
+          },
+          "discoveries": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateDiscoveryResponse"
+            },
+            "title": "Discoveries",
+            "type": "array"
+          },
+          "paper": {
+            "$ref": "#/components/schemas/ExternalPaperResponse"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/PaperRelationResponse"
+            },
+            "title": "Relations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate",
+          "paper",
+          "discoveries",
+          "relations",
+          "comparison_id"
+        ],
+        "title": "RelatedWorkItemResponse",
+        "type": "object"
+      },
+      "RelatedWorkResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/SearchActionResponse"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "comparisons": {
+            "items": {
+              "$ref": "#/components/schemas/RelatedComparisonSummaryResponse"
+            },
+            "title": "Comparisons",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RelatedWorkItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "paper_id": {
+            "format": "uuid",
+            "title": "Paper Id",
+            "type": "string"
+          },
+          "session": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchSessionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "paper_id",
+          "session",
+          "actions",
+          "items",
+          "comparisons",
+          "total"
+        ],
+        "title": "RelatedWorkResponse",
+        "type": "object"
+      },
+      "RelationProvenance": {
+        "enum": [
+          "METADATA_EXPLICIT",
+          "TEXT_EXPLICIT",
+          "DETERMINISTICALLY_DERIVED",
+          "LLM_INFERRED",
+          "HUMAN_VERIFIED"
+        ],
+        "title": "RelationProvenance",
+        "type": "string"
       },
       "ReportFailureResponse": {
         "additionalProperties": false,
@@ -1601,6 +2524,777 @@
         "title": "RunSummary",
         "type": "object"
       },
+      "SearchActionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision_reason": {
+            "title": "Decision Reason",
+            "type": "string"
+          },
+          "duration_ms": {
+            "maximum": 600000.0,
+            "minimum": 0.0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Detail"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "positive_paper_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Positive Paper Ids",
+            "type": "array"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "relation_depth": {
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Relation Depth",
+            "type": "integer"
+          },
+          "requested_limit": {
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Requested Limit",
+            "type": "integer"
+          },
+          "result_count": {
+            "minimum": 0.0,
+            "title": "Result Count",
+            "type": "integer"
+          },
+          "retryable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retryable"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SearchActionStatus"
+          },
+          "step": {
+            "minimum": 1.0,
+            "title": "Step",
+            "type": "integer"
+          },
+          "target_arxiv_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Arxiv Id"
+          },
+          "target_semantic_scholar_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Semantic Scholar Id"
+          },
+          "tool": {
+            "$ref": "#/components/schemas/SearchTool"
+          },
+          "year_from": {
+            "anyOf": [
+              {
+                "maximum": 9999.0,
+                "minimum": 1000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year From"
+          },
+          "year_to": {
+            "anyOf": [
+              {
+                "maximum": 9999.0,
+                "minimum": 1000.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year To"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "step",
+          "tool",
+          "status",
+          "query",
+          "target_semantic_scholar_id",
+          "target_arxiv_id",
+          "positive_paper_ids",
+          "year_from",
+          "year_to",
+          "requested_limit",
+          "result_count",
+          "relation_depth",
+          "decision_reason",
+          "error_code",
+          "retryable",
+          "error_detail",
+          "duration_ms",
+          "created_at",
+          "completed_at",
+          "schema_version"
+        ],
+        "title": "SearchActionResponse",
+        "type": "object"
+      },
+      "SearchActionStatus": {
+        "enum": [
+          "RUNNING",
+          "COMPLETED",
+          "FAILED"
+        ],
+        "title": "SearchActionStatus",
+        "type": "string"
+      },
+      "SearchCandidateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "configured_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configured Model"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/SelectionDecision"
+          },
+          "decision_reason": {
+            "title": "Decision Reason",
+            "type": "string"
+          },
+          "discovered_by_action_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovered By Action Id"
+          },
+          "external_paper_id": {
+            "format": "uuid",
+            "title": "External Paper Id",
+            "type": "string"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "local_paper_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Paper Id"
+          },
+          "local_paper_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Paper Version Id"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "origins": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateOrigin"
+            },
+            "title": "Origins",
+            "type": "array"
+          },
+          "prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Version"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "rank": {
+            "minimum": 1.0,
+            "title": "Rank",
+            "type": "integer"
+          },
+          "relation_depth": {
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Relation Depth",
+            "type": "integer"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "scores": {
+            "$ref": "#/components/schemas/CandidateScoreComponentsResponse"
+          },
+          "semantic_scholar_id": {
+            "title": "Semantic Scholar Id",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "verification_status": {
+            "$ref": "#/components/schemas/VerificationStatus"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "external_paper_id",
+          "semantic_scholar_id",
+          "local_paper_id",
+          "local_paper_version_id",
+          "discovered_by_action_id",
+          "origins",
+          "relation_depth",
+          "scores",
+          "rank",
+          "decision",
+          "decision_reason",
+          "provider",
+          "configured_model",
+          "model_version",
+          "prompt_version",
+          "generated_at",
+          "verification_status",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "SearchCandidateResponse",
+        "type": "object"
+      },
+      "SearchLimitsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "max_candidates": {
+            "maximum": 5000.0,
+            "minimum": 1.0,
+            "title": "Max Candidates",
+            "type": "integer"
+          },
+          "max_citation_depth": {
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Max Citation Depth",
+            "type": "integer"
+          },
+          "max_queries": {
+            "maximum": 40.0,
+            "minimum": 1.0,
+            "title": "Max Queries",
+            "type": "integer"
+          },
+          "max_queue_size": {
+            "maximum": 2000.0,
+            "minimum": 1.0,
+            "title": "Max Queue Size",
+            "type": "integer"
+          },
+          "max_selected_candidates": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Selected Candidates",
+            "type": "integer"
+          },
+          "max_steps": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Steps",
+            "type": "integer"
+          },
+          "overall_timeout_seconds": {
+            "maximum": 3600.0,
+            "minimum": 1.0,
+            "title": "Overall Timeout Seconds",
+            "type": "number"
+          },
+          "per_operation_timeout_seconds": {
+            "maximum": 600.0,
+            "minimum": 1.0,
+            "title": "Per Operation Timeout Seconds",
+            "type": "number"
+          }
+        },
+        "required": [
+          "max_steps",
+          "max_queries",
+          "max_queue_size",
+          "max_citation_depth",
+          "max_candidates",
+          "max_selected_candidates",
+          "per_operation_timeout_seconds",
+          "overall_timeout_seconds"
+        ],
+        "title": "SearchLimitsResponse",
+        "type": "object"
+      },
+      "SearchSessionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "configured_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configured Model"
+          },
+          "crawler_decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crawler Decision Reason"
+          },
+          "crawler_expand_citations": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crawler Expand Citations"
+          },
+          "crawler_expand_references": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crawler Expand References"
+          },
+          "crawler_generated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crawler Generated At"
+          },
+          "crawler_queries": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crawler Queries"
+          },
+          "crawler_use_recommendations": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crawler Use Recommendations"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "effective_year_to": {
+            "maximum": 9999.0,
+            "minimum": 1000.0,
+            "title": "Effective Year To",
+            "type": "integer"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Detail"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/SearchLimitsResponse"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "objective": {
+            "title": "Objective",
+            "type": "string"
+          },
+          "prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Version"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "requested_year_from": {
+            "maximum": 9999.0,
+            "minimum": 1000.0,
+            "title": "Requested Year From",
+            "type": "integer"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "source_analysis_id": {
+            "format": "uuid",
+            "title": "Source Analysis Id",
+            "type": "string"
+          },
+          "source_analysis_scope": {
+            "$ref": "#/components/schemas/AnalysisScope"
+          },
+          "source_paper_id": {
+            "format": "uuid",
+            "title": "Source Paper Id",
+            "type": "string"
+          },
+          "source_paper_version_id": {
+            "format": "uuid",
+            "title": "Source Paper Version Id",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SearchSessionStatus"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchStopReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "topic_id": {
+            "format": "uuid",
+            "title": "Topic Id",
+            "type": "string"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelUsageResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "topic_id",
+          "source_paper_id",
+          "source_paper_version_id",
+          "source_analysis_id",
+          "source_analysis_scope",
+          "requested_year_from",
+          "effective_year_to",
+          "objective",
+          "crawler_queries",
+          "crawler_use_recommendations",
+          "crawler_expand_references",
+          "crawler_expand_citations",
+          "crawler_decision_reason",
+          "crawler_generated_at",
+          "status",
+          "limits",
+          "started_at",
+          "completed_at",
+          "stop_reason",
+          "error_code",
+          "error_detail",
+          "provider",
+          "configured_model",
+          "model_version",
+          "prompt_version",
+          "usage",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "SearchSessionResponse",
+        "type": "object"
+      },
+      "SearchSessionStatus": {
+        "enum": [
+          "RUNNING",
+          "COMPLETE",
+          "FAILED"
+        ],
+        "title": "SearchSessionStatus",
+        "type": "string"
+      },
+      "SearchStopReason": {
+        "enum": [
+          "QUEUE_EXHAUSTED",
+          "MAX_STEPS",
+          "MAX_QUERIES",
+          "MAX_QUEUE_SIZE",
+          "MAX_CANDIDATES",
+          "MAX_SELECTED_CANDIDATES",
+          "OVERALL_TIMEOUT",
+          "FAILED"
+        ],
+        "title": "SearchStopReason",
+        "type": "string"
+      },
+      "SearchTool": {
+        "enum": [
+          "search_papers",
+          "get_paper",
+          "get_references",
+          "get_citations",
+          "get_recommendations",
+          "read_arxiv_paper"
+        ],
+        "title": "SearchTool",
+        "type": "string"
+      },
+      "SelectionDecision": {
+        "enum": [
+          "PENDING",
+          "SELECTED",
+          "REJECTED"
+        ],
+        "title": "SelectionDecision",
+        "type": "string"
+      },
       "SourceIdentityResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1783,6 +3477,66 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/comparisons/{comparison_id}": {
+      "get": {
+        "operationId": "getComparison",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "comparison_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Comparison Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComparisonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Comparison not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Comparison storage unavailable"
+          }
+        },
+        "summary": " Get Comparison"
+      }
+    },
     "/api/v1/papers": {
       "get": {
         "operationId": "listPapers",
@@ -2088,6 +3842,83 @@
           }
         },
         "summary": " List Paper Evidence"
+      }
+    },
+    "/api/v1/papers/{paper_id}/related": {
+      "get": {
+        "operationId": "getPaperRelatedWork",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "paper_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Paper Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "paper_version_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Paper Version Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelatedWorkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Paper not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Related-work storage unavailable"
+          }
+        },
+        "summary": " Get Paper Related Work"
       }
     },
     "/api/v1/runs": {

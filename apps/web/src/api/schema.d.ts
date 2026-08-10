@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/comparisons/{comparison_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Comparison */
+        get: operations["getComparison"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/papers": {
         parameters: {
             query?: never;
@@ -64,6 +81,23 @@ export interface paths {
         };
         /** List Paper Evidence */
         get: operations["listPaperEvidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/papers/{paper_id}/related": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Paper Related Work */
+        get: operations["getPaperRelatedWork"];
         put?: never;
         post?: never;
         delete?: never;
@@ -226,11 +260,209 @@ export interface components {
         ApiErrorResponse: {
             detail: components["schemas"]["ApiErrorDetail"];
         };
+        /** CandidateDiscoveryResponse */
+        CandidateDiscoveryResponse: {
+            /** Action Id */
+            action_id: string | null;
+            /**
+             * Candidate Id
+             * Format: uuid
+             */
+            candidate_id: string;
+            /**
+             * Discovered At
+             * Format: date-time
+             */
+            discovered_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            origin: components["schemas"]["CandidateOrigin"];
+            /** Relation Depth */
+            relation_depth: number;
+        };
+        /**
+         * CandidateOrigin
+         * @enum {string}
+         */
+        CandidateOrigin: "SEARCH" | "REFERENCES" | "CITATIONS" | "RECOMMENDATIONS" | "LOCAL_LEXICAL" | "LOCAL_VECTOR";
+        /** CandidateScoreComponentsResponse */
+        CandidateScoreComponentsResponse: {
+            /** Citation */
+            citation: number;
+            /** Entity Overlap */
+            entity_overlap: number;
+            /** Final */
+            final: number;
+            /** Lexical */
+            lexical: number;
+            /** Recommendation */
+            recommendation: number;
+            /** Semantic Scholar */
+            semantic_scholar: number;
+            /** Vector */
+            vector: number;
+        };
         /**
          * ClaimType
          * @enum {string}
          */
         ClaimType: "RESEARCH_PROBLEM" | "METHOD" | "CONTRIBUTION" | "RESULT" | "LIMITATION";
+        /**
+         * ComparabilityStatus
+         * @enum {string}
+         */
+        ComparabilityStatus: "DIRECTLY_COMPARABLE" | "PARTIALLY_COMPARABLE" | "NOT_DIRECTLY_COMPARABLE" | "INSUFFICIENT_EVIDENCE";
+        /**
+         * ComparisonDimensionName
+         * @enum {string}
+         */
+        ComparisonDimensionName: "RESEARCH_PROBLEM" | "TASK" | "METHOD" | "ARCHITECTURE" | "DATASETS" | "BENCHMARKS" | "BASELINES" | "METRICS" | "REPORTED_RESULTS" | "COMPUTE_OR_INFERENCE_BUDGET" | "CLAIMED_NOVELTY" | "LIMITATIONS" | "CODE_AVAILABILITY" | "RESULT_COMPARABILITY";
+        /** ComparisonDimensionResponse */
+        ComparisonDimensionResponse: {
+            /** Assessment */
+            assessment: string;
+            /**
+             * Comparison Id
+             * Format: uuid
+             */
+            comparison_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            name: components["schemas"]["ComparisonDimensionName"];
+            /** Position */
+            position: number;
+            /** Schema Version */
+            schema_version: number;
+            /** Source Evidence Ids */
+            source_evidence_ids: string[];
+            /** Source Value */
+            source_value: string;
+            /** Target Evidence Ids */
+            target_evidence_ids: string[];
+            /** Target Value */
+            target_value: string;
+        };
+        /** ComparisonEvidenceResponse */
+        ComparisonEvidenceResponse: {
+            /**
+             * Analysis Id
+             * Format: uuid
+             */
+            analysis_id: string;
+            analysis_scope: components["schemas"]["AnalysisScope"];
+            evidence_type: components["schemas"]["EvidenceType"];
+            /** Excerpt */
+            excerpt: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            /**
+             * Paper Version Id
+             * Format: uuid
+             */
+            paper_version_id: string;
+            /** Section */
+            section: string;
+            verification_status: components["schemas"]["VerificationStatus"];
+        };
+        /** ComparisonResponse */
+        ComparisonResponse: {
+            /** Comparability Reason */
+            comparability_reason: string;
+            comparability_status: components["schemas"]["ComparabilityStatus"];
+            /** Configured Model */
+            configured_model: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Dimensions */
+            dimensions: components["schemas"]["ComparisonDimensionResponse"][];
+            /** Evidence */
+            evidence: components["schemas"]["ComparisonEvidenceResponse"][];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Model Version */
+            model_version: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provider */
+            provider: string;
+            /** Relations */
+            relations: components["schemas"]["PaperRelationResponse"][];
+            /** Schema Version */
+            schema_version: number;
+            /**
+             * Search Session Id
+             * Format: uuid
+             */
+            search_session_id: string;
+            /** Source */
+            source: string;
+            /**
+             * Source Analysis Id
+             * Format: uuid
+             */
+            source_analysis_id: string;
+            source_analysis_scope: components["schemas"]["AnalysisScope"];
+            /**
+             * Source Paper Id
+             * Format: uuid
+             */
+            source_paper_id: string;
+            /**
+             * Source Paper Version Id
+             * Format: uuid
+             */
+            source_paper_version_id: string;
+            /** Summary */
+            summary: string;
+            /**
+             * Target Analysis Id
+             * Format: uuid
+             */
+            target_analysis_id: string;
+            target_analysis_scope: components["schemas"]["AnalysisScope"];
+            /**
+             * Target Paper Id
+             * Format: uuid
+             */
+            target_paper_id: string;
+            /**
+             * Target Paper Version Id
+             * Format: uuid
+             */
+            target_paper_version_id: string;
+            usage: components["schemas"]["ModelUsageResponse"];
+            verification_status: components["schemas"]["VerificationStatus"];
+        };
         /** EvidenceListResponse */
         EvidenceListResponse: {
             /** Items */
@@ -300,6 +532,59 @@ export interface components {
          * @enum {string}
          */
         EvidenceType: "SUPPORTS" | "QUALIFIES" | "CONTRADICTS";
+        /** ExternalPaperResponse */
+        ExternalPaperResponse: {
+            /** Abstract */
+            abstract: string | null;
+            /** Arxiv Id */
+            arxiv_id: string | null;
+            /** Authors */
+            authors: string[];
+            /** Citation Count */
+            citation_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Doi */
+            doi: string | null;
+            /** External Ids */
+            external_ids: {
+                [key: string]: string;
+            };
+            /** Full Text Available */
+            full_text_available: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Influential Citation Count */
+            influential_citation_count: number;
+            /** Publication Date */
+            publication_date: string | null;
+            /** Schema Version */
+            schema_version: number;
+            /** Semantic Scholar Id */
+            semantic_scholar_id: string;
+            /**
+             * Source
+             * @constant
+             */
+            source: "semantic_scholar";
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Venue */
+            venue: string | null;
+            /** Year */
+            year: number | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -463,6 +748,66 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** PaperRelationResponse */
+        PaperRelationResponse: {
+            /** Confidence */
+            confidence: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Justification */
+            justification: string;
+            /** Model Version */
+            model_version: string | null;
+            /** Prompt Version */
+            prompt_version: string | null;
+            provenance: components["schemas"]["RelationProvenance"];
+            /** Provider */
+            provider: string | null;
+            relation_type: components["schemas"]["PaperRelationType"];
+            /** Schema Version */
+            schema_version: number;
+            /**
+             * Source Paper Id
+             * Format: uuid
+             */
+            source_paper_id: string;
+            /**
+             * Source Paper Version Id
+             * Format: uuid
+             */
+            source_paper_version_id: string;
+            /**
+             * Target Paper Id
+             * Format: uuid
+             */
+            target_paper_id: string;
+            /**
+             * Target Paper Version Id
+             * Format: uuid
+             */
+            target_paper_version_id: string;
+            verification_status: components["schemas"]["VerificationStatus"];
+        };
+        /**
+         * PaperRelationType
+         * @enum {string}
+         */
+        PaperRelationType: "CITES" | "SIMILAR_TO" | "EXTENDS" | "COMPARES_WITH" | "CONTRADICTS" | "IMPROVES_ON";
         /**
          * PaperStage
          * @enum {string}
@@ -578,6 +923,78 @@ export interface components {
              */
             status: "ready";
         };
+        /** RelatedComparisonSummaryResponse */
+        RelatedComparisonSummaryResponse: {
+            comparability_status: components["schemas"]["ComparabilityStatus"];
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Model Version */
+            model_version: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provider */
+            provider: string;
+            /** Summary */
+            summary: string;
+            /**
+             * Target Analysis Id
+             * Format: uuid
+             */
+            target_analysis_id: string;
+            target_analysis_scope: components["schemas"]["AnalysisScope"];
+            /**
+             * Target Paper Id
+             * Format: uuid
+             */
+            target_paper_id: string;
+            /**
+             * Target Paper Version Id
+             * Format: uuid
+             */
+            target_paper_version_id: string;
+            verification_status: components["schemas"]["VerificationStatus"];
+        };
+        /** RelatedWorkItemResponse */
+        RelatedWorkItemResponse: {
+            candidate: components["schemas"]["SearchCandidateResponse"];
+            /** Comparison Id */
+            comparison_id: string | null;
+            /** Discoveries */
+            discoveries: components["schemas"]["CandidateDiscoveryResponse"][];
+            paper: components["schemas"]["ExternalPaperResponse"];
+            /** Relations */
+            relations: components["schemas"]["PaperRelationResponse"][];
+        };
+        /** RelatedWorkResponse */
+        RelatedWorkResponse: {
+            /** Actions */
+            actions: components["schemas"]["SearchActionResponse"][];
+            /** Comparisons */
+            comparisons: components["schemas"]["RelatedComparisonSummaryResponse"][];
+            /** Items */
+            items: components["schemas"]["RelatedWorkItemResponse"][];
+            /**
+             * Paper Id
+             * Format: uuid
+             */
+            paper_id: string;
+            session: components["schemas"]["SearchSessionResponse"] | null;
+            /** Total */
+            total: number;
+        };
+        /**
+         * RelationProvenance
+         * @enum {string}
+         */
+        RelationProvenance: "METADATA_EXPLICIT" | "TEXT_EXPLICIT" | "DETERMINISTICALLY_DERIVED" | "LLM_INFERRED" | "HUMAN_VERIFIED";
         /** ReportFailureResponse */
         ReportFailureResponse: {
             /**
@@ -842,6 +1259,235 @@ export interface components {
              */
             topic_id: string;
         };
+        /** SearchActionResponse */
+        SearchActionResponse: {
+            /** Completed At */
+            completed_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decision Reason */
+            decision_reason: string;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Error Code */
+            error_code: string | null;
+            /** Error Detail */
+            error_detail: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Positive Paper Ids */
+            positive_paper_ids: string[];
+            /** Query */
+            query: string | null;
+            /** Relation Depth */
+            relation_depth: number;
+            /** Requested Limit */
+            requested_limit: number;
+            /** Result Count */
+            result_count: number;
+            /** Retryable */
+            retryable: boolean | null;
+            /** Schema Version */
+            schema_version: number;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+            status: components["schemas"]["SearchActionStatus"];
+            /** Step */
+            step: number;
+            /** Target Arxiv Id */
+            target_arxiv_id: string | null;
+            /** Target Semantic Scholar Id */
+            target_semantic_scholar_id: string | null;
+            tool: components["schemas"]["SearchTool"];
+            /** Year From */
+            year_from: number | null;
+            /** Year To */
+            year_to: number | null;
+        };
+        /**
+         * SearchActionStatus
+         * @enum {string}
+         */
+        SearchActionStatus: "RUNNING" | "COMPLETED" | "FAILED";
+        /** SearchCandidateResponse */
+        SearchCandidateResponse: {
+            /** Configured Model */
+            configured_model: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            decision: components["schemas"]["SelectionDecision"];
+            /** Decision Reason */
+            decision_reason: string;
+            /** Discovered By Action Id */
+            discovered_by_action_id: string | null;
+            /**
+             * External Paper Id
+             * Format: uuid
+             */
+            external_paper_id: string;
+            /** Generated At */
+            generated_at: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Local Paper Id */
+            local_paper_id: string | null;
+            /** Local Paper Version Id */
+            local_paper_version_id: string | null;
+            /** Model Version */
+            model_version: string | null;
+            /** Origins */
+            origins: components["schemas"]["CandidateOrigin"][];
+            /** Prompt Version */
+            prompt_version: string | null;
+            /** Provider */
+            provider: string | null;
+            /** Rank */
+            rank: number;
+            /** Relation Depth */
+            relation_depth: number;
+            /** Schema Version */
+            schema_version: number;
+            scores: components["schemas"]["CandidateScoreComponentsResponse"];
+            /** Semantic Scholar Id */
+            semantic_scholar_id: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+            verification_status: components["schemas"]["VerificationStatus"];
+        };
+        /** SearchLimitsResponse */
+        SearchLimitsResponse: {
+            /** Max Candidates */
+            max_candidates: number;
+            /** Max Citation Depth */
+            max_citation_depth: number;
+            /** Max Queries */
+            max_queries: number;
+            /** Max Queue Size */
+            max_queue_size: number;
+            /** Max Selected Candidates */
+            max_selected_candidates: number;
+            /** Max Steps */
+            max_steps: number;
+            /** Overall Timeout Seconds */
+            overall_timeout_seconds: number;
+            /** Per Operation Timeout Seconds */
+            per_operation_timeout_seconds: number;
+        };
+        /** SearchSessionResponse */
+        SearchSessionResponse: {
+            /** Completed At */
+            completed_at: string | null;
+            /** Configured Model */
+            configured_model: string | null;
+            /** Crawler Decision Reason */
+            crawler_decision_reason: string | null;
+            /** Crawler Expand Citations */
+            crawler_expand_citations: boolean | null;
+            /** Crawler Expand References */
+            crawler_expand_references: boolean | null;
+            /** Crawler Generated At */
+            crawler_generated_at: string | null;
+            /** Crawler Queries */
+            crawler_queries: string[] | null;
+            /** Crawler Use Recommendations */
+            crawler_use_recommendations: boolean | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Effective Year To */
+            effective_year_to: number;
+            /** Error Code */
+            error_code: string | null;
+            /** Error Detail */
+            error_detail: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            limits: components["schemas"]["SearchLimitsResponse"];
+            /** Model Version */
+            model_version: string | null;
+            /** Objective */
+            objective: string;
+            /** Prompt Version */
+            prompt_version: string | null;
+            /** Provider */
+            provider: string | null;
+            /** Requested Year From */
+            requested_year_from: number;
+            /** Schema Version */
+            schema_version: number;
+            /**
+             * Source Analysis Id
+             * Format: uuid
+             */
+            source_analysis_id: string;
+            source_analysis_scope: components["schemas"]["AnalysisScope"];
+            /**
+             * Source Paper Id
+             * Format: uuid
+             */
+            source_paper_id: string;
+            /**
+             * Source Paper Version Id
+             * Format: uuid
+             */
+            source_paper_version_id: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            status: components["schemas"]["SearchSessionStatus"];
+            stop_reason: components["schemas"]["SearchStopReason"] | null;
+            /**
+             * Topic Id
+             * Format: uuid
+             */
+            topic_id: string;
+            usage: components["schemas"]["ModelUsageResponse"] | null;
+        };
+        /**
+         * SearchSessionStatus
+         * @enum {string}
+         */
+        SearchSessionStatus: "RUNNING" | "COMPLETE" | "FAILED";
+        /**
+         * SearchStopReason
+         * @enum {string}
+         */
+        SearchStopReason: "QUEUE_EXHAUSTED" | "MAX_STEPS" | "MAX_QUERIES" | "MAX_QUEUE_SIZE" | "MAX_CANDIDATES" | "MAX_SELECTED_CANDIDATES" | "OVERALL_TIMEOUT" | "FAILED";
+        /**
+         * SearchTool
+         * @enum {string}
+         */
+        SearchTool: "search_papers" | "get_paper" | "get_references" | "get_citations" | "get_recommendations" | "read_arxiv_paper";
+        /**
+         * SelectionDecision
+         * @enum {string}
+         */
+        SelectionDecision: "PENDING" | "SELECTED" | "REJECTED";
         /** SourceIdentityResponse */
         SourceIdentityResponse: {
             /**
@@ -933,6 +1579,55 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getComparison: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                comparison_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComparisonResponse"];
+                };
+            };
+            /** @description Comparison not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Comparison storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
     listPapers: {
         parameters: {
             query?: {
@@ -1092,6 +1787,57 @@ export interface operations {
                 };
             };
             /** @description Evidence storage unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    getPaperRelatedWork: {
+        parameters: {
+            query?: {
+                paper_version_id?: string | null;
+            };
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RelatedWorkResponse"];
+                };
+            };
+            /** @description Paper not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Related-work storage unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;

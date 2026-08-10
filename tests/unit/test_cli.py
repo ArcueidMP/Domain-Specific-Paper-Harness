@@ -6,6 +6,8 @@ from uuid import UUID
 
 import pytest
 from click import unstyle
+from typer.core import TyperGroup, TyperOption
+from typer.main import get_command
 from typer.testing import CliRunner
 
 import paper_harness.entrypoints.cli as cli_module
@@ -22,6 +24,28 @@ def test_cli_accepts_string_logical_date_option() -> None:
     )
     assert result.exit_code == 0
     assert "--logical-date" in unstyle(result.stdout)
+
+
+def test_related_search_cli_exposes_every_execution_bound() -> None:
+    root = get_command(app)
+    assert isinstance(root, TyperGroup)
+    command = root.commands["search-related"]
+    exposed = {
+        name
+        for parameter in command.params
+        if isinstance(parameter, TyperOption)
+        for name in parameter.opts
+    }
+    assert {
+        "--max-steps",
+        "--max-queries",
+        "--max-queue-size",
+        "--max-citation-depth",
+        "--max-candidates",
+        "--max-selected-candidates",
+        "--per-operation-timeout-seconds",
+        "--overall-timeout-seconds",
+    } <= exposed
 
 
 @pytest.mark.parametrize(

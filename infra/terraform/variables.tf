@@ -76,6 +76,17 @@ variable "deploy_analysis_resources" {
   }
 }
 
+variable "attach_semantic_scholar_secret_to_daily" {
+  description = "Attach an enabled Semantic Scholar API key version only to the Daily Job for explicit M3 operations."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.attach_semantic_scholar_secret_to_daily || var.deploy_runtime_resources
+    error_message = "attach_semantic_scholar_secret_to_daily requires deploy_runtime_resources=true."
+  }
+}
+
 variable "web_api_image" {
   description = "Immutable Artifact Registry image reference for the web/API service."
   type        = string
@@ -133,6 +144,18 @@ variable "deepseek_secret_version" {
   validation {
     condition     = !var.deploy_analysis_resources || (var.deepseek_secret_version != null && can(regex("^[1-9][0-9]*$", var.deepseek_secret_version)))
     error_message = "deepseek_secret_version must be a fixed positive numeric version when analysis deployment is enabled."
+  }
+}
+
+variable "semantic_scholar_secret_version" {
+  description = "Existing enabled Semantic Scholar API key secret version used only by explicit M3 Daily Job operations."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = !var.attach_semantic_scholar_secret_to_daily || (var.semantic_scholar_secret_version != null && can(regex("^[1-9][0-9]*$", var.semantic_scholar_secret_version)))
+    error_message = "semantic_scholar_secret_version must be a fixed positive numeric version when the Daily Job secret is attached."
   }
 }
 

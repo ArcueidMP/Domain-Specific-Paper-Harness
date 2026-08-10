@@ -3,9 +3,9 @@
 ## Principles
 
 Failures are explicit, attributable to one operation or pipeline stage, and
-persisted when a run record exists. Retrying repeats the same operation; it never
-changes the provider, parser, model, analysis scope, source, or persistence
-backend. There is no implicit fallback.
+persisted when a run/session record exists. Retrying repeats the same operation;
+it never changes the provider, parser, model, embedding contract, analysis
+scope, source, or persistence backend. There is no implicit fallback.
 
 Configuration, authentication, domain-invariant, migration, database, external
 schema, Pydantic, and non-transient HTTP failures fail immediately. Network
@@ -23,127 +23,211 @@ DISCOVERED -> NORMALIZED -> ENRICHED -> RELEVANCE_SCORED -> SELECTED
 -> PRIOR_WORK_RETRIEVED -> COMPARED -> GRAPH_UPDATED -> PUBLISHED
 ```
 
-M1 implements discovery and normalization. The current M2 structured-analysis
-operation starts selected items at `SELECTED` and terminates successfully at
-`EVIDENCE_EXTRACTED`; the M3 and M4 stages are not simulated or marked complete.
-An item advances only after its required durable write commits. Every item
-failure records the failed stage, a stable error code, retryability of that exact
-operation, and concise diagnostic detail.
+M1 ingestion reaches normalization. The M2 structured-analysis operation starts
+explicitly selected items at `SELECTED` and terminates successfully at
+`EVIDENCE_EXTRACTED`. Current M3 historical backfill, related-work search, and
+comparison are separate protected operations with their own persisted records;
+they do not simulate later graph/publication stages or silently advance M2 run
+items. The M4 stages are not simulated or marked complete. An item advances
+only after its required durable write commits.
 
-`FULL_TEXT` and `ABSTRACT_ONLY` are selected before a run. A failed PDF download
-or GROBID parse records a full-text item failure and never changes the scope.
+`FULL_TEXT` and `ABSTRACT_ONLY` are selected before analysis. A failed PDF
+download or GROBID parse records a full-text failure and never changes scope.
 Abstract-only analysis never invokes GROBID.
 
 ## Structured-analysis dependency failures
 
-The structured-analysis operation validates its DeepSeek settings before opening
-a run. It also validates GROBID URL and identity settings before full-text work.
-The read API does not load or require either dependency.
+The analysis operation validates DeepSeek before opening a run and validates
+GROBID URL/identity before full-text work. The read API requires neither.
 
-- DeepSeek authentication failure marks the current item and the whole analysis
-  run `FAILED`, then returns the authentication error to the operator. No later
-  selected item is attempted.
+- DeepSeek authentication failure marks the current item and the analysis run
+  `FAILED`, then stops. No later selected item is attempted.
 - DeepSeek transport exhaustion, request rejection, empty output, malformed
   JSON, schema violation, domain violation, unsupported finish reason, or
-  inconsistent usage is an `ANALYZED` item failure. Invalid content is not
-  repaired and is not retried as content.
-- A deterministic invalid or rejected arXiv PDF is a `PDF_DOWNLOADED` item
-  failure. Exhausted arXiv dependency unavailability aborts the run globally;
-  no later selected paper is attempted.
-- GROBID authentication, request, availability, bounded-size, content-type, XML,
-  TEI, coordinate, reference, or citation-target failure is a `PARSED` item
-  failure. No alternate parser or abstract fallback is called.
-- Unknown passages, non-verbatim excerpts, invalid claim links, or other bundle
-  ownership violations are an `EVIDENCE_EXTRACTED` item failure. No partial
-  analysis or evidence bundle is persisted.
+  inconsistent usage is an `ANALYZED` item failure. Invalid content is neither
+  repaired nor retried as content.
+- An invalid arXiv PDF is a `PDF_DOWNLOADED` failure. Exhausted global arXiv
+  availability aborts the run; no later item is attempted.
+- GROBID authentication, availability, size, content-type, XML, TEI, coordinate,
+  reference, or citation-target failure is a `PARSED` item failure. No alternate
+  parser or abstract fallback is called.
+- Unknown passages, non-verbatim excerpts, invalid claim links, or ownership
+  violations are an `EVIDENCE_EXTRACTED` failure. No partial analysis bundle is
+  persisted.
+
+## Semantic Scholar and SPECTER2 configuration failures
+
+The read API starts without `SEMANTIC_SCHOLAR_API_KEY`. Historical backfill and
+related-work search validate the key only when invoked. Missing or blank
+configuration fails before a backfill or search session is opened. Selecting
+the explicit live smoke test without the key fails clearly; default verification
+does not select it and records an expected skip.
+
+The Semantic Scholar adapter maps 401/403 to non-retryable authentication
+failure, 400/422 to non-retryable request failure, malformed or inconsistent
+payloads to non-retryable response failure, and exhausted 429/5xx/transport
+retries to retryable unavailability. Pagination, page/result counts,
+`Retry-After`, request time, operation time, and response size are bounded. A
+retry repeats the same Semantic Scholar operation and never changes providers.
+
+SPECTER2 Base is the explicit v0.1 production model, not a fallback. Preparation
+fails before writing an artifact if the model/tokenizer revision, official
+source-weight hash, runtime versions, architecture, separator token, dimension,
+or safe serialization contract differs. Runtime fails before backfill or search
+persistence if the strict manifest, safetensors hash, pinned Transformers/PyTorch
+versions, local artifact, or offline loading contract differs. It never downloads
+at runtime, loads pickle weights, repairs an artifact, switches embeddings, or
+loads the proximity adapter.
+
+The proximity adapter remains rejected for v0.1 because Adapters 1.3.0 requires
+Transformers 4.57.x, below the patched Transformers 5.3+ security floor. That is
+a recorded architecture decision, not a runtime failure to be recovered through
+fallback. A future adapter requires a new explicit decision after upstream
+compatibility exists.
+
+## Historical-backfill durability and retry policy
+
+Each six-month backfill has a stable topic/window identity and persists its
+exact query plan, per-query result bound, overall timeout, complete embedding
+contract, next-query index, counts, and status. The embedding contract includes
+model and tokenizer identifiers/revisions, dimension, preprocessing, model
+provenance, and source. A successful page commits its stubs, identifiers, corpus
+entries, embeddings, counts, and cursor together. A failed page does not advance
+the cursor.
+
+Resume behavior is explicit and configuration-safe:
+
+- `RUNNING`: an interrupted process may resume at `next_query_index`, but only
+  with the identical plan, limits, and complete embedding contract;
+- `COMPLETE`: a repeat first verifies the same plan, limits, and embedding
+  provenance, then returns the completed row without repeating work; and
+- `FAILED`: a new explicit invocation with the identical persisted
+  configuration returns the same row to `RUNNING`, clears its terminal error,
+  and resumes at `next_query_index`.
+
+Semantic Scholar, embedding-output, domain-invariant, or overall-timeout
+failure records `FAILED`, a stable error code, concise detail, and completion
+time before the error is returned. A retry is an explicit new invocation; it
+cannot change the persisted plan or model provenance and never advances a
+failed page's cursor.
+
+## Related-work search failures and stop reasons
+
+A related-work session persists each action as `RUNNING` before its external
+call and then records either a bounded completed result or an action-level
+failure. Candidate discoveries retain the action that produced them. A
+successful DeepSeek Crawler plan is persisted immediately with its queries,
+expansion choices, decision reason, model identity, and usage, so a later
+Selector or provider failure does not erase that provenance. Invalid DeepSeek
+Crawler/Selector output, Semantic Scholar failure, embedding failure, domain
+violation, or repository error terminates the owning session as `FAILED`; no
+alternate query generator, selector, source, or embedding is used.
+
+Validated bounds terminate normally with an inspectable reason such as
+`MAX_STEPS`, `MAX_QUERIES`, `MAX_QUEUE_SIZE`, `MAX_CANDIDATES`, or
+`MAX_SELECTED_CANDIDATES`. Exhausting the queue is `QUEUE_EXHAUSTED`. Reaching
+the overall deadline records a terminal `OVERALL_TIMEOUT` stop instead of
+pretending the search was exhaustive. A terminal bounded stop may have fewer
+than the requested number of selected candidates; the UI must show the reason
+and actual counts.
+
+## Comparison failures and confidence
+
+Comparison is rejected before a model call unless the search session is
+`COMPLETE`, its source version matches, the target is a selected local candidate,
+and both exact versions have persisted analysis/evidence inputs. DeepSeek output
+must contain all ordered comparison dimensions, a valid comparability status,
+known evidence UUIDs, consistent usage, and valid relation schemas.
+
+Unknown/cross-version evidence, duplicate relation types, or `IMPROVES_ON`
+without direct comparability and bilateral evidence fails validation. Comparison,
+dimensions, relations, and evidence links then either commit as one bundle or
+roll back together.
+
+An inferred relation's `confidence` is an uncalibrated model-assessed measure of
+evidential support in `[0, 1]`. It is not a probability, accuracy estimate,
+human-review result, or fallback for verification. `UNVERIFIED` remains visible
+regardless of the numeric value.
 
 ## Transactions, run state, and reports
 
-M1 ingestion validates external results before a short database transaction. A
-failed batch write rolls back both records and cursor advancement. A PostgreSQL
-advisory lock prevents duplicate logical ingestion or analysis runs.
+M1 validates external results before a short ingestion transaction; a failed
+batch rolls back records and cursor advancement. M2 persists parsed text after
+parsing, then analysis/claims/evidence atomically. M3 commits each backfill page,
+search action/result, and comparison bundle at its own valid boundary. A
+PostgreSQL advisory lock prevents duplicate logical M1/M2 runs; M3 uses stable
+window/session ownership and database uniqueness constraints for its records.
 
-M2 persists a parsed paper in its own short transaction after parsing succeeds.
-It persists each analysis, its claims, evidence, ownership links, and terminal
-item transition atomically. A failure rolls back that complete bundle.
+After every selected M2 item is terminal, one locked transaction derives the
+run state and, where allowed, publishes its deterministic report:
 
-After every selected item is terminal, one locked transaction derives the run
-state and, where allowed, publishes its deterministic report:
+- `COMPLETE`: every selected item reached `EVIDENCE_EXTRACTED`; publish without
+  failures.
+- `PARTIAL`: at least one item completed and at least one failed; publish with
+  every failed paper/version, stage, code, retryability value, and detail.
+- `FAILED`: no selected item completed or a fatal run-level failure occurred;
+  do not publish.
 
-- `COMPLETE`: every selected item reached `EVIDENCE_EXTRACTED`; a report is
-  published without failures.
-- `PARTIAL`: at least one selected item completed and at least one failed; a
-  report is published with every failed paper version, stage, stable error code,
-  retryability value, and concise detail.
-- `FAILED`: no selected item completed, or a fatal run-level failure occurred;
-  no report is published.
-
-A publication-transaction database failure rolls back the state/report update
-and surfaces a run-level repository error. The application then makes a separate
-best-effort `FAILED` transition, so it never leaves a report that claims
-publication succeeded. If the database is still unavailable for that second
-write, the persisted run can unavoidably remain `RUNNING`; operator
+A publication database failure rolls back the state/report update and surfaces
+a run-level error. A separate best-effort `FAILED` transition follows. If the
+database remains unavailable, the run may remain `RUNNING`; operator
 reconciliation is then required before another logical-date attempt.
 
-## Destructive M2 downgrade procedure
+## Destructive migration downgrade procedure
 
-Downgrading `0002_m2_structured_analysis` to `0001_m1_ingestion` permanently
-drops parsed papers, sections, passages, references, citation contexts,
-analyses, claims, evidence, reports, and their links. It also deletes structured-
-analysis run rows because the M1 schema cannot represent them.
+Downgrading `0003_m3_pasa_semantic_scholar` to
+`0002_m2_structured_analysis` permanently removes historical stubs and aliases,
+backfill state, corpus membership, search provenance, embeddings, comparisons,
+relations, and evidence links. The migration refuses when any M3 data exists
+unless `-x allow_m3_data_loss=true` is supplied.
 
-The migration refuses the downgrade when any structured-analysis run, parsed
-paper, paper analysis, or report exists. Do not bypass that refusal until all of
-these steps succeed:
+Downgrading M2 to M1 similarly removes parsed text, analyses, claims, evidence,
+reports, and structured-analysis run data and requires
+`-x allow_m2_data_loss=true` when such data exists. Neither flag creates or
+validates a backup.
 
-1. Stop every writer and record the source database identity, Alembic revision,
-   UTC time, and row counts for every M2 table plus structured-analysis runs.
-2. Create a PostgreSQL custom-format export with `pg_dump --format=custom` into
-   a secure location outside the repository. Do not print or store its connection
-   URI in Git or logs.
-3. Record the export's SHA-256 checksum and confirm its catalog is readable with
-   `pg_restore --list <backup-file>`.
-4. Restore the export into a separate empty PostgreSQL 15+ database with pgvector.
-   Never use the source database as the restore-verification target.
-5. Point the application at that isolated restore, run `alembic current
-   --check-heads`, and compare the restored M2/structured-run row counts with the
-   recorded source counts. Exercise a read of analysis, evidence, and report data
-   before declaring the backup restorable.
-6. Retain the export, checksum, row-count comparison, and restore-verification
-   result according to the operator's backup policy.
+Before either destructive downgrade:
+
+1. Stop every writer and record the database identity, Alembic revision, UTC
+   time, and affected table row counts.
+2. Create a PostgreSQL custom-format export with `pg_dump --format=custom` in a
+   secure location outside the repository. Do not print or commit its URI.
+3. Record its SHA-256 checksum and verify the catalog with `pg_restore --list`.
+4. Restore into a separate empty PostgreSQL 15+ pgvector database.
+5. Run `alembic current --check-heads`, compare row counts, and exercise reads of
+   the data that the requested downgrade would remove.
+6. Retain the export and verification evidence under the operator backup policy.
 
 Only after that verification, and only when destructive rollback is intended,
-may the operator run:
+may the operator use the matching flag, for example:
 
 ```powershell
 D:\Tools\uv\uv.exe run --frozen --python 3.13.13 alembic `
-  -x allow_m2_data_loss=true downgrade 0001_m1_ingestion
+  -x allow_m3_data_loss=true downgrade 0002_m2_structured_analysis
 ```
 
-The flag authorizes data loss; it does not create, validate, or restore a backup.
-Production currently has no configured database and no M2 production data. This
-procedure becomes mandatory before any future production downgrade containing
-M2 data.
+Production currently has no configured database and no production M3 data.
 
 ## API readiness and presentation
 
-Liveness reports only process health. Readiness fails when PostgreSQL is
-unavailable or Alembic is not at the application migration head. FastAPI never
-runs migrations or analysis during startup.
+Liveness reports process health. Readiness fails when PostgreSQL is unavailable
+or Alembic is not at application head. FastAPI never runs migrations or
+pipeline work during startup.
 
-The API returns persisted scope, provenance, verification state, report status,
-and item failures. The React latest-run view displays a prominent `PARTIAL`
-state and item-level stage, error code, retryability, and detail. It does not
-present `UNVERIFIED` model output as human-verified.
+The API/UI expose persisted scope, provenance, verification, stop reasons,
+actions, candidate origins/scores, comparability, evidence, report state, and
+item failures. They must distinguish incomplete or bounded search from
+exhaustive retrieval and must not present unverified relations or their numeric
+support score as certainty.
 
 ## Logging
 
-Production logs are concise structured JSON. INFO is reserved for runtime or run
-start summaries, final run results, and publication. WARNING records item-level
-failures compatible with `PARTIAL`, exhausted transient operations, and
-incomplete reports. ERROR records run-level, publication, database, migration,
-and required-dependency failures.
+Production logs are concise structured JSON. INFO is reserved for runtime/run
+start summaries, final result, and publication. WARNING records item failures
+compatible with `PARTIAL`, exhausted transient operations, bounded incomplete
+search, and incomplete reports. ERROR records run/session-level, publication,
+database, migration, and required-dependency failures.
 
 Logs never include secret values, authorization headers, database credentials,
-full prompts, full model responses, paper text, or duplicate copies of one
-exception at several layers.
+full prompts, full model responses, paper text, model weights, or duplicate
+copies of one exception at several layers.

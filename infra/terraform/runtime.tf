@@ -278,6 +278,21 @@ resource "google_cloud_run_v2_job" "daily" {
             }
           }
         }
+
+        dynamic "env" {
+          for_each = var.attach_semantic_scholar_secret_to_daily ? [var.semantic_scholar_secret_version] : []
+          iterator = semantic_scholar_secret
+
+          content {
+            name = "SEMANTIC_SCHOLAR_API_KEY"
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.semantic_scholar_api_key.secret_id
+                version = semantic_scholar_secret.value
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -286,6 +301,7 @@ resource "google_cloud_run_v2_job" "daily" {
     google_project_service.required["run.googleapis.com"],
     google_secret_manager_secret_iam_member.daily_database,
     google_secret_manager_secret_iam_member.daily_deepseek,
+    google_secret_manager_secret_iam_member.daily_semantic_scholar,
     google_cloud_run_v2_service_iam_member.grobid_daily_invoker,
   ]
 }

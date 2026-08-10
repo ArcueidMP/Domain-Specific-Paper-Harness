@@ -11,23 +11,44 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+    uv sync --frozen --no-dev --extra specter2 --no-install-project
 COPY src src
 COPY apps/api apps/api
 COPY configs configs
 COPY migrations migrations
 COPY alembic.ini ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --extra specter2
 
-FROM python:3.13.13-slim-bookworm AS runtime
+FROM build AS specter2-model
+ARG PREPARE_SPECTER2_BASE=0
+RUN test "$PREPARE_SPECTER2_BASE" = "1"
+RUN --mount=type=cache,id=paper-harness-huggingface,target=/root/.cache/huggingface,sharing=locked \
+    /app/.venv/bin/python -m paper_harness.adapters.specter2.prepare \
+    --output /opt/models/specter2_base \
+    --cache-dir /root/.cache/huggingface
+
+FROM python:3.13.13-slim-bookworm AS runtime-base
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONPATH=/app/apps/api \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
 WORKDIR /app
 RUN groupadd --system --gid 10001 paper-harness \
-    && useradd --system --uid 10001 --gid paper-harness --home-dir /nonexistent --shell /usr/sbin/nologin paper-harness
+    && useradd --system --uid 10001 --gid paper-harness --home-dir /nonexistent --shell /usr/sbin/nologin paper-harness \
+    && install -d -o paper-harness -g paper-harness /opt/licenses/paper-harness /opt/licenses/specter2_base \
+    && cp /usr/share/common-licenses/Apache-2.0 /opt/licenses/specter2_base/Apache-2.0.txt \
+    && chown paper-harness:paper-harness /opt/licenses/specter2_base/Apache-2.0.txt
 COPY --from=build --chown=paper-harness:paper-harness /app /app
+COPY --chown=paper-harness:paper-harness THIRD_PARTY_NOTICES.md /opt/licenses/paper-harness/THIRD_PARTY_NOTICES.md
 USER 10001:10001
 ENTRYPOINT ["paper-harness-daily"]
+
+FROM runtime-base AS production
+COPY --from=specter2-model --chown=paper-harness:paper-harness /opt/models/specter2_base /opt/models/specter2_base
+
+# Keep the model-free runtime as the default target so CI and canonical
+# verification never download model weights. Deployment selects `production`.
+FROM runtime-base AS runtime

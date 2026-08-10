@@ -5,6 +5,14 @@ from __future__ import annotations
 from typing import Protocol
 
 from paper_harness.domain.analysis import AnalysisRequest, GeneratedAnalysis
+from paper_harness.domain.historical import (
+    CandidateSelectionRequest,
+    ComparisonRequest,
+    CrawlerPlanRequest,
+    GeneratedCandidateSelection,
+    GeneratedComparison,
+    GeneratedCrawlerPlan,
+)
 
 
 class LLMPortError(RuntimeError):
@@ -35,3 +43,19 @@ class LLMOutputError(LLMPortError):
 
 class LLMPort(Protocol):
     def analyze(self, request: AnalysisRequest) -> GeneratedAnalysis: ...
+
+    def plan_scholarly_search(
+        self,
+        request: CrawlerPlanRequest,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> GeneratedCrawlerPlan: ...
+
+    def select_prior_work(
+        self,
+        request: CandidateSelectionRequest,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> GeneratedCandidateSelection: ...
+
+    def compare_papers(self, request: ComparisonRequest) -> GeneratedComparison: ...

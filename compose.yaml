@@ -54,6 +54,7 @@ services:
       GROBID_URL: ${GROBID_URL:-http://grobid:8070}
       GROBID_AUDIENCE: ${GROBID_AUDIENCE:-}
       GROBID_AUTH_MODE: ${GROBID_AUTH_MODE:-none}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy

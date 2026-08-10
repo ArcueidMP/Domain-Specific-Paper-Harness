@@ -74,3 +74,12 @@ resource "google_secret_manager_secret_iam_member" "daily_deepseek" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.daily.email}"
 }
+
+resource "google_secret_manager_secret_iam_member" "daily_semantic_scholar" {
+  count = var.attach_semantic_scholar_secret_to_daily ? 1 : 0
+
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.semantic_scholar_api_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.daily.email}"
+}

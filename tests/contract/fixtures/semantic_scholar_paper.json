@@ -1,0 +1,24 @@
+{
+  "paperId": "1111111111111111111111111111111111111111",
+  "corpusId": 101,
+  "externalIds": {
+    "ArXiv": "2601.01234",
+    "DOI": "10.1000/agent.1",
+    "CorpusId": 101
+  },
+  "url": "https://www.semanticscholar.org/paper/1111111111111111111111111111111111111111",
+  "title": "Planning with Verifiable Agent Memory",
+  "abstract": "A study of memory-grounded planning for language-model agents.",
+  "venue": "Agent Research Workshop",
+  "year": 2026,
+  "publicationDate": "2026-01-15",
+  "authors": [
+    {
+      "authorId": "1001",
+      "name": "Ada North"
+    }
+  ],
+  "citationCount": 12,
+  "influentialCitationCount": 4,
+  "referenceCount": 24
+}

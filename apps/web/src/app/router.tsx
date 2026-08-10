@@ -1,6 +1,7 @@
 import { createBrowserRouter } from "react-router-dom";
 
 import { AppShell } from "../components/AppShell";
+import { ComparisonPage } from "../pages/ComparisonPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { PaperDetailPage } from "../pages/PaperDetailPage";
@@ -14,6 +15,7 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: "papers", element: <PapersPage /> },
       { path: "papers/:paperId", element: <PaperDetailPage /> },
+      { path: "comparisons/:comparisonId", element: <ComparisonPage /> },
       { path: "*", element: <NotFoundPage /> },
     ],
   },

@@ -39,7 +39,12 @@ def postgres_repository(postgres_engine: Engine) -> Generator[PostgresRepository
     with postgres_engine.begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE run_items, daily_runs, ingestion_cursors, topic_papers, "
+                "TRUNCATE relation_evidence_links, paper_relations, "
+                "comparison_evidence_links, comparison_dimensions, comparisons, "
+                "scientific_embeddings, search_candidate_discoveries, search_candidates, "
+                "search_actions, search_sessions, historical_corpus_entries, "
+                "historical_backfill_runs, external_paper_identifiers, external_paper_stubs, "
+                "run_items, daily_runs, ingestion_cursors, topic_papers, "
                 "paper_version_authors, paper_source_identities, paper_versions, authors, "
                 "papers, topics CASCADE"
             )

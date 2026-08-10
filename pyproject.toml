@@ -14,6 +14,7 @@ dependencies = [
   "arxiv==4.0.0",
   "fastapi>=0.116,<1",
   "httpx>=0.28,<1",
+  "pgvector>=0.4,<1",
   "psycopg[binary]>=3.2,<4",
   "pydantic>=2.11,<3",
   "pyyaml>=6.0.2,<7",
@@ -21,6 +22,14 @@ dependencies = [
   "sqlalchemy>=2.0.41,<3",
   "typer>=0.16,<1",
   "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+specter2 = [
+  "huggingface-hub==1.27.0",
+  "safetensors==0.8.0",
+  "torch==2.13.0",
+  "transformers==5.3.0",
 ]
 
 [project.scripts]
@@ -36,6 +45,14 @@ dev = [
   "types-pyyaml>=6.0.12.20250516,<7",
   "types-requests>=2.33,<3",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/paper_harness", "apps/api/paper_harness_api"]

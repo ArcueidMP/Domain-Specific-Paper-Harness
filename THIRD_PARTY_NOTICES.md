@@ -33,6 +33,21 @@ Artifact Registry and referenced by its resulting immutable digest. The upstream
 image contains its own transitive components; their complete image-license
 inventory is part of the M5 release review.
 
+### SPECTER2 Base
+
+- Model: <https://huggingface.co/allenai/specter2_base>
+- Revision: `3447645e1def9117997203454fa4495937bfbd83`
+- Upstream project: <https://github.com/allenai/SPECTER2>
+- License: Apache-2.0
+- Integration: the Daily production image downloads the exact official revision
+  during its explicit model-preparation build target, verifies the pinned source
+  weights, converts them to safetensors, and loads the resulting artifact offline.
+
+No upstream Python source is copied or modified. The SPECTER2 proximity adapter
+is not distributed in the initial release. The Daily image includes this notice
+and the Apache-2.0 license text under `/opt/licenses`; model provenance and update
+constraints are recorded in `docs/reuse-register.yaml`.
+
 ## Evaluated reuse candidates
 
 ### PaperQA2 2026.3.18
@@ -50,7 +65,12 @@ JSON, and does not preserve the GROBID section and coordinate provenance require
 by this product. The detailed compatibility record and update conditions are in
 `docs/reuse-register.yaml`.
 
-Scholar QA, PaSa, SPECTER2, and STORM have not been copied or integrated. Their
-milestone-specific audits must record an exact revision, license, dependency
-graph, Python 3.13.13 compatibility, integration boundary, and update strategy
-before any code or model artifact is added.
+Scholar QA and PaSa were audited for M3 as architecture-only references. No
+upstream source, prompts, models, or other artifacts were copied; their exact
+revisions, compatibility findings, decisions, and update constraints are in
+`docs/reuse-register.yaml`.
+
+STORM has not been copied or integrated. Its M4-specific audit must record an
+exact revision, license, dependency graph, Python 3.13.13 compatibility,
+integration boundary, and update strategy before any code or model artifact is
+added.

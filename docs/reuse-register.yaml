@@ -1,5 +1,5 @@
 schema_version: 1
-updated_at: "2026-08-08"
+updated_at: "2026-08-10"
 entries:
   - project: arxiv.py
     upstream: https://github.com/lukasschwab/arxiv.py
@@ -73,14 +73,155 @@ audits:
       - The available PDF chunker uses overlapping character windows over page text and loses GROBID section and coordinate provenance, so selective vendoring would add notice and update burden without a useful boundary-preserving capability.
     update_strategy: Re-audit an exact future revision only if it offers a provider-free, parser-independent, strict-output lower-level module whose dependency graph and provenance model fit the repository boundaries.
   scholar_qa:
-    status: pending-m3
+    status: reviewed-incompatible-no-code-reuse
+    upstream: https://github.com/allenai/ai2-scholarqa-lib
+    revision: "0.8.13"
+    commit: db1fdf3746d6ae338473f0176110082228ee8635
+    license: Apache-2.0
     source_copied: false
+    copied_files: []
+    local_changes: none
+    reviewed_at: "2026-08-09"
+    release_provenance:
+      github_releases: none
+      pypi_release: "ai2-scholar-qa 0.8.13, published 2026-03-20"
+      note: The repository head declares version 0.8.13, but upstream provides no Git tag or GitHub release that cryptographically maps the PyPI artifact to the audited commit.
+    architecture:
+      - LLM query preprocessing and decomposition precede Semantic Scholar snippet and keyword retrieval.
+      - A mixedbread-ai/mxbai-rerank-large-v1 reranker aggregates retained passages at paper level.
+      - MultiStepQAPipeline performs quote extraction, outline planning, quote clustering, iterative section synthesis, and ArxivDIGESTables-based comparison tables.
+      - PaperFinder, MultiStepQAPipeline, and ScholarQA are coupled to API, state, tracing, cache, retriever, reranker, and provider configuration.
+    dependency_graph: The base package includes FastAPI, Modal, pandas 2.2.2, OpenAI, LiteLLM, Google Cloud Storage, LangSmith, diskcache, and provider-facing support. Its all extra pins torch 2.3.1, transformers 4.44.1, sentence-transformers 3.0.1, SentencePiece, Hugging Face tooling, and PEFT.
+    python_compatibility: Upstream declares no Requires-Python value and configures Pyright for Python 3.11.3. The all extra is incompatible with exact CPython 3.13.13 because torch 2.3.1 has no CPython 3.13 wheel and pandas 2.2.2 predates official CPython 3.13 wheels. The package was not installed.
+    decision: Do not install, vendor, or copy Ai2 Scholar QA. Reimplement only the useful architecture concepts as project-owned typed quote extraction, evidence clustering, and comparison planning over persisted Evidence, with strict DeepSeek JSON output and deterministic evidence linkage.
+    reasons:
+      - Default generation uses Claude Sonnet 3.7 with GPT-4o fallback and OpenAI moderation, conflicting with the DeepSeek-only and no-fallback policy.
+      - Retrieval and reranking own external policy through Semantic Scholar snippets, keyword search, Modal, and an independent reranker instead of the repository ports and persisted corpus.
+      - LiteLLM provider routing, local or GCS traces, caches, and broad retry behavior violate the provider, logging, and retry boundaries.
+      - ClusterPlan carries a cot field, and some generation paths continue without quotes, conflicting with the no-chain-of-thought and evidence-required contracts.
+      - The required comparison dimensions are already fixed by this product, so copying dynamic report prompts and orchestration adds coupling without a boundary-preserving component.
+    update_strategy: Re-audit an exact future revision only if a provider-free, retriever-independent, strict-output quote or comparison module supports exact CPython 3.13.13 without bringing its API, state, cache, tracing, or fallback stack.
+    constraints:
+      - Treat Scholar QA only as an architecture reference; do not copy prompts or source files.
+      - Comparison inputs must be persisted project evidence, not Scholar QA retrieval results.
+      - No Anthropic, OpenAI, Google search, Modal, external reranker, alternate metadata provider, or model fallback may enter production wiring.
   pasa:
-    status: pending-m3
+    status: reviewed-architecture-only-no-code-reuse
+    upstream: https://github.com/bytedance/pasa
+    revision: main
+    commit: 2aaa6a9b1e48d24a2b7e21e8551f863dad9eeb84
+    license: Apache-2.0
     source_copied: false
+    copied_files: []
+    local_changes: none
+    reviewed_at: "2026-08-09"
+    release_provenance:
+      github_releases: none
+      git_tags: none
+      note: The audited main commit is the only exact upstream revision used for this decision.
+    architecture:
+      - PaperAgent coordinates a Crawler and Selector over a mutable PaperNode queue and expansion tree.
+      - The Crawler emits regex-parsed Search and Expand actions for initial discovery and section-level citation expansion.
+      - The Selector scores title-and-abstract candidates using the probability of a one-token True response.
+      - Upstream discovery uses Google or Serper, arXiv and ar5iv, plus an independent local compressed paper database.
+    upstream_limits:
+      expand_layers: 2
+      search_queries: 5
+      search_papers: 10
+      expand_papers: 20
+      threads_num: 20
+      limitation: These knobs do not provide persisted state, a total step or candidate bound, an explicit queue bound, stable stop reasons, or complete citation-depth enforcement.
+    dependency_graph: The unpinned requirements list contains arxiv, flash-attn, wandb, rich, and lxml while the source additionally imports requests, BeautifulSoup, Transformers, and PyTorch. Crawler and Selector execution assumes local 7B checkpoints, CUDA, custom Transformers and TRL forks, and training or PPO components.
+    python_compatibility: Upstream has no package metadata, Python declaration, lock file, or tests. Its GPU, flash-attn, custom-fork, and omitted dependency graph provides no credible exact CPython 3.13.13 compatibility claim, so direct installation was rejected and not attempted.
+    decision: Reimplement only the documented Crawler and Selector architecture as first-party application code. Use the existing DeepSeek LLMPort, strict Pydantic action schemas, the approved Semantic Scholar tool allowlist, persisted search sessions, actions and candidates, and deterministic terminal stop reasons.
+    reasons:
+      - Google, Serper, ar5iv, and the independent local paper database are forbidden production sources.
+      - Regex action parsing, broad exception handling, and silent empty or None returns violate strict external-output and failure semantics.
+      - Mutable in-memory queue and list deduplication do not meet provenance, restart, idempotency, or inspectability requirements.
+      - Upstream bounds do not enforce the required max_steps, max_queries, max_queue_size, max_citation_depth, and max_candidates contracts.
+      - The 7B checkpoints, training stack, custom forks, and GPU assumptions are outside the approved DeepSeek runtime.
+    update_strategy: Re-audit an exact future commit only if it isolates a tested, provider-neutral Crawler or Selector module with strict typed actions, complete execution bounds, and exact CPython 3.13.13 support.
+    constraints:
+      - Do not copy upstream prompts, PaperNode, agent code, utilities, checkpoints, training code, or PPO code.
+      - Do not create vendored code under third_party/pasa while source_copied remains false.
+      - The derived loop may invoke only search_papers, get_paper, get_references, get_citations, get_recommendations, and read_arxiv_paper.
+      - Persist every action, candidate, provenance record, bound consumption, and terminal reason.
   specter2:
-    status: pending-m3
+    status: integrated-v0.1-base-model-artifact
+    upstream: https://github.com/allenai/SPECTER2
+    revision: main
+    commit: fac1cb0940fe7bd3c0db00973f6889ca0b481b63
+    license: Apache-2.0
     source_copied: false
+    model_artifacts_copied: true
+    copied_files: []
+    local_changes: First-party preparation verifies the pinned upstream weights, loads them with safe PyTorch behavior, converts them to safetensors, and writes a strict manifest. Production loading is local-only and offline.
+    reviewed_at: "2026-08-10"
+    release_provenance:
+      github_releases: none
+      git_tags: none
+      repository_version_field: "1.0.1"
+      note: The repository version field is not an upstream release and is not used as the model revision.
+    selected_model:
+      identifier: allenai/specter2_base
+      revision: 3447645e1def9117997203454fa4495937bfbd83
+      tokenizer_identifier: allenai/specter2_base
+      tokenizer_revision: 3447645e1def9117997203454fa4495937bfbd83
+      upstream: https://huggingface.co/allenai/specter2_base
+      license: Apache-2.0
+      source_weights_file: pytorch_model.bin
+      source_weights_size_bytes: 439740465
+      source_weights_sha256: 801eda968fad1752fe846a8e572bfdc25202be85544680dda4c99f4589646ebc
+      distribution: Hash-verified safetensors conversion embedded only in the Daily production image; no weights are checked into Git.
+      local_production_build:
+        checked_at: "2026-08-10"
+        generated_at: "2026-08-10T01:28:46.515266+00:00"
+        model_safetensors_sha256: cc9c5c23887d2107626fdb71ea60e7489b5a14a05046f7e8b60056487ebf68ff
+        image_size_bytes: 785573507
+    model_contract:
+      dimension: 768
+      input: Whitespace-normalized title followed by tokenizer.sep_token and the whitespace-normalized abstract; padding and truncation are enabled with max_length 512 and return_token_type_ids false.
+      output: Use last_hidden_state[:,0,:] from the final layer as the unnormalized paper embedding.
+      normalization: none
+      source: specter2_base_title_abstract_cls
+      provenance: huggingface:allenai/specter2_base@3447645e1def9117997203454fa4495937bfbd83
+      persisted_fields: Model and tokenizer identifiers/revisions, dimension, preprocessing contract, model provenance, embedding source, generated_at, and vector.
+    selected_runtime:
+      python: CPython 3.13.13
+      transformers: "5.3.0"
+      torch: "2.13.0 CPU"
+      huggingface_hub: "1.27.0"
+      safetensors: "0.8.0"
+      adapters: not installed
+      trust_remote_code: false
+      weights_only_source_load: true
+      runtime_use_safetensors: true
+      runtime_local_files_only: true
+      runtime_offline: true
+    proximity_adapter_review:
+      identifier: allenai/specter2
+      revision: 2081559630a80fc5851d8f798a05ba81e9468089
+      status: rejected-for-v0.1-not-distributed
+      reason: Adapters 1.3.0 requires Transformers >=4.57.6,<4.58.dev0, below the project's patched Transformers 5.3+ security floor for GHSA-29pf-2h5f-8g72 / CVE-2026-4372.
+      future_policy: Adoption requires a new explicit architecture decision after an upstream Adapters release supports the required safe Transformers line. It is not a runtime fallback.
+    python_compatibility: The selected Base-only runtime and real model smoke passed on exact CPython 3.13.13. The incompatible upstream SPECTER2 Python package and Adapters package are not installed.
+    verification:
+      real_model_smoke:
+        status: passed
+        checked_at: "2026-08-10"
+        result: The pinned model and tokenizer loaded under Transformers 5.3.0, produced finite 768-dimensional vectors, repeated deterministic evaluation was identical, and PostgreSQL/pgvector persistence plus cosine retrieval passed.
+      production_image:
+        status: passed
+        checked_at: "2026-08-10"
+        result: The explicit model-bearing Daily target built successfully and loaded the baked artifact offline as the non-root runtime user.
+      normal_ci: The default Daily target is model-free and never downloads model weights.
+    decision: v0.1 deliberately selects official SPECTER2 Base without the proximity adapter. This is the production model, not a fallback. No generic embedding model, commercial API, adapter, or alternate provider may be selected implicitly.
+    update_strategy: Re-verify the upstream revision, weight hash, license, safe dependency line, real-model output, pgvector retrieval, image size, and notices before changing the Base pin. Reconsidering the proximity adapter requires a separate architecture decision after upstream compatibility exists.
+    constraints:
+      - Keep the heavy model runtime and artifact in the Daily production image only; Web/API must not install or load it.
+      - Prepare the exact revision at image build time, retain only safetensors in the runtime artifact, and never redownload per Job.
+      - Persist and query with the complete embedding contract so a changed tokenizer or preprocessing policy cannot overwrite or resume an older run.
+      - Preserve THIRD_PARTY_NOTICES.md and the Apache-2.0 license in the distributed image.
   storm:
     status: pending-m4
     source_copied: false

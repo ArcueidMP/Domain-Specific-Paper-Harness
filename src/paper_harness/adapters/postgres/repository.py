@@ -1,4 +1,4 @@
-"""Synchronous SQLAlchemy/PostgreSQL repository for ingestion and M2 analysis."""
+"""Synchronous SQLAlchemy/PostgreSQL repository for the application persistence port."""
 
 from __future__ import annotations
 
@@ -69,6 +69,7 @@ from paper_harness.ports.repository import (
     RepositoryUnavailableError,
 )
 
+from .historical_repository import HistoricalRepositoryMixin
 from .models import (
     AnalysisClaimRow,
     AuthorRow,
@@ -93,10 +94,10 @@ from .models import (
     TopicRow,
 )
 
-EXPECTED_DATABASE_REVISION = "0002_m2_structured_analysis"
+EXPECTED_DATABASE_REVISION = "0003_m3_pasa_semantic_scholar"
 
 
-class PostgresRepository:
+class PostgresRepository(HistoricalRepositoryMixin):
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
         self._sessions = sessionmaker(engine, expire_on_commit=False)

@@ -31,6 +31,16 @@ from paper_harness.domain.analysis import (
     ParsedSection,
 )
 from paper_harness.domain.errors import DuplicateDailyRunError
+from paper_harness.domain.historical import (
+    BackfillStatus,
+    CandidateSelectionRequest,
+    ComparisonRequest,
+    CrawlerPlanRequest,
+    GeneratedCandidateSelection,
+    GeneratedComparison,
+    GeneratedCrawlerPlan,
+    HistoricalBackfillRun,
+)
 from paper_harness.domain.identity import (
     stable_parsed_paper_id,
     stable_parsed_passage_id,
@@ -91,6 +101,27 @@ class SelectiveAnalysisLLM:
                 estimated_cost_usd=None,
             ),
         )
+
+    def select_prior_work(
+        self,
+        request: CandidateSelectionRequest,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> GeneratedCandidateSelection:
+        del timeout_seconds
+        raise AssertionError(f"unexpected prior-work selection request: {request}")
+
+    def plan_scholarly_search(
+        self,
+        request: CrawlerPlanRequest,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> GeneratedCrawlerPlan:
+        del timeout_seconds
+        raise AssertionError(f"unexpected crawler planning request: {request}")
+
+    def compare_papers(self, request: ComparisonRequest) -> GeneratedComparison:
+        raise AssertionError(f"unexpected comparison request: {request}")
 
 
 class StaticParser:
@@ -464,11 +495,11 @@ def test_full_text_analysis_persists_exact_parser_provenance_and_reuses_canonica
     assert payload["parser_version"] == "0.9.0"
 
 
-def test_database_upgrades_from_m1_revision_to_m2_head(
+def test_database_upgrades_from_m1_revision_to_current_head(
     postgres_engine: Engine,
     postgres_repository: PostgresRepository,
 ) -> None:
-    del postgres_repository  # The fixture clears M2 rows before the destructive downgrade test.
+    del postgres_repository  # The fixture clears post-M1 rows before destructive migration tests.
     config = Config(str(Path("alembic.ini").resolve()))
     command.downgrade(config, "0001_m1_ingestion")
     try:
@@ -480,7 +511,28 @@ def test_database_upgrades_from_m1_revision_to_m2_head(
         with postgres_engine.connect() as connection:
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == ("0003_m3_pasa_semantic_scholar")
+    finally:
+        command.upgrade(config, "head")
+
+
+def test_database_upgrades_from_m2_revision_to_m3_head(
+    postgres_engine: Engine,
+    postgres_repository: PostgresRepository,
+) -> None:
+    del postgres_repository  # The fixture clears M3 rows before the destructive downgrade test.
+    config = Config(str(Path("alembic.ini").resolve()))
+    command.downgrade(config, "0002_m2_structured_analysis")
+    try:
+        with postgres_engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
             ).scalar_one() == ("0002_m2_structured_analysis")
+        command.upgrade(config, "head")
+        with postgres_engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == ("0003_m3_pasa_semantic_scholar")
     finally:
         command.upgrade(config, "head")
 
@@ -516,5 +568,53 @@ def test_m2_downgrade_refuses_existing_analysis_without_explicit_data_loss_guard
         command.downgrade(config, "0001_m1_ingestion")
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0002_m2_structured_analysis"
+            "0003_m3_pasa_semantic_scholar"
+        )
+
+
+def test_m3_downgrade_refuses_existing_historical_data_without_explicit_guard(
+    postgres_repository: PostgresRepository,
+    postgres_engine: Engine,
+    topic_config: TopicConfig,
+) -> None:
+    postgres_repository.upsert_topic(topic_config)
+    postgres_repository.start_historical_backfill(
+        HistoricalBackfillRun(
+            id=UUID("d31f9413-eb8e-486d-88b2-18275187133d"),
+            topic_id=topic_config.id,
+            window_from=date(2025, 7, 10),
+            window_to=date(2026, 1, 10),
+            query_plan=("LLM agent",),
+            max_results_per_query=500,
+            overall_timeout_seconds=3600.0,
+            embedding_model_identifier="allenai/specter2_base",
+            embedding_model_revision="base-revision",
+            embedding_tokenizer_identifier="allenai/specter2_base",
+            embedding_tokenizer_revision="tokenizer-revision",
+            embedding_dimension=768,
+            embedding_preprocessing_contract=(
+                "title + tokenizer separator + abstract; cls; max_length=512"
+            ),
+            embedding_model_provenance="huggingface:allenai/specter2_base@base-revision",
+            embedding_source="specter2_base_title_abstract_cls",
+            status=BackfillStatus.RUNNING,
+            next_query_index=0,
+            discovered_count=0,
+            persisted_count=0,
+            representative_count=0,
+            started_at=datetime(2026, 1, 10, 5, tzinfo=UTC),
+            completed_at=None,
+            error_code=None,
+            error_detail=None,
+            schema_version=1,
+            created_at=datetime(2026, 1, 10, 5, tzinfo=UTC),
+        )
+    )
+
+    config = Config(str(Path("alembic.ini").resolve()))
+    with pytest.raises(RuntimeError, match="M3 downgrade refused"):
+        command.downgrade(config, "0002_m2_structured_analysis")
+    with postgres_engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0003_m3_pasa_semantic_scholar"
         )

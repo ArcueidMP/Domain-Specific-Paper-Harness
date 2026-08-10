@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from uuid import UUID, uuid5
 
 from paper_harness.domain.errors import DomainInvariantError
@@ -20,6 +21,17 @@ ANALYSIS_NAMESPACE = UUID("5b37c831-4524-41e4-9e69-4a7316699ae6")
 CLAIM_NAMESPACE = UUID("42b72c7b-665a-4d11-9f45-d2154fb79257")
 EVIDENCE_NAMESPACE = UUID("09955308-cb9d-4b0a-85dd-82235fa8080d")
 REPORT_NAMESPACE = UUID("ff9abc00-438e-42ec-999e-3e7f8c213a98")
+EXTERNAL_PAPER_NAMESPACE = UUID("f34ca3d0-3701-41ca-93fa-e488cbf8e872")
+SEARCH_SESSION_NAMESPACE = UUID("dd16d4c8-1b37-46dd-8a92-90b113f8551c")
+SEARCH_ACTION_NAMESPACE = UUID("99079ed9-c1dc-41c5-b117-827a847e0030")
+SEARCH_CANDIDATE_NAMESPACE = UUID("ba4925ae-68ff-478c-9cd3-aeff5380c539")
+CANDIDATE_DISCOVERY_NAMESPACE = UUID("182097c2-17f5-42ca-8d83-c4f65834e7a1")
+HISTORICAL_CORPUS_NAMESPACE = UUID("8815c52b-a885-4030-857a-6137e224088e")
+HISTORICAL_BACKFILL_NAMESPACE = UUID("25850b6f-f170-4436-855a-cf95cad8aabb")
+EMBEDDING_NAMESPACE = UUID("cf44753b-3e97-4380-ad64-8aad2ac810a1")
+COMPARISON_NAMESPACE = UUID("056381f3-78bf-4929-af6f-983800a8dde9")
+COMPARISON_DIMENSION_NAMESPACE = UUID("b9157c1a-8407-4304-a3b6-ff7eec448fb0")
+PAPER_RELATION_NAMESPACE = UUID("e5799c68-7f25-48e8-a86b-65f6594bbd97")
 
 _ARXIV_VERSIONED_ID = re.compile(
     r"^(?P<canonical>(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7}))v(?P<version>[1-9]\d*)$",
@@ -131,3 +143,147 @@ def stable_evidence_id(analysis_id: UUID, evidence_key: str) -> UUID:
 
 def stable_report_id(run_id: UUID) -> UUID:
     return uuid5(REPORT_NAMESPACE, str(run_id))
+
+
+def stable_external_paper_id(
+    semantic_scholar_id: str,
+    *,
+    arxiv_id: str | None = None,
+    doi: str | None = None,
+) -> UUID:
+    value = semantic_scholar_id.strip()
+    if not value:
+        raise DomainInvariantError("Semantic Scholar paper ID must not be empty")
+    if arxiv_id is not None:
+        identity = f"arxiv:{validate_canonical_arxiv_id(arxiv_id)}"
+    elif value:
+        identity = f"semantic_scholar:{value.casefold()}"
+    elif doi is not None and doi.strip():
+        identity = f"doi:{doi.strip().casefold()}"
+    else:
+        raise DomainInvariantError("external paper needs an approved stable identity")
+    return uuid5(EXTERNAL_PAPER_NAMESPACE, identity)
+
+
+def stable_search_session_id(
+    source_paper_version_id: UUID,
+    objective: str,
+    limits_identity: str,
+    prompt_version: str,
+) -> UUID:
+    normalized = " ".join(objective.split())
+    if not normalized:
+        raise DomainInvariantError("search objective must not be empty")
+    if not limits_identity.strip() or not prompt_version.strip():
+        raise DomainInvariantError("search policy identity and prompt version are required")
+    return uuid5(
+        SEARCH_SESSION_NAMESPACE,
+        f"{source_paper_version_id}:{normalized}:{limits_identity}:{prompt_version}",
+    )
+
+
+def stable_search_action_id(session_id: UUID, step: int) -> UUID:
+    if step < 1:
+        raise DomainInvariantError("search action step must be positive")
+    return uuid5(SEARCH_ACTION_NAMESPACE, f"{session_id}:{step}")
+
+
+def stable_search_candidate_id(session_id: UUID, semantic_scholar_id: str) -> UUID:
+    value = semantic_scholar_id.strip()
+    if not value:
+        raise DomainInvariantError("candidate Semantic Scholar ID must not be empty")
+    return uuid5(SEARCH_CANDIDATE_NAMESPACE, f"{session_id}:{value}")
+
+
+def stable_candidate_discovery_id(
+    candidate_id: UUID,
+    origin: str,
+    action_id: UUID | None,
+    relation_depth: int,
+) -> UUID:
+    if relation_depth < 0:
+        raise DomainInvariantError("candidate discovery depth cannot be negative")
+    return uuid5(
+        CANDIDATE_DISCOVERY_NAMESPACE,
+        f"{candidate_id}:{origin}:{action_id or 'local'}:{relation_depth}",
+    )
+
+
+def stable_historical_corpus_entry_id(topic_id: UUID, external_paper_id: UUID) -> UUID:
+    return uuid5(HISTORICAL_CORPUS_NAMESPACE, f"{topic_id}:{external_paper_id}")
+
+
+def stable_historical_backfill_id(topic_id: UUID, window_from: date, window_to: date) -> UUID:
+    if window_from > window_to:
+        raise DomainInvariantError("historical backfill window is invalid")
+    return uuid5(
+        HISTORICAL_BACKFILL_NAMESPACE,
+        f"{topic_id}:{window_from.isoformat()}:{window_to.isoformat()}",
+    )
+
+
+def stable_embedding_id(
+    owner_id: UUID,
+    *,
+    model_identifier: str,
+    model_revision: str,
+    tokenizer_identifier: str,
+    tokenizer_revision: str,
+    dimension: int,
+    preprocessing_contract: str,
+    model_provenance: str,
+    source: str,
+) -> UUID:
+    identity = (
+        model_identifier,
+        model_revision,
+        tokenizer_identifier,
+        tokenizer_revision,
+        preprocessing_contract,
+        model_provenance,
+        source,
+    )
+    if any(not value.strip() for value in identity) or dimension < 1:
+        raise DomainInvariantError("complete embedding contract provenance is required")
+    values = (str(owner_id), *identity[:4], str(dimension), *identity[4:])
+    encoded = "".join(f"{len(value)}:{value}" for value in values)
+    return uuid5(EMBEDDING_NAMESPACE, encoded)
+
+
+def stable_comparison_id(
+    search_session_id: UUID,
+    source_paper_version_id: UUID,
+    source_analysis_id: UUID,
+    target_paper_version_id: UUID,
+    target_analysis_id: UUID,
+    provider: str,
+    configured_model: str,
+    model_version: str,
+    prompt_version: str,
+) -> UUID:
+    return uuid5(
+        COMPARISON_NAMESPACE,
+        f"{search_session_id}:{source_paper_version_id}:{source_analysis_id}:"
+        f"{target_paper_version_id}:{target_analysis_id}:"
+        f"{provider}:{configured_model}:{model_version}:{prompt_version}",
+    )
+
+
+def stable_comparison_dimension_id(comparison_id: UUID, name: str) -> UUID:
+    return uuid5(COMPARISON_DIMENSION_NAMESPACE, f"{comparison_id}:{name}")
+
+
+def stable_paper_relation_id(
+    comparison_id: UUID,
+    source_paper_version_id: UUID,
+    target_paper_version_id: UUID,
+    relation_type: str,
+    provenance: str,
+    model_version: str | None,
+    prompt_version: str | None,
+) -> UUID:
+    return uuid5(
+        PAPER_RELATION_NAMESPACE,
+        f"{comparison_id}:{source_paper_version_id}:{target_paper_version_id}:"
+        f"{relation_type}:{provenance}:{model_version or 'none'}:{prompt_version or 'none'}",
+    )
