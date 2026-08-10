@@ -10,11 +10,30 @@ from uuid import UUID
 from paper_harness.application.read_models import (
     AnalysisDetail,
     AnalysisTarget,
+    ComparisonDetail,
+    HistoricalRetrievalMatch,
     PaperDetail,
+    RelatedWorkDetail,
     RunDetail,
+    SearchSessionDetail,
     StoredTopic,
 )
 from paper_harness.domain.analysis import AnalysisBundle, AnalysisScope, Evidence, ParsedPaper
+from paper_harness.domain.historical import (
+    ComparisonBundle,
+    ComparisonPaperInput,
+    ExternalPaperStub,
+    GeneratedCrawlerPlan,
+    HistoricalBackfillRun,
+    HistoricalCorpusEntry,
+    ScientificEmbedding,
+    SearchAction,
+    SearchCandidate,
+    SearchCandidateDiscovery,
+    SearchModelProvenance,
+    SearchSession,
+    SearchStopReason,
+)
 from paper_harness.domain.models import DailyRun, IngestionCursor, Paper, PaperStage, TopicConfig
 from paper_harness.ports.arxiv import ArxivPaperRecord
 
@@ -187,3 +206,137 @@ class RepositoryPort(Protocol):
         paper_version_id: UUID | None,
         analysis_scope: AnalysisScope | None = None,
     ) -> tuple[Evidence, ...] | None: ...
+
+    def start_historical_backfill(self, run: HistoricalBackfillRun) -> HistoricalBackfillRun: ...
+
+    def get_historical_backfill(
+        self, topic_id: UUID, window_from: date, window_to: date
+    ) -> HistoricalBackfillRun | None: ...
+
+    def persist_historical_backfill_page(
+        self,
+        run_id: UUID,
+        *,
+        expected_query_index: int,
+        next_query_index: int,
+        papers: tuple[ExternalPaperStub, ...],
+        entries: tuple[HistoricalCorpusEntry, ...],
+        embeddings: tuple[ScientificEmbedding, ...],
+        discovered_count: int,
+        persisted_count: int,
+        persisted_at: datetime,
+    ) -> HistoricalBackfillRun: ...
+
+    def finalize_historical_backfill(
+        self,
+        run_id: UUID,
+        *,
+        representatives: tuple[tuple[UUID, int], ...],
+        completed_at: datetime,
+    ) -> HistoricalBackfillRun: ...
+
+    def fail_historical_backfill(
+        self,
+        run_id: UUID,
+        *,
+        completed_at: datetime,
+        error_code: str,
+        error_detail: str,
+    ) -> HistoricalBackfillRun: ...
+
+    def start_search_session(self, session: SearchSession) -> SearchSession: ...
+
+    def get_search_session(self, session_id: UUID) -> SearchSessionDetail | None: ...
+
+    def start_search_action(self, action: SearchAction) -> SearchAction: ...
+
+    def persist_search_crawler_plan(
+        self, session_id: UUID, plan: GeneratedCrawlerPlan
+    ) -> SearchSession: ...
+
+    def persist_search_action_result(
+        self,
+        action: SearchAction,
+        *,
+        papers: tuple[ExternalPaperStub, ...],
+        candidates: tuple[SearchCandidate, ...],
+        discoveries: tuple[SearchCandidateDiscovery, ...],
+    ) -> None: ...
+
+    def persist_local_search_candidates(
+        self,
+        session_id: UUID,
+        *,
+        papers: tuple[ExternalPaperStub, ...],
+        candidates: tuple[SearchCandidate, ...],
+        discoveries: tuple[SearchCandidateDiscovery, ...],
+    ) -> None: ...
+
+    def update_search_candidate_decisions(
+        self,
+        session_id: UUID,
+        candidates: tuple[SearchCandidate, ...],
+    ) -> None: ...
+
+    def complete_search_session(
+        self,
+        session_id: UUID,
+        *,
+        completed_at: datetime,
+        stop_reason: SearchStopReason,
+        provenance: SearchModelProvenance | None,
+    ) -> SearchSession: ...
+
+    def fail_search_session(
+        self,
+        session_id: UUID,
+        *,
+        completed_at: datetime,
+        error_code: str,
+        error_detail: str,
+        provenance: SearchModelProvenance | None,
+    ) -> SearchSession: ...
+
+    def upsert_scientific_embeddings(self, embeddings: tuple[ScientificEmbedding, ...]) -> None: ...
+
+    def search_historical_lexically(
+        self,
+        topic_id: UUID,
+        *,
+        query: str,
+        limit: int,
+    ) -> tuple[HistoricalRetrievalMatch, ...]: ...
+
+    def search_historical_by_vector(
+        self,
+        topic_id: UUID,
+        *,
+        vector: tuple[float, ...],
+        model_identifier: str,
+        model_revision: str,
+        tokenizer_identifier: str,
+        tokenizer_revision: str,
+        dimension: int,
+        preprocessing_contract: str,
+        model_provenance: str,
+        source: str,
+        limit: int,
+    ) -> tuple[HistoricalRetrievalMatch, ...]: ...
+
+    def get_comparison_paper_input(
+        self,
+        paper_version_id: UUID,
+        *,
+        analysis_id: UUID | None = None,
+    ) -> ComparisonPaperInput | None: ...
+
+    def persist_comparison_bundle(self, bundle: ComparisonBundle) -> None: ...
+
+    def get_comparison(self, comparison_id: UUID) -> ComparisonDetail | None: ...
+
+    def get_related_work(
+        self,
+        paper_id: UUID,
+        *,
+        paper_version_id: UUID | None = None,
+    ) -> RelatedWorkDetail | None: ...

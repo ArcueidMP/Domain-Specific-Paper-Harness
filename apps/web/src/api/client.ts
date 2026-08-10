@@ -142,6 +142,42 @@ export async function getPaperEvidence(
 export type EvidenceItem = components["schemas"]["EvidenceResponse"];
 export type EvidenceList = components["schemas"]["EvidenceListResponse"];
 
+export async function getPaperRelatedWork(paperId: string, paperVersionId: string) {
+  const { data, error, response } = await api.GET("/api/v1/papers/{paper_id}/related", {
+    params: {
+      path: { paper_id: paperId },
+      query: { paper_version_id: paperVersionId },
+    },
+  });
+
+  if (!response.ok || data === undefined) {
+    throw requestError(response.status, error);
+  }
+
+  return data;
+}
+
+export type RelatedWork = components["schemas"]["RelatedWorkResponse"];
+export type RelatedWorkItem = components["schemas"]["RelatedWorkItemResponse"];
+
+export type ComparisonEvidence = components["schemas"]["ComparisonEvidenceResponse"];
+
+export async function getComparison(comparisonId: string) {
+  const { data, error, response } = await api.GET("/api/v1/comparisons/{comparison_id}", {
+    params: { path: { comparison_id: comparisonId } },
+  });
+
+  if (!response.ok || data === undefined) {
+    throw requestError(response.status, error);
+  }
+
+  return data;
+}
+
+export type Comparison = components["schemas"]["ComparisonResponse"];
+export type ComparisonDimension = components["schemas"]["ComparisonDimensionResponse"];
+export type PaperRelation = components["schemas"]["PaperRelationResponse"];
+
 export async function getLatestRun() {
   const { data, error, response } = await api.GET("/api/v1/runs/latest");
 

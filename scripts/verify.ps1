@@ -184,6 +184,9 @@ finally {
 }
 
 $VerifyComposeProject = "paper-harness-verify"
+$PytestBaseTemp = Join-Path ([System.IO.Path]::GetTempPath()) `
+    ("paper-harness-pytest-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $PytestBaseTemp | Out-Null
 try {
     # This project name and volume are reserved for disposable verification data.
     Remove-DisposableComposeProject -ProjectName $VerifyComposeProject
@@ -200,11 +203,19 @@ try {
         & $Uv run --frozen --python 3.13.13 alembic current --check-heads
     }
     Invoke-Checked "Python tests" {
-        & $Uv run --frozen --python 3.13.13 pytest
+        & $Uv run --frozen --python 3.13.13 pytest `
+            --basetemp $PytestBaseTemp -p no:cacheprovider
     }
 }
 finally {
-    Remove-DisposableComposeProject -ProjectName $VerifyComposeProject
+    try {
+        Remove-DisposableComposeProject -ProjectName $VerifyComposeProject
+    }
+    finally {
+        if (Test-Path -LiteralPath $PytestBaseTemp) {
+            Remove-Item -LiteralPath $PytestBaseTemp -Recurse -Force
+        }
+    }
 }
 
 if (-not $SkipImageBuild) {

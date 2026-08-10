@@ -1,0 +1,30 @@
+{
+  "offset": 0,
+  "total": 1,
+  "data": [
+    {
+      "citedPaper": {
+        "paperId": "2222222222222222222222222222222222222222",
+        "corpusId": 202,
+        "externalIds": {
+          "DOI": "10.1000/agent.2"
+        },
+        "url": "https://www.semanticscholar.org/paper/2222222222222222222222222222222222222222",
+        "title": "Bounded Tool Use for Language-Model Agents",
+        "abstract": null,
+        "venue": "Transactions on Agent Systems",
+        "year": 2025,
+        "publicationDate": null,
+        "authors": [
+          {
+            "authorId": null,
+            "name": "Lin West"
+          }
+        ],
+        "citationCount": 8,
+        "influentialCitationCount": 2,
+        "referenceCount": 19
+      }
+    }
+  ]
+}

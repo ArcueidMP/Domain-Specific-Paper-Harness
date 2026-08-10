@@ -169,7 +169,7 @@ class PaperSourceIdentity:
 
     def __post_init__(self) -> None:
         if self.source != "arxiv":
-            raise DomainInvariantError("M1 paper source identities must be arXiv identities")
+            raise DomainInvariantError("paper source identities must be versioned arXiv identities")
         if not self.external_id or not self.source_version or not self.source_url:
             raise DomainInvariantError("source identity metadata is incomplete")
         _require_aware(self.created_at, "created_at")

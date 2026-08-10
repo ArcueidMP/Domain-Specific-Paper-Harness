@@ -5,6 +5,7 @@ owner_email = "owner@example.com"
 # immutable image digests and an enabled DATABASE_URL secret version.
 deploy_runtime_resources = false
 deploy_analysis_resources = false
+attach_semantic_scholar_secret_to_daily = false
 
 # web_api_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/web-api@sha256:..."
 # daily_image   = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/daily@sha256:..."
@@ -16,3 +17,10 @@ deploy_analysis_resources = false
 # deploy_analysis_resources = true
 # grobid_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/grobid@sha256:..."
 # deepseek_secret_version = "1"
+
+# M3 Semantic Scholar access is separately opt-in and is attached only to the
+# Daily Job. Keep it disabled until an enabled key version exists. The selected
+# SPECTER2 Base artifact is baked into the production Daily image and does not
+# use this secret.
+# attach_semantic_scholar_secret_to_daily = true
+# semantic_scholar_secret_version = "1"

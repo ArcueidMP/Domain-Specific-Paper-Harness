@@ -4,16 +4,19 @@
 
 Domain-Specific Paper Harness is a private research-intelligence product for
 broad LLM-agent research. Daily discovery is arXiv-only. PostgreSQL stores
-canonical paper/version identities, parsed scientific text, structured analyses,
-claims, evidence, run items, and deterministic reports. FastAPI exposes
-read-oriented data and serves the compiled React application in production.
+canonical papers and versions, parsed scientific text, structured analyses and
+evidence, historical-paper stubs, scholarly-search provenance, comparisons,
+relations, run items, and deterministic reports. FastAPI exposes read-oriented
+data and serves the compiled React application in production.
 
 The Ports-and-Adapters modular monolith has three deployment units:
 
 1. `web-api` serves health checks, FastAPI under `/api/v1`, and the React build.
-2. `daily` runs explicit arXiv ingestion or structured analysis commands. The
-   current M2 command analyzes selected persisted paper UUIDs; it is not yet
-   automatically chained after discovery.
+   It is keyless with respect to DeepSeek and Semantic Scholar.
+2. `daily` runs explicit arXiv ingestion, structured analysis, six-month
+   historical backfill, related-work search, or paper-comparison commands. These
+   commands are protected operator operations and are not automatically chained
+   by FastAPI or an in-process scheduler.
 3. `grobid` is the sole scientific PDF parser for `FULL_TEXT` analysis. It is a
    separate IAM-authenticated Cloud Run service in the Terraform design and an
    opt-in hardened Compose service locally.
@@ -21,37 +24,53 @@ The Ports-and-Adapters modular monolith has three deployment units:
 All first-party Python units use CPython 3.13.13. GROBID is an isolated Java
 service. PostgreSQL 15 or newer with pgvector is the only persistence contract.
 
-## Dependency direction
+## Dependency direction and upstream reuse
 
 Dependencies point inward:
 
 ```text
-external API or database
+external API, model, parser, or database
         -> adapter
         -> port
         -> application use case
         -> domain
 ```
 
-The domain owns identities, scopes, state transitions, provenance fields, and
-invariants. It does not import FastAPI, SQLAlchemy, arxiv.py, DeepSeek, GROBID,
-PaperQA2, or Google Cloud code. Application use cases coordinate ports. Adapters
-translate arXiv, DeepSeek, GROBID/TEI, Cloud Run identity, and PostgreSQL
-boundaries. Entrypoints perform configuration and constructor wiring.
+The domain owns identities, scopes, state transitions, provenance fields,
+search limits, comparability, and invariants. It does not import FastAPI,
+SQLAlchemy, arxiv.py, DeepSeek, GROBID, Semantic Scholar, SPECTER2, PaperQA2,
+PaSa, Scholar QA, or Google Cloud code. Application use cases coordinate ports;
+entrypoints perform configuration and constructor wiring.
 
-PaperQA2 was audited at `v2026.03.18` and is not installed or copied. Its PyPDF
-parser, provider defaults, separate index and MD5 identities, JSON repair, and
-loss of GROBID provenance conflict with the architecture. Evidence grounding is
-therefore a project-owned deterministic function rather than an external engine.
+Upstream reuse remains deliberately narrow:
 
-## Ingestion data flow
+- PaperQA2 `v2026.03.18` was rejected for code/package reuse in M2. Project-owned
+  section-aware evidence grounding preserves GROBID provenance.
+- PaSa commit `2aaa6a9b1e48d24a2b7e21e8551f863dad9eeb84` supplies only the
+  Crawler/Selector architectural idea. The implementation is first-party typed
+  application code; no PaSa source, prompt, checkpoint, training stack, or
+  independent database is copied or called.
+- Ai2 Scholar QA `0.8.13` at commit
+  `db1fdf3746d6ae338473f0176110082228ee8635` supplies only comparison-planning
+  and evidence-clustering concepts. Its provider, retriever, reranker, cache,
+  tracing, and synthesis code is not installed, vendored, or copied.
+- SPECTER2 Base supplies the selected v0.1 title-and-abstract embedding model.
+  The exact model and tokenizer revision is
+  `3447645e1def9117997203454fa4495937bfbd83`. The Daily production image
+  contains a hash-verified safetensors conversion and loads it offline; no
+  upstream Python source is copied.
+
+## Daily arXiv ingestion
 
 The Daily Job builds an arXiv query from `TopicConfig`, reads a persisted cursor
 with overlap, and requests metadata through `ArxivPort`. Normalization separates
 the stable canonical arXiv identity from its explicit version. External data is
-validated before a short transaction upserts papers, versions, source identities,
-authors, run items, and the next cursor. Unique constraints and a PostgreSQL
-advisory lock make a repeated logical window safe and idempotent.
+validated before a short transaction upserts papers, versions, source
+identities, authors, run items, and the next cursor. Unique constraints and a
+PostgreSQL advisory lock make a repeated logical window safe and idempotent.
+
+Semantic Scholar is not part of this flow. It cannot become a daily discovery
+provider.
 
 ## Structured-analysis data flow
 
@@ -69,87 +88,184 @@ selected version
   -> atomic deterministic report publication for COMPLETE or PARTIAL
 ```
 
-`FULL_TEXT` never downgrades after a PDF or parser failure. GROBID requests
-explicitly disable header, citation, and funder consolidation; the parser adapter
-retains ordered sections, passages, references, citation contexts, and optional
-page coordinates from TEI. PDF and TEI sizes, request time, retries, and total
-operation duration are bounded.
+`FULL_TEXT` never downgrades after a PDF or parser failure. DeepSeek is fixed to
+`deepseek-v4-flash`, reasoning output is disabled, and malformed or
+schema-invalid content is rejected rather than repaired. Stable IDs and
+composite constraints prevent claims or evidence from crossing paper, version,
+or analysis ownership.
 
-DeepSeek is fixed to `deepseek-v4-flash`. The adapter disables reasoning output,
-requests one JSON object, rejects extra analysis fields, validates the response
-envelope and token usage, and records provider, configured model, returned model
-version, prompt version, generation time, duration, token counts, and estimated
-cost. It never repairs malformed JSON or retries schema-invalid output.
+## Historical backfill
 
-Model evidence must reference a known passage and its excerpt must be an exact
-substring of that passage. Stable IDs and composite database constraints prevent
-claims or evidence from crossing paper, version, or analysis ownership. The
-analysis, claims, evidence, and link rows commit or roll back together.
+The explicit historical operation computes one inclusive six-month window and
+derives a bounded query plan from the topic's include terms:
+
+```text
+TopicConfig + through date
+  -> persisted query plan and RUNNING backfill row
+  -> authenticated Semantic Scholar search, one bounded query page at a time
+  -> date, topic-relevance, and exclusion filtering
+  -> stable external identities and bibliographic/arXiv availability stubs
+  -> pinned SPECTER2 Base CLS embeddings for title + abstract
+  -> atomic page persistence and next-query index
+  -> deterministic representative selection within the same window
+  -> COMPLETE backfill row
+```
+
+Only stubs with an arXiv identity are marked full-text-available. Non-arXiv
+results remain bibliographic/abstract stubs and cannot enter PDF analysis.
+Identity prefers canonical arXiv identity where present and retains Semantic
+Scholar and supplied external identifiers as aliases.
+
+A process interruption that leaves the row `RUNNING` resumes at its persisted
+next-query index only when query plan, result bound, timeout, and the complete
+embedding contract still match. That contract includes model and tokenizer
+identifiers/revisions, dimension, preprocessing, model provenance, and source.
+`COMPLETE` is idempotent after the same provenance check. A caught error marks
+the row `FAILED`; a later explicit invocation with identical configuration
+moves that same row back to `RUNNING` and resumes from the last committed query
+boundary.
+
+## PaSa-derived related-work search
+
+Related-work search requires a persisted source-paper analysis and records one
+analysis-pinned, version-pinned, year-bounded session:
+
+```text
+source paper version + analysis + objective
+  -> local lexical and SPECTER2 vector retrieval
+  -> explicit arXiv-to-Semantic-Scholar source identity action
+  -> strict DeepSeek Crawler plan persisted with queries, expansion choices,
+     decision reason, model identity, and usage
+  -> bounded Semantic Scholar search/recommendation/citation expansion
+  -> persisted action and candidate-discovery provenance
+  -> deterministic component scores and bounded candidate ranking
+  -> strict DeepSeek Selector decision
+  -> persisted COMPLETE or FAILED session with stop reason and model usage
+```
+
+The Crawler/Selector receives no shell, filesystem, arbitrary HTTP, or code
+execution. Its scholarly boundary is limited to approved paper search,
+metadata, references, citations, recommendations, and arXiv-paper reading
+operations. Search records every action, requested/result count, depth,
+duration, terminal error, candidate origin, and decision. `max_steps`,
+`max_queries`, `max_queue_size`, `max_citation_depth`, `max_candidates`,
+`max_selected_candidates`, per-operation timeout, and overall timeout are
+validated and persisted. Semantic Scholar calls share the smaller of the
+per-operation timeout and remaining overall deadline across rate-limit waits,
+retries, pages, and response reads.
+
+Lexical and vector retrieval are a bounded union over the persisted corpus;
+Semantic Scholar rank, lexical similarity, cosine similarity, citation
+discovery, and recommendation discovery remain inspectable components rather
+than an opaque score. References and citations retain their discovery-action
+provenance. An overall deadline yields an explicit `OVERALL_TIMEOUT` terminal
+stop; provider, schema, invariant, or persistence failure yields `FAILED`.
+
+The v0.1 encoder is `allenai/specter2_base` without an adapter. It tokenizes
+whitespace-normalized title + tokenizer separator token + abstract with
+padding/truncation to 512 tokens and no token-type IDs, then persists the
+unnormalized final-layer CLS vector. Runtime loading is safetensors-only,
+`trust_remote_code=False`, local-only, and offline. There is no random,
+commercial, adapter, generic, or keyword-only embedding fallback.
+
+## Evidence-linked comparison
+
+Comparison accepts only a completed search session and a target that the
+session selected and linked to a local historical paper version. The session
+pins the source analysis ID/scope; the comparison pins both source and target
+analysis IDs/scopes. DeepSeek returns the fixed comparison dimensions, an
+explicit comparability status and reason, concise summary, evidence UUIDs, and
+optional inferred relations. The adapter rejects unknown or wrong-analysis
+evidence, duplicate relation types, unsupported schemas, and an `IMPROVES_ON`
+claim unless the result is directly comparable and has bilateral evidence.
+
+Comparison, ordered dimensions, evidence links, and `LLM_INFERRED` relations
+commit atomically with model, prompt, usage, verification, and version
+provenance. Relation `confidence` is an uncalibrated model-assessed measure of
+how strongly the cited evidence supports that relation. It is constrained to
+`[0, 1]`, but it is not a probability, accuracy estimate, human confidence, or
+verification. The UI must label it accordingly and display `UNVERIFIED`
+separately.
 
 ## Read API and product UI
 
-FastAPI reads through `RepositoryPort`. Its OpenAPI document is the sole frontend
-contract. M2 adds:
+FastAPI reads through `RepositoryPort`; OpenAPI is the sole frontend contract.
+M3 extends the existing API with:
 
-- `GET /api/v1/papers/{paper_id}`;
-- `GET /api/v1/papers/{paper_id}/analysis`, optionally filtered by version/scope;
-- `GET /api/v1/papers/{paper_id}/evidence`, optionally filtered by version/scope;
-- `GET /api/v1/runs`; and
-- `GET /api/v1/runs/latest`, including run items and an optional deterministic
-  report with visible failures.
+- `GET /api/v1/papers/{paper_id}/related`, optionally pinned to a paper version;
+  and
+- `GET /api/v1/comparisons/{comparison_id}`.
 
-The React product provides dashboard, paper list/detail, structured-analysis,
-provenance, and evidence views. Latest-run UI distinguishes `PARTIAL`, lists each
-failed stage and stable error code, and links failures back to paper details.
-The API still has no execution endpoint and never migrates on startup.
+The related-work projection exposes the owning session, explicit bounds and stop
+reason, model usage, actions, candidate scores and decisions, each discovery's
+action linkage, and comparison summaries. The comparison projection exposes
+both exact paper versions, comparability, the ordered matrix, evidence excerpts,
+relations, provenance, usage, and verification state. React adds paper-detail
+related-work inspection and a comparison route. The API remains read-only: it
+has no public execution endpoint and never migrates on startup.
 
-## Persistence and publication
+## Persistence and transactions
 
-Migration `0002_m2_structured_analysis` adds parsed papers/sections/passages,
-references, citation contexts, paper analyses, claims, evidence, evidence-claim
-links, reports, and report failures. It also extends run counters and supports
-separate ingestion and analysis operations for one logical date.
+Migration `0002_m2_structured_analysis` owns parsed papers, analyses, evidence,
+reports, and failures. The current M3 migration
+`0003_m3_pasa_semantic_scholar` adds normalized external stubs and identifiers,
+backfill runs and corpus entries, search sessions/actions/candidates/discoveries,
+768-dimensional pgvector embeddings with complete model/tokenizer/preprocessing
+provenance, comparisons/dimensions/evidence links, and paper
+relations/relation-evidence links.
 
-External work completes before each short database transaction. Parsed-paper
-persistence advances only the matching run item. The complete analysis bundle
-and its terminal evidence stage commit atomically. Finalization locks the run,
-requires every selected item to be terminal, derives `COMPLETE`, `PARTIAL`, or
-`FAILED`, and publishes a report in the same transaction only for `COMPLETE` or
-`PARTIAL`.
+External calls occur outside short write transactions. Backfill pages advance
+their cursor only with the page's validated records. Search actions and
+candidate provenance preserve their owning session. Comparison ownership
+constraints prevent a relation or evidence link from crossing its two paper
+versions. A failed comparison write rolls the complete bundle back.
 
 ## Runtime and deployment
 
 Local Compose provides PostgreSQL plus optional Web/API, Daily, and GROBID
-profiles. The GROBID wrapper pins
-`grobid/grobid:0.9.0-crf@sha256:24ba90eb1c959f65d812bcdb2cf79c677fa5fd7b95235de616b8bc9fa1317849`.
-Its local service uses the official health endpoint, a read-only root filesystem,
-writable tmpfs paths, zero core-dump ulimit, dropped capabilities,
-no-new-privileges, and bounded CPU, memory, and process count.
+profiles. Terraform remains gated:
 
-Terraform remains gated:
-
-- the foundation creates required APIs, Artifact Registry, service accounts, and
-  empty Secret Manager resources;
+- the foundation creates required APIs, Artifact Registry, service accounts,
+  and empty Secret Manager resources;
 - `deploy_runtime_resources=true` requires immutable Web/API and Daily images
-  plus a fixed `DATABASE_URL` secret version; and
+  plus a fixed `DATABASE_URL` secret version;
 - `deploy_analysis_resources=true` additionally requires the runtime gate, an
-  immutable mirrored GROBID wrapper image, and a fixed DeepSeek secret version.
+  immutable mirrored GROBID wrapper image, and a fixed DeepSeek secret version;
+  and
+- M3 Semantic Scholar attachment is separately gated by a fixed secret version
+  and grants access only to the Daily service account.
 
-The Web/API service uses direct Cloud Run IAP. GROBID uses IAM invocation checks,
-minimum instances zero, maximum one, concurrency one, and grants `run.invoker`
-only to the Daily service account. Daily obtains an ephemeral metadata-server ID
-token whose audience is the GROBID service URL. No `allUsers`, VPC connector,
-Cloud NAT, load balancer, or other fixed-cost networking resource is configured.
+The Web/API service uses direct Cloud Run IAP. GROBID uses IAM invocation with
+only the Daily service account as invoker. Semantic Scholar and DeepSeek secrets
+are not injected into Web/API. No `allUsers`, VPC connector, Cloud NAT, load
+balancer, or other fixed-cost networking resource is configured.
 
-These production resources have not been applied. The current external blockers
-are Google API TCP connectivity and owner-supplied production PostgreSQL and
-DeepSeek secret versions.
+The Daily Dockerfile keeps its default CI target model-free. Deployment selects
+an explicit production target that installs only the Daily embedding extra,
+verifies and converts the pinned Base weights at build time, and copies the
+prepared artifact into `/opt/models/specter2_base`. The runtime forces Hugging
+Face and Transformers offline modes, so each Job does not redownload weights.
+
+The proximity adapter is not part of v0.1. Adapters 1.3.0 requires Transformers
+4.57.x, below the project's patched Transformers 5.3+ security floor. Adopting
+the adapter later is a future explicit architecture decision after upstream
+compatibility exists. No production resource has been applied; production
+database/secret prerequisites and Google API connectivity remain independent
+deployment blockers.
 
 ## Verification
 
-`scripts/verify.ps1` is the canonical Windows entrypoint. It verifies exact
-Python, frozen dependency sets, backend/frontend quality gates, OpenAPI-generated
-contract drift, Compose, Terraform, clean and M1-to-M2 database upgrades,
-repository integration tests, credential-free browser tests, and focused Web/API,
-Daily, and pinned GROBID wrapper image builds. The default suite does not start
-GROBID or call live external providers.
+`scripts/verify.ps1` is the canonical Windows entrypoint. The current M3
+worktree passes its credential-free gate: exact Python, frozen dependency sets,
+backend/frontend quality checks, generated-contract drift, Compose, Terraform,
+clean sequential Alembic upgrades, PostgreSQL/pgvector repository tests,
+credential-free browser tests, and all three focused image builds.
+
+Default verification never calls Semantic Scholar. The live adapter smoke is
+explicitly opt-in with `RUN_LIVE_SEMANTIC_SCHOLAR_TEST=1`; selecting it without
+`SEMANTIC_SCHOLAR_API_KEY` fails clearly, while leaving both unset results in an
+expected skip. The explicit SPECTER2 Base smoke has passed on CPython 3.13.13
+and Transformers 5.3.0 with finite, repeat-stable 768-dimensional output plus
+real pgvector persistence and retrieval. The model-bearing production image has
+also built and loaded the artifact offline; normal verification never downloads
+model weights.

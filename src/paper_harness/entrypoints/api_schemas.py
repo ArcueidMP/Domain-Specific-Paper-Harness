@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,6 +14,18 @@ from paper_harness.domain.analysis import (
     ClaimType,
     EvidenceType,
     VerificationStatus,
+)
+from paper_harness.domain.historical import (
+    CandidateOrigin,
+    ComparabilityStatus,
+    ComparisonDimensionName,
+    PaperRelationType,
+    RelationProvenance,
+    SearchActionStatus,
+    SearchSessionStatus,
+    SearchStopReason,
+    SearchTool,
+    SelectionDecision,
 )
 from paper_harness.domain.models import PaperStage, RunItemStatus, RunOperation, RunStatus
 
@@ -281,3 +293,242 @@ class EvidenceResponse(ApiModel):
 class EvidenceListResponse(ApiModel):
     items: list[EvidenceResponse]
     total: int = Field(ge=0)
+
+
+class SearchLimitsResponse(ApiModel):
+    max_steps: int = Field(ge=1, le=100)
+    max_queries: int = Field(ge=1, le=40)
+    max_queue_size: int = Field(ge=1, le=2000)
+    max_citation_depth: int = Field(ge=0, le=5)
+    max_candidates: int = Field(ge=1, le=5000)
+    max_selected_candidates: int = Field(ge=1, le=100)
+    per_operation_timeout_seconds: float = Field(ge=1, le=600)
+    overall_timeout_seconds: float = Field(ge=1, le=3600)
+
+
+class SearchSessionResponse(ApiModel):
+    id: UUID
+    topic_id: UUID
+    source_paper_id: UUID
+    source_paper_version_id: UUID
+    source_analysis_id: UUID
+    source_analysis_scope: AnalysisScope
+    requested_year_from: int = Field(ge=1000, le=9999)
+    effective_year_to: int = Field(ge=1000, le=9999)
+    objective: str
+    crawler_queries: list[str] | None
+    crawler_use_recommendations: bool | None
+    crawler_expand_references: bool | None
+    crawler_expand_citations: bool | None
+    crawler_decision_reason: str | None
+    crawler_generated_at: datetime | None
+    status: SearchSessionStatus
+    limits: SearchLimitsResponse
+    started_at: datetime
+    completed_at: datetime | None
+    stop_reason: SearchStopReason | None
+    error_code: str | None
+    error_detail: str | None
+    provider: str | None
+    configured_model: str | None
+    model_version: str | None
+    prompt_version: str | None
+    usage: ModelUsageResponse | None
+    schema_version: int = Field(ge=1)
+    created_at: datetime
+
+
+class SearchActionResponse(ApiModel):
+    id: UUID
+    session_id: UUID
+    step: int = Field(ge=1)
+    tool: SearchTool
+    status: SearchActionStatus
+    query: str | None
+    target_semantic_scholar_id: str | None
+    target_arxiv_id: str | None
+    positive_paper_ids: list[str]
+    year_from: Annotated[int | None, Field(ge=1000, le=9999)]
+    year_to: Annotated[int | None, Field(ge=1000, le=9999)]
+    requested_limit: int = Field(ge=1, le=1000)
+    result_count: int = Field(ge=0)
+    relation_depth: int = Field(ge=0, le=5)
+    decision_reason: str
+    error_code: str | None
+    retryable: bool | None
+    error_detail: str | None
+    duration_ms: int = Field(ge=0, le=600_000)
+    created_at: datetime
+    completed_at: datetime | None
+    schema_version: int = Field(ge=1)
+
+
+class CandidateScoreComponentsResponse(ApiModel):
+    semantic_scholar: float = Field(ge=0, le=1)
+    lexical: float = Field(ge=0, le=1)
+    vector: float = Field(ge=0, le=1)
+    entity_overlap: float = Field(ge=0, le=1)
+    citation: float = Field(ge=0, le=1)
+    recommendation: float = Field(ge=0, le=1)
+    final: float = Field(ge=0, le=1)
+
+
+class SearchCandidateResponse(ApiModel):
+    id: UUID
+    session_id: UUID
+    external_paper_id: UUID
+    semantic_scholar_id: str
+    local_paper_id: UUID | None
+    local_paper_version_id: UUID | None
+    discovered_by_action_id: UUID | None
+    origins: list[CandidateOrigin]
+    relation_depth: int = Field(ge=0, le=5)
+    scores: CandidateScoreComponentsResponse
+    rank: int = Field(ge=1)
+    decision: SelectionDecision
+    decision_reason: str
+    provider: str | None
+    configured_model: str | None
+    model_version: str | None
+    prompt_version: str | None
+    generated_at: datetime | None
+    verification_status: VerificationStatus
+    schema_version: int = Field(ge=1)
+    created_at: datetime
+
+
+class CandidateDiscoveryResponse(ApiModel):
+    id: UUID
+    candidate_id: UUID
+    action_id: UUID | None
+    origin: CandidateOrigin
+    relation_depth: int = Field(ge=0, le=5)
+    discovered_at: datetime
+
+
+class ExternalPaperResponse(ApiModel):
+    id: UUID
+    semantic_scholar_id: str
+    title: str
+    abstract: str | None
+    year: Annotated[int | None, Field(ge=1000, le=9999)]
+    publication_date: date | None
+    venue: str | None
+    authors: list[str]
+    external_ids: dict[str, str]
+    arxiv_id: str | None
+    doi: str | None
+    citation_count: int = Field(ge=0)
+    influential_citation_count: int = Field(ge=0)
+    full_text_available: bool
+    source: Literal["semantic_scholar"]
+    schema_version: int = Field(ge=1)
+    created_at: datetime
+    updated_at: datetime
+
+
+class PaperRelationResponse(ApiModel):
+    id: UUID
+    source_paper_id: UUID
+    source_paper_version_id: UUID
+    target_paper_id: UUID
+    target_paper_version_id: UUID
+    relation_type: PaperRelationType
+    provenance: RelationProvenance
+    evidence_ids: list[UUID]
+    justification: str
+    provider: str | None
+    model_version: str | None
+    prompt_version: str | None
+    confidence: Annotated[float | None, Field(ge=0, le=1)]
+    verification_status: VerificationStatus
+    generated_at: datetime
+    schema_version: int = Field(ge=1)
+    created_at: datetime
+
+
+class RelatedComparisonSummaryResponse(ApiModel):
+    id: UUID
+    target_paper_id: UUID
+    target_paper_version_id: UUID
+    target_analysis_id: UUID
+    target_analysis_scope: AnalysisScope
+    comparability_status: ComparabilityStatus
+    summary: str
+    provider: str
+    model_version: str
+    prompt_version: str
+    generated_at: datetime
+    verification_status: VerificationStatus
+
+
+class RelatedWorkItemResponse(ApiModel):
+    candidate: SearchCandidateResponse
+    paper: ExternalPaperResponse
+    discoveries: list[CandidateDiscoveryResponse]
+    relations: list[PaperRelationResponse]
+    comparison_id: UUID | None
+
+
+class RelatedWorkResponse(ApiModel):
+    paper_id: UUID
+    session: SearchSessionResponse | None
+    actions: list[SearchActionResponse]
+    items: list[RelatedWorkItemResponse]
+    comparisons: list[RelatedComparisonSummaryResponse]
+    total: int = Field(ge=0)
+
+
+class ComparisonDimensionResponse(ApiModel):
+    id: UUID
+    comparison_id: UUID
+    name: ComparisonDimensionName
+    position: int = Field(ge=0, le=13)
+    source_value: str
+    target_value: str
+    assessment: str
+    source_evidence_ids: list[UUID]
+    target_evidence_ids: list[UUID]
+    schema_version: int = Field(ge=1)
+    created_at: datetime
+
+
+class ComparisonEvidenceResponse(ApiModel):
+    id: UUID
+    analysis_id: UUID
+    paper_id: UUID
+    paper_version_id: UUID
+    analysis_scope: AnalysisScope
+    section: str
+    excerpt: str
+    evidence_type: EvidenceType
+    verification_status: VerificationStatus
+
+
+class ComparisonResponse(ApiModel):
+    id: UUID
+    search_session_id: UUID
+    source_paper_id: UUID
+    source_paper_version_id: UUID
+    source_analysis_id: UUID
+    source_analysis_scope: AnalysisScope
+    target_paper_id: UUID
+    target_paper_version_id: UUID
+    target_analysis_id: UUID
+    target_analysis_scope: AnalysisScope
+    comparability_status: ComparabilityStatus
+    comparability_reason: str
+    summary: str
+    dimensions: list[ComparisonDimensionResponse]
+    relations: list[PaperRelationResponse]
+    evidence: list[ComparisonEvidenceResponse]
+    provider: str
+    configured_model: str
+    model_version: str
+    prompt_version: str
+    generated_at: datetime
+    source: str
+    verification_status: VerificationStatus
+    usage: ModelUsageResponse
+    schema_version: int = Field(ge=1)
+    created_at: datetime

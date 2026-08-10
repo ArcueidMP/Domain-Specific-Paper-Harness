@@ -1,10 +1,12 @@
 import { queryOptions } from "@tanstack/react-query";
 
 import {
+  getComparison,
   getLatestRun,
   getPaper,
   getPaperAnalysis,
   getPaperEvidence,
+  getPaperRelatedWork,
   getPapers,
   getTopics,
 } from "./client";
@@ -42,6 +44,18 @@ export const paperEvidenceQuery = (
   queryOptions({
     queryKey: ["papers", paperId, "evidence", analysisId],
     queryFn: () => getPaperEvidence(paperId, analysisId, paperVersionId, scope),
+  });
+
+export const paperRelatedWorkQuery = (paperId: string, paperVersionId: string) =>
+  queryOptions({
+    queryKey: ["papers", paperId, "related", paperVersionId],
+    queryFn: () => getPaperRelatedWork(paperId, paperVersionId),
+  });
+
+export const comparisonQuery = (comparisonId: string) =>
+  queryOptions({
+    queryKey: ["comparisons", comparisonId],
+    queryFn: () => getComparison(comparisonId),
   });
 
 export const latestRunQuery = () =>

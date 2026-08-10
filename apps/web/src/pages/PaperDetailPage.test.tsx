@@ -10,6 +10,7 @@ const paperVersionId = "465c74ac-bdf8-42e2-8652-7fec30fce680";
 const parsedPaperId = "703fc4bd-3ff6-4c83-b8eb-cddda2e346b4";
 const analysisId = "8b28f2c7-f706-40e8-a0dc-696001298cab";
 const claimId = "c234ea44-3a86-44ce-a334-ccf45b1da322";
+const comparisonId = "638a6949-a4df-4ef9-b195-25309f576acd";
 
 const paper = {
   id: paperId,
@@ -139,7 +140,9 @@ function renderPage() {
   );
 }
 
-function installFixtures(options: { analysis?: Response; evidence?: Response } = {}) {
+function installFixtures(
+  options: { analysis?: Response; evidence?: Response; related?: Response } = {},
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn((input: RequestInfo | URL) => {
@@ -149,6 +152,19 @@ function installFixtures(options: { analysis?: Response; evidence?: Response } =
       }
       if (path === `/api/v1/papers/${paperId}/evidence`) {
         return Promise.resolve(options.evidence ?? jsonResponse(evidence));
+      }
+      if (path === `/api/v1/papers/${paperId}/related`) {
+        return Promise.resolve(
+          options.related ??
+            jsonResponse({
+              paper_id: paperId,
+              session: null,
+              actions: [],
+              items: [],
+              comparisons: [],
+              total: 0,
+            }),
+        );
       }
       if (path === `/api/v1/papers/${paperId}`) {
         return Promise.resolve(jsonResponse(paper));
@@ -189,6 +205,7 @@ describe("PaperDetailPage", () => {
     expect(evidenceUrl.searchParams.get("analysis_id")).toBe(analysisId);
     expect(evidenceUrl.searchParams.get("paper_version_id")).toBe(paperVersionId);
     expect(evidenceUrl.searchParams.get("scope")).toBe("FULL_TEXT");
+    expect(requestedUrl("/related").searchParams.get("paper_version_id")).toBe(paperVersionId);
     expect(screen.getByText("p. 4")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /claim-memory-verification/ })).toHaveAttribute(
       "href",
@@ -254,5 +271,232 @@ describe("PaperDetailPage", () => {
     expect(screen.getByText(/Analysis storage is unavailable/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
     expect(screen.queryByText("Analysis not available")).not.toBeInTheDocument();
+  });
+
+  it("shows bounded related-work decisions, component scores, and comparison links", async () => {
+    installFixtures({
+      related: jsonResponse({
+        paper_id: paperId,
+        session: {
+          id: "741e66ad-c55f-4b15-a847-0fd81e13a87a",
+          topic_id: "155d96bf-c1d8-4f1f-a33b-4369390b63a5",
+          source_paper_id: paperId,
+          source_paper_version_id: paperVersionId,
+          source_analysis_id: "8b28f2c7-f706-40e8-a0dc-696001298cab",
+          source_analysis_scope: "FULL_TEXT",
+          requested_year_from: 2025,
+          effective_year_to: 2026,
+          objective: "Find historical work on verifiable agent memory.",
+          crawler_queries: ["verifiable agent memory", "agent memory benchmarks"],
+          crawler_use_recommendations: true,
+          crawler_expand_references: true,
+          crawler_expand_citations: false,
+          crawler_decision_reason: "Use bounded search and reference expansion.",
+          crawler_generated_at: "2026-08-08T05:11:05Z",
+          status: "COMPLETE",
+          limits: {
+            max_steps: 8,
+            max_queries: 3,
+            max_queue_size: 50,
+            max_citation_depth: 2,
+            max_candidates: 20,
+            max_selected_candidates: 5,
+            per_operation_timeout_seconds: 30,
+            overall_timeout_seconds: 180,
+          },
+          started_at: "2026-08-08T05:11:00Z",
+          completed_at: "2026-08-08T05:12:00Z",
+          stop_reason: "QUEUE_EXHAUSTED",
+          error_code: null,
+          error_detail: null,
+          provider: "deepseek",
+          configured_model: "deepseek-v4-flash",
+          model_version: "deepseek-v4-flash-2026-08",
+          prompt_version: "m3-crawler-v1+m3-selector-v1",
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            call_count: 2,
+            duration_ms: 400,
+            estimated_cost_usd: null,
+          },
+          schema_version: 1,
+          created_at: "2026-08-08T05:11:00Z",
+        },
+        actions: [
+          {
+            id: "48eb7e28-ecea-431d-a4b1-1b95129e4893",
+            session_id: "741e66ad-c55f-4b15-a847-0fd81e13a87a",
+            step: 1,
+            tool: "search_papers",
+            status: "COMPLETED",
+            query: "verifiable agent memory",
+            target_semantic_scholar_id: null,
+            target_arxiv_id: null,
+            positive_paper_ids: [],
+            year_from: 2025,
+            year_to: 2026,
+            requested_limit: 10,
+            result_count: 1,
+            relation_depth: 0,
+            decision_reason: "Initial bounded scholarly query.",
+            error_code: null,
+            retryable: null,
+            error_detail: null,
+            duration_ms: 120,
+            created_at: "2026-08-08T05:11:00Z",
+            completed_at: "2026-08-08T05:11:01Z",
+            schema_version: 1,
+          },
+        ],
+        items: [
+          {
+            candidate: {
+              id: "23f30c47-1f68-48c1-af4b-d88504f638ed",
+              session_id: "741e66ad-c55f-4b15-a847-0fd81e13a87a",
+              external_paper_id: "e004da65-339d-43ea-a490-66c2447b4089",
+              semantic_scholar_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              local_paper_id: "b431af71-5ea9-4903-a3ff-f611bdc50f32",
+              local_paper_version_id: "55e69ff3-643b-4699-9699-235b29bc71a1",
+              discovered_by_action_id: "48eb7e28-ecea-431d-a4b1-1b95129e4893",
+              origins: ["SEARCH", "LOCAL_VECTOR"],
+              relation_depth: 0,
+              scores: {
+                semantic_scholar: 0.8,
+                lexical: 0.7,
+                vector: 0.9,
+                entity_overlap: 0.6,
+                citation: 0.4,
+                recommendation: 0.2,
+                final: 0.78,
+              },
+              rank: 1,
+              decision: "SELECTED",
+              decision_reason: "High semantic overlap and matching evaluation task.",
+              provider: "deepseek",
+              configured_model: "deepseek-v4-flash",
+              model_version: "deepseek-v4-flash-2026-08",
+              prompt_version: "m3-selector-v1",
+              generated_at: "2026-08-08T05:12:00Z",
+              verification_status: "UNVERIFIED",
+              schema_version: 1,
+              created_at: "2026-08-08T05:11:00Z",
+            },
+            paper: {
+              id: "e004da65-339d-43ea-a490-66c2447b4089",
+              semantic_scholar_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              title: "Historical Memory Checks for Tool-Using Agents",
+              abstract: "A historical evaluation of memory validation in language-model agents.",
+              year: 2025,
+              publication_date: "2025-09-01",
+              venue: "AgentBench Workshop",
+              authors: ["Grace Scientist"],
+              external_ids: { ArXiv: "2509.00001", DOI: "10.1000/agent.1" },
+              arxiv_id: "2509.00001",
+              doi: "10.1000/agent.1",
+              citation_count: 12,
+              influential_citation_count: 3,
+              full_text_available: true,
+              source: "semantic_scholar",
+              schema_version: 1,
+              created_at: "2026-08-08T05:11:00Z",
+              updated_at: "2026-08-08T05:12:00Z",
+            },
+            discoveries: [
+              {
+                id: "57ba2a03-c303-455e-8978-0ee86df4a780",
+                candidate_id: "23f30c47-1f68-48c1-af4b-d88504f638ed",
+                action_id: "48eb7e28-ecea-431d-a4b1-1b95129e4893",
+                origin: "SEARCH",
+                relation_depth: 0,
+                discovered_at: "2026-08-08T05:11:01Z",
+              },
+            ],
+            relations: [
+              {
+                id: "ee9a1044-fb97-4df6-b959-1b6a507ac558",
+                source_paper_id: paperId,
+                source_paper_version_id: paperVersionId,
+                target_paper_id: "b431af71-5ea9-4903-a3ff-f611bdc50f32",
+                target_paper_version_id: "55e69ff3-643b-4699-9699-235b29bc71a1",
+                relation_type: "EXTENDS",
+                provenance: "LLM_INFERRED",
+                evidence_ids: ["aaec48b6-0ce0-43f1-95e7-1954129d79ca"],
+                justification: "The new method extends the historical memory check.",
+                provider: "deepseek",
+                model_version: "deepseek-v4-flash-2026-08",
+                prompt_version: "m3-comparison-v1",
+                confidence: 0.72,
+                verification_status: "UNVERIFIED",
+                generated_at: "2026-08-08T05:12:00Z",
+                schema_version: 1,
+                created_at: "2026-08-08T05:12:00Z",
+              },
+            ],
+            comparison_id: comparisonId,
+          },
+        ],
+        comparisons: [],
+        total: 1,
+      }),
+    });
+
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Related work" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Historical Memory Checks for Tool-Using Agents" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("queue exhausted")).toBeInTheDocument();
+    expect(screen.getByText("Use bounded search and reference expansion.")).toBeInTheDocument();
+    expect(screen.getAllByText("verifiable agent memory")).toHaveLength(2);
+    expect(screen.getByText("agent memory benchmarks")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Recommendations enabled; references enabled; citations disabled/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("78%")).toBeInTheDocument();
+    expect(screen.getByText("High semantic overlap and matching evaluation task.")).toBeInTheDocument();
+    expect(screen.getByText(/AI-guided selector/)).toBeInTheDocument();
+    expect(screen.getByText(/AI-inferred/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Step 1: search papers/ })).toHaveAttribute(
+      "href",
+      "#search-action-48eb7e28-ecea-431d-a4b1-1b95129e4893",
+    );
+    expect(screen.getByText(/Depth 0 · discovered/)).toBeInTheDocument();
+    expect(screen.getByText(/uncalibrated model-assessed evidential confidence/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open structured comparison" })).toHaveAttribute(
+      "href",
+      `/comparisons/${comparisonId}`,
+    );
+  });
+
+  it("keeps an existing paper distinct from a missing related-work session", async () => {
+    installFixtures();
+
+    renderPage();
+
+    expect(await screen.findByText("Related work not available")).toBeInTheDocument();
+    expect(screen.getByText(/No alternate provider or synthetic recommendations/)).toBeInTheDocument();
+  });
+
+  it("shows related-work storage failures as errors rather than empty data", async () => {
+    installFixtures({
+      related: jsonResponse(
+        {
+          detail: {
+            code: "DATABASE_UNAVAILABLE",
+            message: "Related-work storage is unavailable.",
+          },
+        },
+        503,
+      ),
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("Unable to load related work")).toBeInTheDocument();
+    expect(screen.getByText(/Related-work storage is unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText("Related work not available")).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,6 @@
 .git
 .github
+.gitignore
 .terraform
 **/.terraform
 *.tfstate
@@ -11,6 +12,7 @@
 .env.*
 !.env.example
 .venv
+.uv-cache
 **/__pycache__
 **/*.pyc
 .pytest_cache

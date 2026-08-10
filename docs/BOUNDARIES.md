@@ -11,73 +11,123 @@ LLM-agent component.
 
 ## Source boundaries
 
-- Daily discovery uses arXiv only.
+- Daily discovery uses arXiv only. Semantic Scholar never becomes a daily feed
+  or substitute discovery source.
 - arXiv metadata and PDF URLs enter through `ArxivPort`; application code owns
   query construction, overlap, cursor state, version identity, and persistence.
 - Only an arXiv-hosted PDF attached to an explicitly selected stored version may
   enter `FULL_TEXT` analysis.
-- Semantic Scholar and PaSa-derived historical search begin in M3 and cannot
-  become daily discovery providers.
+- Historical and related-work metadata may come only from authenticated Semantic
+  Scholar, the persisted local corpus, and the approved PaSa-derived workflow.
+- Non-arXiv Semantic Scholar results are bibliographic/abstract stubs with
+  `full_text_available=false`. They cannot enter full-text analysis.
 - Publisher scraping, paywall bypass, publisher PDF download, arbitrary web
-  search, and hidden metadata providers are prohibited.
+  search, Google/Serper/Scholar discovery, Crossref/OpenAlex substitution, and
+  hidden metadata providers are prohibited.
+
+## Historical-search tool boundary
+
+The PaSa-derived Crawler/Selector is first-party application code. It may use
+only the declared scholarly operations for paper search, one-paper metadata,
+references, citations, recommendations, and arXiv-paper reading. It receives no
+generic browser, arbitrary URL fetch, shell, filesystem write, code execution,
+database query, or provider-registry access.
+
+Every search session persists its exact source paper/version/analysis/scope,
+effective year window, objective, limits, actions, candidate discoveries, score
+components, decisions, stop reason, and model provenance. The effective
+candidate set cannot exceed the validated selector bound. Per-operation and
+overall deadlines, query count, action count, queue size, citation depth,
+candidate count, and selected count are explicit; the model cannot raise or
+bypass them.
+
+PaSa itself is not a runtime dependency. No upstream PaSa prompts, source,
+checkpoints, custom Transformers fork, training/PPO code, Google/Serper search,
+ar5iv reader, or independent paper database is installed or copied.
 
 ## Analysis-scope boundary
 
 `FULL_TEXT` and `ABSTRACT_ONLY` are explicit pre-execution modes. The selected
 scope is persisted on the structured-analysis run and each successful analysis,
-and participates in the analysis's stable identity.
-Abstract-only mode uses only the stored arXiv abstract and never downloads or
-parses a PDF. Full-text mode requires GROBID; download or parser failure is an
-item failure and never triggers abstract-only analysis.
+and participates in the analysis's stable identity. Abstract-only mode uses only
+the stored arXiv abstract. Full-text mode requires GROBID; download or parser
+failure is an item failure and never triggers abstract-only analysis.
 
-The user selects persisted paper UUIDs. M2 does not silently select every paper,
-exceed the configured representative-paper bound, or accept a stale version when
-the current explicit version was requested.
+Historical backfill selects representative arXiv stubs for later processing; it
+does not silently download or analyze them. Related-work comparison requires
+both exact local paper versions to have persisted analyses and evidence.
 
-## Model and parser boundaries
+## Model, parser, and embedding boundaries
 
-- DeepSeek `deepseek-v4-flash` is the sole M2 LLM provider and model.
-- The analysis call receives bounded paper passages but no shell, filesystem
-  write, arbitrary network, code execution, or other tool access.
-- DeepSeek output must be one schema-valid JSON object. Empty, malformed,
-  schema-invalid, domain-invalid, ungrounded, or usage-inconsistent output fails;
-  it is not repaired, coerced, retried for content, or sent to another model.
+- DeepSeek `deepseek-v4-flash` is the sole LLM provider/model for structured
+  analysis, Crawler planning, candidate selection, and comparison.
+- Model calls receive bounded structured inputs and no hidden tools. Empty,
+  malformed, schema-invalid, domain-invalid, ungrounded, or usage-inconsistent
+  output fails. It is not repaired, coerced, retried for content, or routed to
+  another model.
 - GROBID 0.9.0 CRF is the sole scientific parser. Requests explicitly disable
-  Crossref/biblio-glutton consolidation and retain TEI source structure.
-- The GROBID adapter accepts bounded PDF input and bounded namespaced TEI output.
-  A non-200 response, empty extraction, malformed XML, unsafe declaration,
-  invalid coordinate, duplicate identity, or unresolved citation target is
-  explicit parser failure. No alternate parser exists.
+  Crossref/biblio-glutton consolidation. No alternate PDF parser exists.
+- SPECTER2 Base is the only approved v0.1 paper embedding model. The contract
+  pins model and tokenizer revision
+  `3447645e1def9117997203454fa4495937bfbd83`, title/separator/abstract
+  preprocessing, a 512-token bound, unnormalized final-layer CLS pooling, and
+  768 dimensions.
+- The production loader requires a hash-verified safetensors artifact prepared
+  with Transformers 5.3.0, CPU PyTorch 2.13.0, `trust_remote_code=False`, and
+  `weights_only=True`. Runtime is local-only and offline. It does not download
+  weights per Job, load pickle weights, downgrade Python, or substitute a
+  generic/commercial/alternate embedding provider or adapter.
+- The proximity adapter is explicitly rejected for v0.1 because Adapters 1.3.0
+  requires Transformers 4.57.x, below the patched Transformers 5.3+ security
+  floor. Any future adapter adoption requires a new architecture decision after
+  upstream compatibility exists; it is not a fallback path.
 
-PaperQA2 was reviewed at an exact version and commit but is not installed,
-vendored, or called. Project-owned deterministic grounding preserves GROBID
-section, passage, and coordinate provenance without PaperQA2's parser, providers,
-index, or malformed-JSON repair behavior.
+PaperQA2 and Ai2 Scholar QA were reviewed at exact revisions but are not
+installed, vendored, copied, or called. M2 evidence grounding and M3 comparison
+planning are project-owned typed code over persisted GROBID/analysis evidence.
 
-## Runtime boundaries
+## Relation and confidence boundary
+
+Every relation identifies exact source and target paper versions, a provenance
+class, supporting evidence where required, verification state, and generation
+metadata. `LLM_INFERRED` relations require evidence UUIDs, DeepSeek model/prompt
+provenance, and a finite `confidence` score in `[0, 1]`.
+
+That score means only uncalibrated model-assessed evidential support: how
+strongly the cited evidence appears to support the proposed relation. It is not
+a probability that the relation is true, an accuracy estimate, a human review
+score, or a verification result. The product must label it separately from
+`UNVERIFIED`, `HUMAN_VERIFIED`, or `REJECTED` status and must never render it as
+certainty.
+
+## Runtime and secret boundaries
 
 - FastAPI is read-oriented. It does not schedule work, perform migrations, load
-  analysis secrets, or expose a public execution endpoint.
-- Manual work enters through the project CLI, `scripts/run-daily.ps1`,
-  `paper-harness-daily`, or `gcloud run jobs execute`.
+  DeepSeek/Semantic Scholar secrets, or expose a public execution endpoint.
+- Manual work enters through the project CLI, `scripts/run-daily.ps1`, the Daily
+  entrypoint, or `gcloud run jobs execute`.
 - The browser calls only Web/API and never receives database credentials,
-  DeepSeek secrets, GROBID identity tokens, or service-role credentials.
+  DeepSeek or Semantic Scholar keys, GROBID identity tokens, or service-role
+  credentials.
+- Web/API starts and serves stored data without `SEMANTIC_SCHOLAR_API_KEY`.
+  Historical backfill and related-work search validate it only when selected.
 - Web/API and Daily share PostgreSQL/domain contracts but are independently
-  deployed Cloud Run units.
-- GROBID is a separate service. Local access may be unauthenticated only in an
-  explicit development environment. Production requires Google identity
-  authentication and HTTPS.
+  deployed Cloud Run units. Terraform can attach the Semantic Scholar secret
+  only to the Daily service account.
+- GROBID is a separate service. Local unauthenticated access is development-only;
+  production requires Google identity authentication and HTTPS.
 
 ## Code boundaries
 
-Ports represent real external boundaries: arXiv, scholarly search, LLM, PDF
-parsing, and persistence. A separate evidence engine is not present because M2
-uses deterministic project-owned validation and mapping rather than an external
-component. Production wiring cannot import test doubles.
+Ports represent real external boundaries: arXiv, scholarly search, LLM,
+scientific embedding, PDF parsing, and persistence. A separate evidence engine
+is not present because grounding is deterministic project-owned validation.
+Production wiring cannot import test doubles.
 
 The allowed dependency direction is adapter to port to application to domain.
 Domain code cannot depend on FastAPI, SQLAlchemy, arxiv.py, GROBID, DeepSeek,
-Semantic Scholar, PaperQA2, or Google Cloud libraries.
+Semantic Scholar, SPECTER2 runtime packages, PaperQA2, PaSa, Scholar QA, or
+Google Cloud libraries.
 
 ## Persistence and provenance boundaries
 
@@ -85,43 +135,48 @@ PostgreSQL 15+ with pgvector and `DATABASE_URL` is the only persistence contract
 The browser never accesses it directly. SQLite, files, a provider SDK, or an
 in-memory production store cannot replace it.
 
-Parsed text, analyses, claims, evidence, reports, and failures retain stable IDs,
-schema versions, exact paper/version ownership, source, and timestamps. AI
-records additionally retain provider, configured and returned model identities,
-prompt version, scope, verification state, token/call/duration data, and available
-cost estimates. Evidence retains section, passage, optional coordinates, concise
-exact excerpt, evidence type, extraction source, and supported claim IDs.
+M3 external stubs retain Semantic Scholar IDs and supplied aliases while stable
+identity prefers canonical arXiv identity where available. Later arXiv/DOI
+enrichment transactionally promotes or merges an earlier S2-only stub and
+rekeys its dependent corpus, embedding, candidate, and discovery rows. Search
+sessions, actions, candidate discoveries, embeddings, comparisons, relations,
+and evidence links retain stable IDs, schema versions, ownership, timestamps,
+exact model/prompt revisions where applicable, source, and verification state.
 
 Complete prompts, model responses, hidden reasoning, full paper text, PDFs,
-secrets, and authorization headers are not persisted for debugging or logged.
-Analysis, claims, evidence, and evidence-claim links commit atomically; database
-constraints reject cross-analysis or cross-version ownership.
+model weights, secrets, and authorization headers are not persisted for
+debugging or logged. Backfill pages, candidate/action writes, and comparison
+bundles use short atomic transactions. Database constraints reject cross-session,
+cross-comparison, cross-paper, or cross-version ownership.
 
 ## Failure and publication boundary
 
-Item stages advance only after their required durable write commits. Each failure
-records failed stage, stable error code, retryability, and concise detail. A run
-publishes a deterministic report only when at least one selected paper completes:
-`COMPLETE` contains no failures, while `PARTIAL` prominently includes every
-failed selected item. Zero completed selected papers produces `FAILED` and no
-report.
+Item stages advance only after their required durable write commits. Each item
+failure records a failed stage, stable error code, retryability, and concise
+detail. M3 protected operations do not silently mark later graph/publication
+stages complete and are not invoked by FastAPI.
 
-FastAPI exposes persisted analysis/evidence and latest-run report/failure data.
-React presents scope, provenance, verification status, source excerpts,
-coordinates, `PARTIAL` banners, and item-level error details without implying
-that unverified model output is certain.
+An interrupted `RUNNING` backfill and an explicitly reinvoked `FAILED`
+backfill both resume from the last committed query boundary, only with the
+identical plan, limits, and embedding provenance. A completed related-work
+session records an explicit stop reason, including bounded exhaustion or
+overall timeout. Provider, schema, domain, or persistence errors record
+`FAILED`; they do not switch source or mode.
+
+Comparison is accepted only for a completed session and a selected local target.
+It either persists the comparison, dimensions, relations, and evidence links as
+one valid bundle or persists none of them.
 
 ## Cloud boundary
 
 The browser boundary is direct Cloud Run IAP with an explicit owner allowlist.
 The GROBID service retains Cloud Run IAM invocation checks and has no public
-invoker; only the Daily service account receives invocation permission. Its
-network endpoint uses normal Cloud Run ingress so service-to-service IAM works
-without a VPC connector, NAT gateway, or load balancer. Network-internal-only
-ingress would require separately reviewed networking and is not configured.
+invoker; only the Daily service account receives invocation permission. The
+Daily service account is also the only runtime identity eligible to read a
+configured Semantic Scholar secret version.
 
-Runtime and analysis resources remain disabled until immutable images and fixed
-secret versions exist. There is no `allUsers` binding, exported service-account
-key, paid load balancer, Cloud SQL instance, Kubernetes cluster, VPS, Redis,
-permanent worker, VPC connector, or Cloud NAT resource. The Terraform design is
-implemented but no production resource has been applied.
+Runtime, analysis, and M3 secret attachment remain disabled until immutable
+images and fixed secret versions exist. There is no `allUsers` binding, exported
+service-account key, paid load balancer, Cloud SQL instance, Kubernetes cluster,
+VPS, Redis, permanent worker, VPC connector, or Cloud NAT resource. The
+Terraform design has not been applied to production.

@@ -5,6 +5,7 @@ import { ApiRequestError } from "../api/client";
 import { paperAnalysisQuery, paperEvidenceQuery, paperQuery } from "../api/queries";
 import { AnalysisDetail } from "../components/AnalysisDetail";
 import { EvidenceViewer } from "../components/EvidenceViewer";
+import { RelatedWorkPanel } from "../components/RelatedWorkPanel";
 import { StateNotice } from "../components/StateNotice";
 import { formatDate, formatDateTime } from "../lib/format";
 
@@ -168,6 +169,19 @@ export function PaperDetailPage() {
           ) : null}
         </section>
       ) : null}
+
+      <section className="related-panel" aria-label="Historical related work">
+        {currentPaperVersionId ? (
+          <RelatedWorkPanel paperId={detail.id} paperVersionId={currentPaperVersionId} />
+        ) : (
+          <StateNotice
+            kind="error"
+            title="Unable to identify the current paper version"
+            detail="Related work was not requested because the paper response did not contain its declared current version."
+            onRetry={() => void paper.refetch()}
+          />
+        )}
+      </section>
     </section>
   );
 }

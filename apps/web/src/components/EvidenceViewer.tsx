@@ -31,7 +31,7 @@ export function EvidenceViewer({ evidence, claims }: EvidenceViewerProps) {
         {evidence.map((item) => {
           const pages = [...new Set(item.coordinates.map((coordinate) => coordinate.page))];
           return (
-            <article className="evidence-card card" key={item.id}>
+            <article className="evidence-card card" id={`evidence-${item.id}`} key={item.id}>
               <div className="evidence-topline">
                 <span>{item.section}</span>
                 <span className={`evidence-type ${item.evidence_type.toLocaleLowerCase()}`}>

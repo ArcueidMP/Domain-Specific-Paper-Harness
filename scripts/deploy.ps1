@@ -7,7 +7,9 @@ param(
     [string]$Region = "asia-southeast1",
     [string]$ArtifactRepository = "paper-harness",
     [string]$DatabaseSecretId = "paper-harness-database-url",
+    [string]$SemanticScholarSecretId = "paper-harness-semantic-scholar-api-key",
     [string]$ImageTag,
+    [switch]$AttachSemanticScholarSecretToDaily,
     [switch]$Apply
 )
 
@@ -103,6 +105,7 @@ try {
         "-var=region=$Region" `
         "-var=artifact_repository_id=$ArtifactRepository" `
         "-var=database_secret_id=$DatabaseSecretId" `
+        "-var=semantic_scholar_secret_id=$SemanticScholarSecretId" `
         "-var=deploy_runtime_resources=false"
     if ($LASTEXITCODE -ne 0) { throw "Terraform foundation plan failed." }
     Assert-NoTerraformDeletes -PlanPath "foundation.tfplan" -Label "Terraform foundation plan"
@@ -127,6 +130,19 @@ if ($DatabaseVersion -notmatch '^\d+$') {
     throw "Secret Manager returned an invalid DATABASE_URL version name."
 }
 
+$SemanticScholarVersion = ""
+if ($AttachSemanticScholarSecretToDaily) {
+    $SemanticScholarVersionResource = (& $Gcloud secrets versions list $SemanticScholarSecretId --project=$ProjectId --filter='state=ENABLED' --sort-by='~createTime' --limit=1 "--format=value(name)").Trim()
+    if ([string]::IsNullOrWhiteSpace($SemanticScholarVersionResource)) {
+        throw "Secret '$SemanticScholarSecretId' has no enabled version. Add the Semantic Scholar API key as a Secret Manager version, then rerun this script."
+    }
+    $SemanticScholarVersion = ($SemanticScholarVersionResource -split '/')[-1]
+    if ($SemanticScholarVersion -notmatch '^\d+$') {
+        throw "Secret Manager returned an invalid Semantic Scholar API key version name."
+    }
+}
+$AttachSemanticScholarSecret = $AttachSemanticScholarSecretToDaily.IsPresent.ToString().ToLowerInvariant()
+
 & $Gcloud beta services identity create --service=iap.googleapis.com --project=$ProjectId --quiet
 if ($LASTEXITCODE -ne 0) {
     throw "The IAP service agent could not be provisioned."
@@ -143,7 +159,12 @@ $DailyTag = "$Registry/daily:$ImageTag"
 if ($LASTEXITCODE -ne 0) { throw "Web/API image build failed." }
 & $Docker push $WebTag
 if ($LASTEXITCODE -ne 0) { throw "Web/API image push failed." }
-& $Docker build --file infra/docker/Dockerfile.daily --tag $DailyTag .
+& $Docker build `
+    --file infra/docker/Dockerfile.daily `
+    --target production `
+    --build-arg "PREPARE_SPECTER2_BASE=1" `
+    --tag $DailyTag `
+    .
 if ($LASTEXITCODE -ne 0) { throw "Daily image build failed." }
 & $Docker push $DailyTag
 if ($LASTEXITCODE -ne 0) { throw "Daily image push failed." }
@@ -170,10 +191,13 @@ try {
         "-var=region=$Region" `
         "-var=artifact_repository_id=$ArtifactRepository" `
         "-var=database_secret_id=$DatabaseSecretId" `
+        "-var=semantic_scholar_secret_id=$SemanticScholarSecretId" `
         "-var=deploy_runtime_resources=true" `
+        "-var=attach_semantic_scholar_secret_to_daily=$AttachSemanticScholarSecret" `
         "-var=web_api_image=$Registry/web-api@$WebDigest" `
         "-var=daily_image=$Registry/daily@$DailyDigest" `
-        "-var=database_secret_version=$DatabaseVersion"
+        "-var=database_secret_version=$DatabaseVersion" `
+        "-var=semantic_scholar_secret_version=$SemanticScholarVersion"
     if ($LASTEXITCODE -ne 0) { throw "Terraform runtime plan failed." }
     Assert-NoTerraformDeletes -PlanPath "runtime.tfplan" -Label "Terraform runtime plan"
     & $Terraform apply -input=false -auto-approve runtime.tfplan

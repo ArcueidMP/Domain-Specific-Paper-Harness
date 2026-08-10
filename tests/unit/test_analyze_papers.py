@@ -22,6 +22,14 @@ from paper_harness.domain.analysis import (
     ParsedPassage,
     ParsedSection,
 )
+from paper_harness.domain.historical import (
+    CandidateSelectionRequest,
+    ComparisonRequest,
+    CrawlerPlanRequest,
+    GeneratedCandidateSelection,
+    GeneratedComparison,
+    GeneratedCrawlerPlan,
+)
 from paper_harness.domain.identity import (
     stable_analysis_id,
     stable_paper_id,
@@ -147,6 +155,29 @@ class FakeLLM:
                 estimated_cost_usd=None,
             ),
         )
+
+    def select_prior_work(
+        self,
+        request: CandidateSelectionRequest,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> GeneratedCandidateSelection:
+        del timeout_seconds
+        del request
+        raise AssertionError("prior-work selection is outside the M2 analysis test")
+
+    def plan_scholarly_search(
+        self,
+        request: CrawlerPlanRequest,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> GeneratedCrawlerPlan:
+        del request, timeout_seconds
+        raise AssertionError("crawler planning is outside the M2 analysis test")
+
+    def compare_papers(self, request: ComparisonRequest) -> GeneratedComparison:
+        del request
+        raise AssertionError("paper comparison is outside the M2 analysis test")
 
 
 class FailingFailureWriteRepository(FakeRepository):

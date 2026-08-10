@@ -11,12 +11,33 @@ from uuid import UUID, uuid4, uuid5
 from paper_harness.application.read_models import (
     AnalysisDetail,
     AnalysisTarget,
+    ComparisonDetail,
+    HistoricalRetrievalMatch,
     PaperDetail,
+    RelatedWorkDetail,
     RunDetail,
     RunItemDetail,
+    SearchSessionDetail,
     StoredTopic,
 )
 from paper_harness.domain.analysis import AnalysisBundle, AnalysisScope, Evidence, ParsedPaper
+from paper_harness.domain.historical import (
+    BackfillStatus,
+    ComparisonBundle,
+    ComparisonPaperInput,
+    ExternalPaperStub,
+    GeneratedCrawlerPlan,
+    HistoricalBackfillRun,
+    HistoricalCorpusEntry,
+    ScientificEmbedding,
+    SearchAction,
+    SearchCandidate,
+    SearchCandidateDiscovery,
+    SearchModelProvenance,
+    SearchSession,
+    SearchSessionStatus,
+    SearchStopReason,
+)
 from paper_harness.domain.models import (
     DailyRun,
     IngestionCursor,
@@ -92,6 +113,15 @@ class FakeRepository:
         self.ready_error: Exception | None = None
         self.analysis_persist_error: RepositoryError | None = None
         self.finalize_error: RepositoryError | None = None
+        self.historical_backfill: HistoricalBackfillRun | None = None
+        self.search_detail: SearchSessionDetail | None = None
+        self.embeddings: tuple[ScientificEmbedding, ...] = ()
+        self.lexical_matches: tuple[HistoricalRetrievalMatch, ...] = ()
+        self.vector_matches: tuple[HistoricalRetrievalMatch, ...] = ()
+        self.comparison_inputs: dict[UUID | tuple[UUID, UUID], ComparisonPaperInput] = {}
+        self.comparisons: dict[UUID, ComparisonDetail] = {}
+        self.persisted_comparisons: dict[UUID, ComparisonBundle] = {}
+        self.related_work: RelatedWorkDetail | None = None
         self.locked = False
 
     @contextmanager
@@ -530,3 +560,330 @@ class FakeRepository:
         if detail is None or detail.analysis.id != analysis_id:
             return None
         return detail.evidence
+
+    def start_historical_backfill(self, run: HistoricalBackfillRun) -> HistoricalBackfillRun:
+        self.historical_backfill = run
+        return run
+
+    def get_historical_backfill(
+        self, topic_id: UUID, window_from: date, window_to: date
+    ) -> HistoricalBackfillRun | None:
+        run = self.historical_backfill
+        if run is None or (run.topic_id, run.window_from, run.window_to) != (
+            topic_id,
+            window_from,
+            window_to,
+        ):
+            return None
+        return run
+
+    def persist_historical_backfill_page(
+        self,
+        run_id: UUID,
+        *,
+        expected_query_index: int,
+        next_query_index: int,
+        papers: tuple[ExternalPaperStub, ...],
+        entries: tuple[HistoricalCorpusEntry, ...],
+        embeddings: tuple[ScientificEmbedding, ...],
+        discovered_count: int,
+        persisted_count: int,
+        persisted_at: datetime,
+    ) -> HistoricalBackfillRun:
+        del papers, entries, persisted_at
+        run = self.historical_backfill
+        if run is None or run.id != run_id or run.next_query_index != expected_query_index:
+            raise RepositoryError("historical backfill cursor mismatch")
+        self.embeddings += embeddings
+        self.historical_backfill = replace(
+            run,
+            next_query_index=next_query_index,
+            discovered_count=discovered_count,
+            persisted_count=persisted_count,
+        )
+        return self.historical_backfill
+
+    def finalize_historical_backfill(
+        self,
+        run_id: UUID,
+        *,
+        representatives: tuple[tuple[UUID, int], ...],
+        completed_at: datetime,
+    ) -> HistoricalBackfillRun:
+        run = self.historical_backfill
+        if run is None or run.id != run_id:
+            raise RepositoryError("historical backfill was not started")
+        self.historical_backfill = replace(
+            run,
+            status=BackfillStatus.COMPLETE,
+            representative_count=len(representatives),
+            completed_at=completed_at,
+        )
+        return self.historical_backfill
+
+    def fail_historical_backfill(
+        self,
+        run_id: UUID,
+        *,
+        completed_at: datetime,
+        error_code: str,
+        error_detail: str,
+    ) -> HistoricalBackfillRun:
+        run = self.historical_backfill
+        if run is None or run.id != run_id:
+            raise RepositoryError("historical backfill was not started")
+        self.historical_backfill = replace(
+            run,
+            status=BackfillStatus.FAILED,
+            completed_at=completed_at,
+            error_code=error_code,
+            error_detail=error_detail,
+        )
+        return self.historical_backfill
+
+    def start_search_session(self, session: SearchSession) -> SearchSession:
+        self.search_detail = SearchSessionDetail(
+            session=session, actions=(), candidates=(), discoveries=()
+        )
+        return session
+
+    def get_search_session(self, session_id: UUID) -> SearchSessionDetail | None:
+        if self.search_detail is None or self.search_detail.session.id != session_id:
+            return None
+        return self.search_detail
+
+    def start_search_action(self, action: SearchAction) -> SearchAction:
+        if self.search_detail is None or self.search_detail.session.id != action.session_id:
+            raise RepositoryError("search session was not started")
+        self.search_detail = replace(
+            self.search_detail, actions=self.search_detail.actions + (action,)
+        )
+        return action
+
+    def persist_search_crawler_plan(
+        self, session_id: UUID, plan: GeneratedCrawlerPlan
+    ) -> SearchSession:
+        detail = self.search_detail
+        if detail is None or detail.session.id != session_id:
+            raise RepositoryError("search session was not started")
+        session = replace(
+            detail.session,
+            provider=plan.provider,
+            configured_model=plan.configured_model,
+            model_version=plan.model_version,
+            prompt_version=plan.prompt_version,
+            usage=plan.usage,
+            crawler_queries=plan.queries,
+            crawler_use_recommendations=plan.use_recommendations,
+            crawler_expand_references=plan.expand_references,
+            crawler_expand_citations=plan.expand_citations,
+            crawler_decision_reason=plan.decision_reason,
+            crawler_generated_at=plan.generated_at,
+        )
+        self.search_detail = replace(detail, session=session)
+        return session
+
+    def persist_search_action_result(
+        self,
+        action: SearchAction,
+        *,
+        papers: tuple[ExternalPaperStub, ...],
+        candidates: tuple[SearchCandidate, ...],
+        discoveries: tuple[SearchCandidateDiscovery, ...],
+    ) -> None:
+        del papers
+        if self.search_detail is None:
+            raise RepositoryError("search session was not started")
+        actions = tuple(
+            action if existing.id == action.id else existing
+            for existing in self.search_detail.actions
+        )
+        self.search_detail = replace(
+            self.search_detail,
+            actions=actions,
+            candidates=_merge_candidates(self.search_detail.candidates, candidates),
+            discoveries=self.search_detail.discoveries + discoveries,
+        )
+
+    def persist_local_search_candidates(
+        self,
+        session_id: UUID,
+        *,
+        papers: tuple[ExternalPaperStub, ...],
+        candidates: tuple[SearchCandidate, ...],
+        discoveries: tuple[SearchCandidateDiscovery, ...],
+    ) -> None:
+        del papers
+        if self.search_detail is None or self.search_detail.session.id != session_id:
+            raise RepositoryError("search session was not started")
+        self.search_detail = replace(
+            self.search_detail,
+            candidates=_merge_candidates(self.search_detail.candidates, candidates),
+            discoveries=self.search_detail.discoveries + discoveries,
+        )
+
+    def update_search_candidate_decisions(
+        self,
+        session_id: UUID,
+        candidates: tuple[SearchCandidate, ...],
+    ) -> None:
+        if self.search_detail is None or self.search_detail.session.id != session_id:
+            raise RepositoryError("search session was not started")
+        self.search_detail = replace(
+            self.search_detail,
+            candidates=_merge_candidates(self.search_detail.candidates, candidates),
+        )
+
+    def complete_search_session(
+        self,
+        session_id: UUID,
+        *,
+        completed_at: datetime,
+        stop_reason: SearchStopReason,
+        provenance: SearchModelProvenance | None,
+    ) -> SearchSession:
+        if self.search_detail is None or self.search_detail.session.id != session_id:
+            raise RepositoryError("search session was not started")
+        current = self.search_detail.session
+        completed = replace(
+            current,
+            status=SearchSessionStatus.COMPLETE,
+            completed_at=completed_at,
+            stop_reason=stop_reason,
+            provider=current.provider if provenance is None else provenance.provider,
+            configured_model=(
+                current.configured_model if provenance is None else provenance.configured_model
+            ),
+            model_version=(
+                current.model_version if provenance is None else provenance.model_version
+            ),
+            prompt_version=(
+                current.prompt_version if provenance is None else provenance.prompt_version
+            ),
+            usage=current.usage if provenance is None else provenance.usage,
+        )
+        self.search_detail = replace(self.search_detail, session=completed)
+        return completed
+
+    def fail_search_session(
+        self,
+        session_id: UUID,
+        *,
+        completed_at: datetime,
+        error_code: str,
+        error_detail: str,
+        provenance: SearchModelProvenance | None,
+    ) -> SearchSession:
+        if self.search_detail is None or self.search_detail.session.id != session_id:
+            raise RepositoryError("search session was not started")
+        current = self.search_detail.session
+        failed = replace(
+            current,
+            status=SearchSessionStatus.FAILED,
+            completed_at=completed_at,
+            stop_reason=SearchStopReason.FAILED,
+            error_code=error_code,
+            error_detail=error_detail,
+            provider=current.provider if provenance is None else provenance.provider,
+            configured_model=(
+                current.configured_model if provenance is None else provenance.configured_model
+            ),
+            model_version=(
+                current.model_version if provenance is None else provenance.model_version
+            ),
+            prompt_version=(
+                current.prompt_version if provenance is None else provenance.prompt_version
+            ),
+            usage=current.usage if provenance is None else provenance.usage,
+        )
+        self.search_detail = replace(self.search_detail, session=failed)
+        return failed
+
+    def upsert_scientific_embeddings(self, embeddings: tuple[ScientificEmbedding, ...]) -> None:
+        self.embeddings += embeddings
+
+    def search_historical_lexically(
+        self,
+        topic_id: UUID,
+        *,
+        query: str,
+        limit: int,
+    ) -> tuple[HistoricalRetrievalMatch, ...]:
+        del topic_id, query
+        return self.lexical_matches[:limit]
+
+    def search_historical_by_vector(
+        self,
+        topic_id: UUID,
+        *,
+        vector: tuple[float, ...],
+        model_identifier: str,
+        model_revision: str,
+        tokenizer_identifier: str,
+        tokenizer_revision: str,
+        dimension: int,
+        preprocessing_contract: str,
+        model_provenance: str,
+        source: str,
+        limit: int,
+    ) -> tuple[HistoricalRetrievalMatch, ...]:
+        del (
+            topic_id,
+            vector,
+            model_identifier,
+            model_revision,
+            tokenizer_identifier,
+            tokenizer_revision,
+            dimension,
+            preprocessing_contract,
+            model_provenance,
+            source,
+        )
+        return self.vector_matches[:limit]
+
+    def get_comparison_paper_input(
+        self,
+        paper_version_id: UUID,
+        *,
+        analysis_id: UUID | None = None,
+    ) -> ComparisonPaperInput | None:
+        value = (
+            self.comparison_inputs.get((paper_version_id, analysis_id))
+            if analysis_id is not None
+            else self.comparison_inputs.get(paper_version_id)
+        )
+        if value is None and analysis_id is not None:
+            value = self.comparison_inputs.get(paper_version_id)
+        if value is not None and analysis_id is not None and value.analysis_id != analysis_id:
+            return None
+        return value
+
+    def persist_comparison_bundle(self, bundle: ComparisonBundle) -> None:
+        self.persisted_comparisons[bundle.comparison.id] = bundle
+
+    def get_comparison(self, comparison_id: UUID) -> ComparisonDetail | None:
+        return self.comparisons.get(comparison_id)
+
+    def get_related_work(
+        self,
+        paper_id: UUID,
+        *,
+        paper_version_id: UUID | None = None,
+    ) -> RelatedWorkDetail | None:
+        if self.related_work is None or self.related_work.session.source_paper_id != paper_id:
+            return None
+        if (
+            paper_version_id is not None
+            and self.related_work.session.source_paper_version_id != paper_version_id
+        ):
+            return None
+        return self.related_work
+
+
+def _merge_candidates(
+    existing: tuple[SearchCandidate, ...],
+    updates: tuple[SearchCandidate, ...],
+) -> tuple[SearchCandidate, ...]:
+    by_id = {item.id: item for item in existing}
+    by_id.update((item.id, item) for item in updates)
+    return tuple(sorted(by_id.values(), key=lambda item: (item.rank, str(item.id))))

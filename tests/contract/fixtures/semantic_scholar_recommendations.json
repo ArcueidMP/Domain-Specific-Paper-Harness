@@ -1,0 +1,43 @@
+{
+  "recommendedPapers": [
+    {
+      "paperId": "2222222222222222222222222222222222222222",
+      "corpusId": 202,
+      "externalIds": {
+        "DOI": "10.1000/agent.2"
+      },
+      "url": "https://www.semanticscholar.org/paper/2222222222222222222222222222222222222222",
+      "title": "Bounded Tool Use for Language-Model Agents",
+      "abstract": null,
+      "venue": "Transactions on Agent Systems",
+      "year": 2025,
+      "publicationDate": null,
+      "authors": [
+        {
+          "authorId": null,
+          "name": "Lin West"
+        }
+      ],
+      "citationCount": 8,
+      "influentialCitationCount": 2,
+      "referenceCount": 19
+    },
+    {
+      "paperId": "3333333333333333333333333333333333333333",
+      "corpusId": 303,
+      "externalIds": {
+        "ArXiv": "2509.12345"
+      },
+      "url": "https://www.semanticscholar.org/paper/3333333333333333333333333333333333333333",
+      "title": "Evaluating Reliable Web Agents",
+      "abstract": "A benchmark for web agents under bounded inference budgets.",
+      "venue": null,
+      "year": 2025,
+      "publicationDate": "2025-09-30",
+      "authors": [],
+      "citationCount": 3,
+      "influentialCitationCount": 1,
+      "referenceCount": 11
+    }
+  ]
+}
