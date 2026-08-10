@@ -74,9 +74,10 @@ evidence, scholarly-search, embedding, and comparison behavior remains intact.
 
 - No production foundation, database, Web/API, Daily Job, GROBID service,
   Scheduler, secret version, or endpoint was created or changed for M4.
-- The existing local PostgreSQL volume on port 55433 was preserved because it
-  carries a stale pre-final M3 schema under the final M3 revision label. All M4
-  migration and repository verification used disposable pgvector databases.
+- The repository Compose PostgreSQL volume on port 55433 was rebuilt from an
+  empty database through the normal Alembic path to
+  `0004_m4_graph_trends_reports`; final M3/M4 schema checks and Alembic drift
+  detection pass.
 - M4 commands are explicit batch operations. The current Terraform Scheduler
   still invokes the Daily image with its default arXiv-ingestion command; it
   does not yet orchestrate analysis, comparison, product publication, or
@@ -90,9 +91,7 @@ evidence, scholarly-search, embedding, and comparison behavior remains intact.
   Semantic Scholar key blocks only its opt-in live adapter smoke and real M3
   historical calls, not deterministic M4 publication from persisted inputs.
 - End-to-end scheduled daily publication remains an M5 deployment task because
-  the configured Scheduler currently runs ingestion only. The preserved stale
-  local 55433 volume must be recreated or replaced with explicit owner
-  authorization before it can host M4 data.
+  the configured Scheduler currently runs ingestion only.
 
 ## Next milestone
 
