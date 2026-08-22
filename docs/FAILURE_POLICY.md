@@ -129,14 +129,15 @@ windows remain insufficient; narrative generation cannot fill missing values.
 
 Each product-publication attempt selects current valid persisted analyses,
 comparisons, and evidence for its declared logical date and scope, then stages
-derived data under one run. Final report, links, item states, canonical graph
+derived data under one run. Final report, links, item states, revision-owned graph
 changes, and terminal status commit atomically. Publication failure removes
 staging rows and leaves prior canonical data unchanged.
 
 A failed unpublished run may start a clean attempt and replan from the current
 valid persisted inputs. It is not bound to a stale candidate or comparison
 snapshot. It still cannot cross source ownership or scope, mutate upstream
-records, or reopen a terminal complete/partial artifact.
+records, or mutate a terminal complete/partial artifact. Explicit reprocessing
+creates a separate publication revision instead.
 
 ## Database and migrations
 
@@ -157,33 +158,31 @@ application-declared Alembic head.
 Deployment stops when:
 
 - the active account/project/region is wrong;
-- Terraform state cannot be read or the workspace is not `default`;
 - a plan contains an unexpected deletion, replacement, public principal, broad
-  role, secret value/version resource, or prohibited fixed-cost service;
-- a runtime image is mutable or outside the expected project/repository;
-- a required secret version is absent, disabled, or not a positive number;
+  role, secret value resource, or prohibited fixed-cost service;
+- a required runtime secret is absent or disabled;
 - migration did not complete at the application head;
 - Web/API IAP, owner allowlist, GROBID invoker, or public-access checks fail;
 - the direct Daily execution is not terminal or produces no completed selected
   paper; or
-- Scheduler does not produce exactly one expected Daily execution.
+- a topic Scheduler does not invoke its corresponding Daily Job.
 
 No deployment error permits a public endpoint, alternate database, temporary
 IAM grant, service-account key, provider substitute, or manual Terraform-state
 edit. Correct the root cause and generate a fresh plan if infrastructure
 changed. A failed unpublished product run may then replan from current valid
-persisted inputs; a terminal published artifact remains immutable.
+persisted inputs. Each terminal publication revision remains immutable; a
+successful same-date reprocess becomes the revision selected by public reads.
 
-Scheduler stays absent until direct Daily product-data verification succeeds.
-It is created paused, forced once, and enabled only after the invocation creates
-the expected Daily execution. Enabled or paused state is changed through the
-reviewed Terraform configuration.
+Each topic Scheduler directly targets its corresponding Daily Job. Enabled or
+paused state is changed through Terraform configuration without a dispatcher or
+secondary orchestration mechanism.
 
 ## Repository, build, and release failures
 
 During implementation, run focused checks for the boundary being changed. Run
-the single canonical Windows verification after M5 implementation and
-production acceptance are complete. It covers:
+the single canonical Windows verification when source and production state are
+ready for a milestone or release commit. It covers:
 
 - non-exact Python or unfrozen dependencies;
 - Ruff, Pyright, pytest, frontend, OpenAPI, or browser failures;
@@ -195,8 +194,8 @@ production acceptance are complete. It covers:
 - clean migration behavior; and
 - PostgreSQL integration.
 
-Checks are not bypassed, hooks are not skipped, and the M5 completion commit is
-not created unless that final canonical verification passes.
+Checks are not bypassed, hooks are not skipped, and the milestone or release
+commit is not created unless that final canonical verification passes.
 
 ## API and presentation
 

@@ -55,7 +55,7 @@ describe("PapersPage", () => {
     expect(screen.getByText(secondPaper.title)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: firstPaper.title })).toHaveAttribute(
       "href",
-      `/papers/${firstPaper.id}`,
+      `/papers/${firstPaper.id}?topic=broad-llm-agents`,
     );
 
     await user.type(screen.getByRole("searchbox"), "Ada North");

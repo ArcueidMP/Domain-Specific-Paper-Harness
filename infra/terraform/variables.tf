@@ -78,7 +78,7 @@ variable "deploy_analysis_resources" {
 }
 
 variable "deploy_daily_resources" {
-  description = "Create the complete Daily Job after GROBID, database, DeepSeek, and Semantic Scholar inputs exist."
+  description = "Create the topic Daily Jobs after GROBID, database, DeepSeek, and Semantic Scholar inputs exist."
   type        = bool
   default     = false
 
@@ -95,7 +95,7 @@ variable "deploy_daily_resources" {
 }
 
 variable "deploy_scheduler" {
-  description = "Create the Scheduler job only after migration and a successful manual Daily execution."
+  description = "Create one Scheduler job per topic only after migration and successful manual Daily executions."
   type        = bool
   default     = false
 
@@ -106,7 +106,7 @@ variable "deploy_scheduler" {
 }
 
 variable "scheduler_paused" {
-  description = "Keep a created Scheduler job paused until its forced execution is verified."
+  description = "Keep the created topic Scheduler jobs paused until their forced executions are verified."
   type        = bool
   default     = true
 
@@ -143,7 +143,7 @@ variable "migration_image" {
 }
 
 variable "daily_image" {
-  description = "Immutable Artifact Registry image reference for the Daily Job."
+  description = "Immutable Artifact Registry image reference shared by the topic Daily Jobs."
   type        = string
   default     = null
   nullable    = true
@@ -195,7 +195,7 @@ variable "migration_database_secret_version" {
 }
 
 variable "deepseek_secret_version" {
-  description = "Existing enabled DeepSeek API key secret version used only by the M2 Daily Job."
+  description = "Existing enabled DeepSeek API key secret version used only by the topic Daily Jobs."
   type        = string
   default     = null
   nullable    = true
@@ -207,7 +207,7 @@ variable "deepseek_secret_version" {
 }
 
 variable "semantic_scholar_secret_version" {
-  description = "Existing enabled Semantic Scholar API key secret version used only by explicit M3 Daily Job operations."
+  description = "Existing enabled Semantic Scholar API key secret version used only by topic Daily Job operations."
   type        = string
   default     = null
   nullable    = true
@@ -252,13 +252,25 @@ variable "migration_timeout_seconds" {
 }
 
 variable "schedule" {
-  description = "Daily Job cron expression."
+  description = "Broad LLM Agents Daily Job cron expression."
   type        = string
   default     = "0 5 * * *"
 }
 
+variable "brain_computer_interfaces_schedule" {
+  description = "Brain-Computer Interfaces Daily Job cron expression."
+  type        = string
+  default     = "20 5 * * *"
+}
+
+variable "world_models_schedule" {
+  description = "World Models Daily Job cron expression."
+  type        = string
+  default     = "40 5 * * *"
+}
+
 variable "schedule_time_zone" {
-  description = "IANA time zone used to interpret the daily schedule."
+  description = "IANA time zone used to interpret every topic schedule."
   type        = string
   default     = "Asia/Kuala_Lumpur"
 }

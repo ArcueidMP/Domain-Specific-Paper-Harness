@@ -127,25 +127,14 @@ class HistoricalBackfill:
             if existing.status is BackfillStatus.COMPLETE:
                 return existing
             if existing.status is BackfillStatus.FAILED:
+                queries = existing.query_plan
+                per_query_limit = existing.max_results_per_query
                 run = self._repository.start_historical_backfill(
                     replace(
                         existing,
-                        query_plan=queries,
-                        max_results_per_query=per_query_limit,
                         overall_timeout_seconds=overall_timeout_seconds,
-                        embedding_model_identifier=self._embeddings.model_identifier,
-                        embedding_model_revision=self._embeddings.model_revision,
-                        embedding_tokenizer_identifier=self._embeddings.tokenizer_identifier,
-                        embedding_tokenizer_revision=self._embeddings.tokenizer_revision,
-                        embedding_dimension=self._embeddings.dimension,
-                        embedding_preprocessing_contract=self._embeddings.preprocessing_contract,
-                        embedding_model_provenance=self._embeddings.model_provenance,
-                        embedding_source=self._embeddings.source,
                         status=BackfillStatus.RUNNING,
-                        next_query_index=0,
-                        discovered_count=0,
-                        persisted_count=0,
-                        representative_count=0,
+                        started_at=self._aware_now(),
                         completed_at=None,
                         error_code=None,
                         error_detail=None,

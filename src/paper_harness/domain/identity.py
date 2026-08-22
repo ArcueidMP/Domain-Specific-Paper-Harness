@@ -130,12 +130,18 @@ def stable_analysis_id(
     configured_model: str,
     model_version: str,
     prompt_version: str,
+    revision_id: UUID | None = None,
 ) -> UUID:
     parsed_identity = "abstract" if parsed_paper_id is None else str(parsed_paper_id)
+    identity = (
+        f"{paper_version_id}:{analysis_scope}:{parsed_identity}:{provider}:"
+        f"{configured_model}:{model_version}:{prompt_version}"
+    )
+    if revision_id is not None:
+        identity = f"{identity}:revision:{revision_id}"
     return uuid5(
         ANALYSIS_NAMESPACE,
-        f"{paper_version_id}:{analysis_scope}:{parsed_identity}:{provider}:"
-        f"{configured_model}:{model_version}:{prompt_version}",
+        identity,
     )
 
 

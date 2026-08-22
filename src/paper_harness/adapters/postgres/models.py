@@ -259,12 +259,12 @@ class PipelineExecutionRow(Base):
             name="uq_pipeline_executions_topic_ownership",
         ),
         CheckConstraint(
-            "execution_mode IN ('NORMAL', 'SMOKE')",
+            "execution_mode IN ('NORMAL', 'REPROCESS', 'SMOKE')",
             name="ck_pipeline_executions_mode",
         ),
         CheckConstraint(
             "(execution_mode = 'NORMAL' AND execution_key = 'canonical') OR "
-            "(execution_mode = 'SMOKE' AND execution_key <> 'canonical' "
+            "(execution_mode IN ('REPROCESS', 'SMOKE') AND execution_key <> 'canonical' "
             "AND execution_key = btrim(execution_key) "
             "AND length(execution_key) BETWEEN 1 AND 200)",
             name="ck_pipeline_executions_key",
@@ -361,13 +361,15 @@ class DailyRunRow(Base):
             name="ck_daily_runs_status_allowed",
         ),
         CheckConstraint(
-            "pipeline_execution_mode IN ('STANDALONE', 'NORMAL', 'SMOKE')",
+            "pipeline_execution_mode IN ('STANDALONE', 'NORMAL', 'REPROCESS', 'SMOKE')",
             name="ck_daily_runs_pipeline_execution_mode_allowed",
         ),
         CheckConstraint(
             "(pipeline_execution_mode = 'STANDALONE' AND pipeline_execution_id IS NULL "
             "AND pipeline_selection_limit IS NULL) OR "
             "(pipeline_execution_mode = 'NORMAL' AND pipeline_execution_id IS NOT NULL "
+            "AND pipeline_selection_limit BETWEEN 1 AND 200) OR "
+            "(pipeline_execution_mode = 'REPROCESS' AND pipeline_execution_id IS NOT NULL "
             "AND pipeline_selection_limit BETWEEN 1 AND 200) OR "
             "(pipeline_execution_mode = 'SMOKE' AND pipeline_execution_id IS NOT NULL "
             "AND pipeline_selection_limit BETWEEN 1 AND 5)",
@@ -690,6 +692,7 @@ class PaperAnalysisRow(Base):
             "configured_model",
             "model_version",
             "prompt_version",
+            "revision_id",
             name="uq_paper_analyses_provenance",
             postgresql_nulls_not_distinct=True,
         ),
@@ -755,6 +758,7 @@ class PaperAnalysisRow(Base):
     configured_model: Mapped[str] = mapped_column(String(200), nullable=False)
     model_version: Mapped[str] = mapped_column(String(200), nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    revision_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     source: Mapped[str] = mapped_column(String(100), nullable=False)
     verification_status: Mapped[str] = mapped_column(String(32), nullable=False)

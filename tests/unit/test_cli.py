@@ -76,7 +76,39 @@ def test_daily_cli_uses_one_direct_pipeline_contract() -> None:
     }
     assert "--execution-mode" not in exposed
     assert "--execution-key" not in exposed
+    assert "--reprocess" in exposed
     assert "verify-publication" not in root.commands
+
+
+def test_daily_cli_passes_the_direct_reprocess_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def execute_stub(**kwargs: object) -> DailyPipelineResult:
+        captured.update(kwargs)
+        raise LLMAuthenticationError("stop after argument capture")
+
+    monkeypatch.setattr(cli_module, "execute_daily_pipeline", execute_stub)
+    result = CliRunner().invoke(
+        app,
+        [
+            "run-pipeline",
+            "--logical-date",
+            "2026-08-22",
+            "--reprocess",
+            "--analysis-scope",
+            "abstract_only",
+            "--narrative-mode",
+            "structured_only",
+            "--max-selected-papers",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert captured["reprocess"] is True
+    assert '"execution_mode":"REPROCESS"' in result.output
 
 
 @pytest.mark.parametrize(

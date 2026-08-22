@@ -15,7 +15,11 @@ from paper_harness.application.read_models import (
     PaperDetail,
     SearchSessionDetail,
 )
-from paper_harness.application.related_work import RelatedWorkSearch, allowed_search_tools
+from paper_harness.application.related_work import (
+    RelatedWorkSearch,
+    allowed_search_tools,
+    build_related_work_objective,
+)
 from paper_harness.application.scholarly_mapping import external_stub_from_scholarly_paper
 from paper_harness.domain.analysis import (
     AnalysisScope,
@@ -67,6 +71,20 @@ from paper_harness.ports.scientific_embedding import (
 NOW = datetime(2026, 8, 9, 5, tzinfo=UTC)
 SOURCE_PAPER_ID = UUID("a83014ac-d4b4-482a-8d80-a6fb019e3939")
 SOURCE_VERSION_ID = UUID("5f4cf773-ef83-48b0-b9a3-fb9df133b377")
+
+
+def test_related_work_objective_uses_the_configured_topic(topic_config: TopicConfig) -> None:
+    topic = replace(
+        topic_config,
+        name="World Models",
+        description="Learned predictive models of environments and latent dynamics.",
+    )
+
+    objective = build_related_work_objective(topic)
+
+    assert "World Models" in objective
+    assert topic.description in objective
+    assert "LLM-agent" not in objective
 
 
 class _Repository:
@@ -553,7 +571,7 @@ class _LLM:
             provider="deepseek",
             configured_model="deepseek-v4-flash",
             model_version="DeepSeek-V4-Flash-2026-04-24",
-            prompt_version="m3-crawler-v1",
+            prompt_version="m3-crawler-v2",
             generated_at=NOW,
             queries=tuple(dict.fromkeys(queries)),
             use_recommendations=True,
@@ -1323,7 +1341,7 @@ def test_search_session_aggregates_crawler_and_selector_usage(
         limits=SearchLimits(max_steps=2, max_queries=1, max_selected_candidates=1),
     )
 
-    assert detail.session.prompt_version == "m3-crawler-v1+m3-selector-v1"
+    assert detail.session.prompt_version == "m3-crawler-v2+m3-selector-v1"
     assert detail.session.usage is not None
     assert detail.session.usage.call_count == 2
     assert detail.session.usage.total_tokens == 30
@@ -1371,7 +1389,7 @@ def test_selector_failure_persists_failed_session(topic_config: TopicConfig) -> 
     assert repository.session.stop_reason is SearchStopReason.FAILED
     assert repository.session.error_code == "LLM_OUTPUT_INVALID"
     assert repository.session.provider == "deepseek"
-    assert repository.session.prompt_version == "m3-crawler-v1"
+    assert repository.session.prompt_version == "m3-crawler-v2"
     assert repository.session.usage is not None
     assert repository.session.usage.call_count == 1
     assert repository.session.crawler_queries is not None
@@ -1488,6 +1506,8 @@ def test_exact_source_analysis_uses_its_version_text_when_global_paper_is_newer(
     assert detail.session.source_paper_version_id == SOURCE_VERSION_ID
     assert detail.session.effective_year_to == 2026
     assert llm.plan_requests[0].source_title == source_v1.title
+    assert llm.plan_requests[0].topic_name == topic_config.name
+    assert llm.plan_requests[0].topic_description == topic_config.description
     source_embedding = next(item for item in embeddings.inputs if item.title == source_v1.title)
     assert source_embedding.abstract == source_v1.abstract
     assert all(item.title != source_v2.title for item in embeddings.inputs)

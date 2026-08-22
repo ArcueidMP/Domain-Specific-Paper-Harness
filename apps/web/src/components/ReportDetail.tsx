@@ -1,8 +1,7 @@
-import { Link } from "react-router-dom";
-
 import type { Report } from "../api/client";
 import { formatDateTime } from "../lib/format";
 import { RunStatusBadge } from "./RunStatusBadge";
+import { TopicLink } from "./TopicLink";
 
 type ReportDetailProps = {
   report: Report;
@@ -72,12 +71,12 @@ export function ReportDetail({ report, compact = false }: ReportDetailProps) {
                   {section.evidence_ids.map((evidenceId, index) => {
                     const evidence = report.evidence.find((item) => item.id === evidenceId);
                     return evidence ? (
-                      <Link
+                      <TopicLink
                         key={evidenceId}
                         to={`/papers/${evidence.paper_id}#evidence-${evidenceId}`}
                       >
                         Evidence {index + 1}
-                      </Link>
+                      </TopicLink>
                     ) : (
                       <span key={evidenceId}>Evidence {index + 1} unavailable</span>
                     );
@@ -99,7 +98,7 @@ export function ReportDetail({ report, compact = false }: ReportDetailProps) {
             {report.highlighted_papers.map((paper) => (
               <article className="report-highlight card" key={paper.paper_version_id}>
                 <h3>
-                  <Link to={`/papers/${paper.paper_id}`}>{paper.title}</Link>
+                  <TopicLink to={`/papers/${paper.paper_id}`}>{paper.title}</TopicLink>
                 </h3>
                 <p>{paper.reason}</p>
                 <small>{paper.evidence_ids.length} evidence references</small>
@@ -113,20 +112,20 @@ export function ReportDetail({ report, compact = false }: ReportDetailProps) {
         <section className="report-block" aria-labelledby={`entities-${report.id}`}>
           <div className="section-title-row">
             <h2 id={`entities-${report.id}`}>Major entities</h2>
-            <Link className="section-link" to="/graph">
+            <TopicLink className="section-link" to="/graph">
               Explore the graph
-            </Link>
+            </TopicLink>
           </div>
           <ul className="entity-chip-list">
             {report.major_entities.map((entity) => (
               <li key={entity.graph_entity_id}>
-                <Link to={`/graph?entity_id=${entity.graph_entity_id}`}>
+                <TopicLink to={`/graph?entity_id=${entity.graph_entity_id}`}>
                   <span>{entity.entity_type.replaceAll("_", " ")}</span>
                   <strong>{entity.label}</strong>
                   <small>
                     {entity.distinct_paper_count} distinct papers in the latest 7-day window
                   </small>
-                </Link>
+                </TopicLink>
               </li>
             ))}
           </ul>
@@ -141,11 +140,11 @@ export function ReportDetail({ report, compact = false }: ReportDetailProps) {
           <ul className="report-comparison-list">
             {report.notable_comparisons.map((comparison) => (
               <li className="card" key={comparison.comparison_id}>
-                <Link to={`/comparisons/${comparison.comparison_id}`}>
+                <TopicLink to={`/comparisons/${comparison.comparison_id}`}>
                   <strong>{comparison.comparability_status.replaceAll("_", " ")}</strong>
                   <span>{comparison.summary}</span>
                   <small>{comparison.evidence_ids.length} evidence references</small>
-                </Link>
+                </TopicLink>
               </li>
             ))}
           </ul>
@@ -170,9 +169,9 @@ export function ReportDetail({ report, compact = false }: ReportDetailProps) {
                   <span>{evidence.verification_status.replaceAll("_", " ")}</span>
                 </div>
                 <blockquote>{evidence.excerpt}</blockquote>
-                <Link to={`/papers/${evidence.paper_id}#evidence-${evidence.id}`}>
+                <TopicLink to={`/papers/${evidence.paper_id}#evidence-${evidence.id}`}>
                   Open evidence in paper
-                </Link>
+                </TopicLink>
               </article>
             ))}
           </div>
@@ -187,7 +186,9 @@ export function ReportDetail({ report, compact = false }: ReportDetailProps) {
           <ul className="lineage-highlight-list">
             {report.lineage_highlights.map((lineage) => (
               <li className="card" key={lineage.lineage_snapshot_id}>
-                <Link to={`/lineages/${lineage.root_paper_id}`}>{lineage.summary}</Link>
+                <TopicLink to={`/lineages/${lineage.root_paper_id}`}>
+                  {lineage.summary}
+                </TopicLink>
                 <span>{lineage.uncertain ? "Uncertain lineage" : "Explicit lineage evidence"}</span>
               </li>
             ))}
@@ -203,7 +204,9 @@ export function ReportDetail({ report, compact = false }: ReportDetailProps) {
           <ul>
             {report.failures.map((failure) => (
               <li className="card" key={failure.id}>
-                <Link to={`/papers/${failure.paper_id}`}>Paper {failure.paper_id}</Link>
+                <TopicLink to={`/papers/${failure.paper_id}`}>
+                  Paper {failure.paper_id}
+                </TopicLink>
                 <dl>
                   <div>
                     <dt>Failed stage</dt>

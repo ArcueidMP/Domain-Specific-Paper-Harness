@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
-from tests.fakes import FakeArxiv
+from tests.fakes import FakeArxiv, fake_pipeline_execution_contract
 from tests.integration.test_m3_postgres_repository import (
     GroundedAnalysisLLM,
     RevisedGroundedAnalysisLLM,
@@ -26,6 +26,7 @@ from paper_harness.adapters.postgres import PostgresRepository
 from paper_harness.adapters.postgres.models import (
     GraphEntityMentionRow,
     PaperAnalysisRow,
+    ReportRow,
 )
 from paper_harness.application.analyze_papers import AnalyzePapers
 from paper_harness.application.ingest_arxiv import IngestArxiv
@@ -76,6 +77,8 @@ from paper_harness.domain.knowledge import (
 from paper_harness.domain.models import (
     DailyRun,
     PaperStage,
+    PipelineExecution,
+    PipelineExecutionMode,
     RunItemStatus,
     RunStatus,
     TopicConfig,
@@ -652,6 +655,165 @@ def test_complete_product_publication_round_trips_graph_trends_lineage_and_repor
         )[1]
         == 1
     )
+
+
+def test_reprocess_publishes_the_latest_same_date_revision_without_deleting_history(
+    postgres_repository: PostgresRepository,
+    postgres_engine: Engine,
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    target_record, logical_date = _prepare_complete_source(
+        postgres_repository,
+        topic_config,
+        arxiv_record_v1,
+    )
+    first = PublishProduct(
+        repository=postgres_repository,
+        llm=None,
+        clock=lambda: NOW + timedelta(days=1, minutes=10),
+    ).execute(
+        topic_config,
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=logical_date,
+    )
+    execution_id = UUID("3b301c07-9aa3-4a3d-b13a-e7b3ba4db146")
+    reprocess_started = NOW + timedelta(days=1, hours=1)
+    postgres_repository.start_pipeline_execution(
+        PipelineExecution(
+            id=execution_id,
+            topic_id=topic_config.id,
+            logical_date=logical_date,
+            execution_mode=PipelineExecutionMode.REPROCESS,
+            analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+            selection_limit=1,
+            contract=fake_pipeline_execution_contract(),
+            status=RunStatus.RUNNING,
+            deadline_at=reprocess_started + timedelta(hours=8),
+            started_at=reprocess_started,
+            completed_at=None,
+            error_code=None,
+            error_detail=None,
+            schema_version=1,
+            created_at=reprocess_started,
+        )
+    )
+    cursor_before_reprocess = postgres_repository.get_ingestion_cursor(topic_config.id)
+    ingestion_run = IngestArxiv(
+        arxiv=FakeArxiv((arxiv_record_v1,)),
+        repository=postgres_repository,
+        clock=lambda: reprocess_started,
+    ).execute(
+        topic_config,
+        logical_date=logical_date,
+        pipeline_execution_mode=PipelineExecutionMode.REPROCESS,
+        pipeline_selection_limit=1,
+        pipeline_execution_id=execution_id,
+        resume_existing=True,
+    )
+    assert ingestion_run.pipeline_execution_id == execution_id
+    assert postgres_repository.get_ingestion_cursor(topic_config.id) == cursor_before_reprocess
+
+    class ReprocessAnalysisLLM(GroundedAnalysisLLM):
+        def analyze(self, request: AnalysisRequest) -> GeneratedAnalysis:
+            return replace(
+                super().analyze(request),
+                generated_at=reprocess_started + timedelta(minutes=2),
+            )
+
+    analysis_run = AnalyzePapers(
+        arxiv=FakeArxiv(),
+        parser=None,
+        llm=ReprocessAnalysisLLM(),
+        repository=postgres_repository,
+        clock=lambda: reprocess_started + timedelta(minutes=2),
+    ).execute(
+        topic_config,
+        paper_ids=(stable_paper_id(arxiv_record_v1.canonical_arxiv_id),),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        logical_date=logical_date,
+        pipeline_execution_mode=PipelineExecutionMode.REPROCESS,
+        pipeline_selection_limit=1,
+        pipeline_execution_id=execution_id,
+        resume_existing=True,
+        reuse_contract=None,
+    )
+    _persist_comparison(
+        postgres_repository,
+        topic_config,
+        arxiv_record_v1,
+        target_record,
+        now=reprocess_started + timedelta(minutes=3),
+        session_salt="reprocess",
+        pipeline_execution_id=execution_id,
+    )
+    revised = PublishProduct(
+        repository=postgres_repository,
+        llm=None,
+        clock=lambda: reprocess_started + timedelta(minutes=10),
+    ).execute(
+        topic_config,
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=logical_date,
+        pipeline_execution_id=execution_id,
+    )
+    postgres_repository.complete_pipeline_execution(
+        execution_id,
+        status=revised.status,
+        completed_at=reprocess_started + timedelta(minutes=11),
+    )
+
+    assert analysis_run.pipeline_execution_id == execution_id
+    assert revised.id != first.id
+    detail = postgres_repository.get_product_run(
+        logical_date=logical_date,
+        topic_slug=topic_config.slug,
+    )
+    assert detail is not None
+    assert detail.run.id == revised.id
+    reports, total = postgres_repository.list_reports(
+        report_type=ReportType.DAILY,
+        topic_slug=topic_config.slug,
+        limit=10,
+        offset=0,
+    )
+    assert total == 1
+    assert reports[0].report.run_id == revised.id
+
+    source_paper_id = stable_paper_id(arxiv_record_v1.canonical_arxiv_id)
+    with Session(postgres_engine) as session:
+        source_analyses = tuple(
+            session.scalars(
+                select(PaperAnalysisRow)
+                .where(PaperAnalysisRow.paper_id == source_paper_id)
+                .order_by(PaperAnalysisRow.generated_at, PaperAnalysisRow.id)
+            )
+        )
+        persisted_reports = tuple(
+            session.scalars(
+                select(ReportRow).where(
+                    ReportRow.topic_id == topic_config.id,
+                    ReportRow.report_type == ReportType.DAILY.value,
+                    ReportRow.logical_date == logical_date,
+                )
+            )
+        )
+    assert {row.revision_id for row in source_analyses} == {None, execution_id}
+    assert len(persisted_reports) == 2
+
+    graph = postgres_repository.get_graph(
+        topic_slug=topic_config.slug,
+        as_of=logical_date,
+        paper_id=None,
+        entity_type=None,
+        relation_type=GraphRelationType.SIMILAR_TO,
+        provenance=RelationProvenance.LLM_INFERRED,
+        verification_status=VerificationStatus.UNVERIFIED,
+        max_nodes=200,
+        max_edges=400,
+    )
+    assert graph is not None
+    assert len(graph.edges) == 1
 
 
 def test_historical_analysis_failure_persists_exact_partial_daily_report(

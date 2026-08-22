@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 
 import { ApiRequestError, type ComparisonEvidence } from "../api/client";
 import { comparisonQuery, paperQuery } from "../api/queries";
 import { StateNotice } from "../components/StateNotice";
+import { TopicLink } from "../components/TopicLink";
 import { formatDateTime } from "../lib/format";
 
 function label(value: string): string {
@@ -75,9 +76,9 @@ export function ComparisonPage() {
       comparison.error instanceof ApiRequestError && comparison.error.status === 404;
     return (
       <section className="page-section">
-        <Link className="back-link" to="/papers">
+        <TopicLink className="back-link" to="/papers">
           Back to papers
-        </Link>
+        </TopicLink>
         {missing ? (
           <StateNotice
             kind="empty"
@@ -109,9 +110,9 @@ export function ComparisonPage() {
       sourcePaper.error ?? targetPaper.error ?? new Error("Compared paper metadata is unavailable.");
     return (
       <section className="page-section">
-        <Link className="back-link" to="/papers">
+        <TopicLink className="back-link" to="/papers">
           Back to papers
-        </Link>
+        </TopicLink>
         <StateNotice
           kind="error"
           title="Unable to load comparison papers"
@@ -137,9 +138,9 @@ export function ComparisonPage() {
 
   return (
     <section className="page-section comparison-page">
-      <Link className="back-link" to={`/papers/${detail.source_paper_id}`}>
+      <TopicLink className="back-link" to={`/papers/${detail.source_paper_id}`}>
         Back to source paper
-      </Link>
+      </TopicLink>
 
       <header className="comparison-header">
         <div>
@@ -175,11 +176,11 @@ export function ComparisonPage() {
               <tr>
                 <th scope="col">Dimension</th>
                 <th scope="col">
-                  <Link to={`/papers/${sourcePaper.data.id}`}>{sourceTitle}</Link>
+                  <TopicLink to={`/papers/${sourcePaper.data.id}`}>{sourceTitle}</TopicLink>
                   <span>New paper</span>
                 </th>
                 <th scope="col">
-                  <Link to={`/papers/${targetPaper.data.id}`}>{targetTitle}</Link>
+                  <TopicLink to={`/papers/${targetPaper.data.id}`}>{targetTitle}</TopicLink>
                   <span>Historical paper</span>
                 </th>
                 <th scope="col">Assessment</th>
@@ -245,7 +246,7 @@ export function ComparisonPage() {
                     <div>
                       <dt>Paper</dt>
                       <dd>
-                        <Link to={`/papers/${item.paper_id}`}>{paperTitle}</Link>
+                        <TopicLink to={`/papers/${item.paper_id}`}>{paperTitle}</TopicLink>
                       </dd>
                     </div>
                     <div>

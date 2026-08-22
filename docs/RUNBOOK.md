@@ -135,14 +135,14 @@ Use enabled positive numeric versions in the untracked `.tfvars` file.
 ## Build and publish images
 
 Run the focused tests and static checks for the changed component before a
-production build. Reserve the single canonical verification run for the end of
-M5, after production acceptance.
+production build. Reserve the single canonical verification run for the final
+milestone or release gate after production acceptance.
 
 Choose a unique tag and build only the component that changed. Build and push
 in one invocation when the registry is reachable:
 
 ```powershell
-$Tag = "m5-$(Get-Date -Format yyyyMMddHHmmss)"
+$Tag = "release-$(Get-Date -Format yyyyMMddHHmmss)"
 scripts/build-images.ps1 `
   -ProjectId $Project `
   -Region $Region `
@@ -211,8 +211,9 @@ Use the safe deployment order:
 1. Secret containers, Artifact Registry, APIs, and service accounts.
 2. Migration Job.
 3. Web/API and private GROBID.
-4. Daily Job with all fixed secret versions.
-5. Scheduler paused, only after the direct Daily verification succeeds.
+4. Topic Daily Jobs with all fixed secret versions.
+5. Topic Schedulers paused until the corresponding direct Daily verifications
+   succeed.
 
 ## Migration
 
@@ -229,7 +230,7 @@ After completion, connect through an authorized database channel and run:
 SELECT version_num FROM alembic_version;
 ```
 
-The expected current revision is `0005_m5_pipeline_provenance`.
+The expected current revision is `0006_topic_reprocessing`.
 
 ## Private runtime verification
 
@@ -248,11 +249,27 @@ the only GROBID invoker.
 
 ## Direct Daily verification
 
-Before creating Scheduler, execute the deployed Daily Job directly:
+Execute each deployed topic Job directly:
 
 ```powershell
 scripts/run-production-daily.ps1 -ProjectId $Project -Region $Region
+scripts/run-production-daily.ps1 -ProjectId $Project -Region $Region `
+  -JobName paper-harness-daily-brain-computer-interfaces
+scripts/run-production-daily.ps1 -ProjectId $Project -Region $Region `
+  -JobName paper-harness-daily-world-models
 ```
+
+To create a fresh same-date publication revision without changing the Job's
+scheduled defaults, use per-execution environment overrides:
+
+```powershell
+scripts/run-production-daily.ps1 -ProjectId $Project -Region $Region `
+  -JobName paper-harness-daily -LogicalDate 2026-08-22 -Reprocess
+```
+
+For BCI or World Models, replace `-JobName` with the corresponding exact name
+shown above. A successful revision becomes the public result for that
+topic/date; prior revisions remain available for audit.
 
 Verify all of the following from database and API reads:
 
@@ -273,26 +290,32 @@ remain `FAILED`.
 
 ## Scheduler
 
-Set `deploy_scheduler = true` and `scheduler_paused = true` only after the
-direct Daily verification succeeds. Apply the reviewed Terraform plan and
-inspect the paused job:
+Set `deploy_scheduler = true` and `scheduler_paused = true` only after direct
+Daily verification succeeds for each configured topic. Apply the reviewed
+Terraform plan and inspect the three paused jobs:
 
 ```powershell
 scripts/verify-scheduler.ps1 -ProjectId $Project -Region $Region -Action Describe
+scripts/verify-scheduler.ps1 -ProjectId $Project -Region $Region -SchedulerName paper-harness-daily-brain-computer-interfaces -Action Describe
+scripts/verify-scheduler.ps1 -ProjectId $Project -Region $Region -SchedulerName paper-harness-daily-world-models -Action Describe
 ```
 
 Set `scheduler_paused = false`, review the Terraform plan, and apply it to
-enable the 05:00 `Asia/Kuala_Lumpur` schedule. Cloud Scheduler rejects manual
-invocations while a job is paused, so run the verification only after the
-Terraform-owned enablement:
+enable the staggered `Asia/Kuala_Lumpur` schedules: Broad LLM Agents at 05:00,
+Brain-Computer Interfaces at 05:20, and World Models at 05:40. Cloud Scheduler
+rejects manual invocations while a job is paused, so run verification only
+after the Terraform-owned enablement:
 
 ```powershell
 scripts/verify-scheduler.ps1 -ProjectId $Project -Region $Region -Action Run
+scripts/verify-scheduler.ps1 -ProjectId $Project -Region $Region -SchedulerName paper-harness-daily-brain-computer-interfaces -Action Run
+scripts/verify-scheduler.ps1 -ProjectId $Project -Region $Region -SchedulerName paper-harness-daily-world-models -Action Run
 ```
 
-Confirm the forced invocation produced one expected Daily execution. To disable
-the schedule again, set `scheduler_paused = true` and apply Terraform. Scheduler
-state remains owned by Terraform rather than an imperative pause/resume helper.
+Confirm each forced invocation produced one expected topic-specific Daily
+execution. To disable the schedules again, set `scheduler_paused = true` and
+apply Terraform. Scheduler state remains owned by Terraform rather than an
+imperative pause/resume helper.
 
 ## Routine checks
 
@@ -300,8 +323,14 @@ state remains owned by Terraform rather than an imperative pause/resume helper.
 gcloud run services describe paper-harness-web --project=$Project --region=$Region
 gcloud run services describe paper-harness-grobid --project=$Project --region=$Region
 gcloud run jobs describe paper-harness-daily --project=$Project --region=$Region
+gcloud run jobs describe paper-harness-daily-brain-computer-interfaces --project=$Project --region=$Region
+gcloud run jobs describe paper-harness-daily-world-models --project=$Project --region=$Region
 gcloud run jobs executions list --job=paper-harness-daily --project=$Project --region=$Region
+gcloud run jobs executions list --job=paper-harness-daily-brain-computer-interfaces --project=$Project --region=$Region
+gcloud run jobs executions list --job=paper-harness-daily-world-models --project=$Project --region=$Region
 gcloud scheduler jobs describe paper-harness-daily --project=$Project --location=$Region
+gcloud scheduler jobs describe paper-harness-daily-brain-computer-interfaces --project=$Project --location=$Region
+gcloud scheduler jobs describe paper-harness-daily-world-models --project=$Project --location=$Region
 ```
 
 Operational logs should contain concise start, final result, publication, and
@@ -326,5 +355,3 @@ durations, and cost estimates without recording sensitive content.
 - For infrastructure failure, inspect the direct command output and current
   cloud state, correct the root cause, generate a fresh Terraform plan when
   infrastructure changed, and rerun only the failed direct operation.
-- Keep Scheduler paused until the Daily result and persisted product data are
-  verified.

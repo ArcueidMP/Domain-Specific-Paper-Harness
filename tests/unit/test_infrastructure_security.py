@@ -87,7 +87,8 @@ def test_known_runtime_units_are_bounded_and_scheduler_has_no_automatic_retry() 
         assert re.search(r"\bmax_retries\s*=\s*0\b", block)
 
     scheduler = _resource_block(runtime, "google_cloud_scheduler_job", "daily")
-    assert "schedule         = var.schedule" in scheduler
+    assert "for_each = var.deploy_scheduler ? local.daily_topics : {}" in scheduler
+    assert "schedule         = each.value.schedule" in scheduler
     assert "time_zone        = var.schedule_time_zone" in scheduler
     assert "paused           = var.scheduler_paused" in scheduler
     assert re.search(r"\bretry_count\s*=\s*0\b", scheduler)
@@ -102,7 +103,10 @@ def test_operator_scripts_use_direct_commands() -> None:
     assert '"init"' in deploy
     assert '$Action = if ($Apply) { "apply" } else { "plan" }' in deploy
     assert "run jobs execute" in migration
-    assert "run jobs execute" in daily
+    assert '"run", "jobs", "execute"' in daily
+    assert "PIPELINE_LOGICAL_DATE" in daily
+    assert "PIPELINE_REPROCESS=true" in daily
+    assert "--update-env-vars=" in daily
     for action in ("describe", "run"):
         assert f"scheduler jobs {action}" in scheduler
     for action in ("pause", "resume"):

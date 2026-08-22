@@ -37,6 +37,7 @@ const targetPaperVersionId = "55e69ff3-643b-4699-9699-235b29bc71a1";
 const targetAnalysisId = "57eeea6e-ecae-409c-a023-a277516d5db8";
 const sourceEvidenceId = "a50b18f1-bf2c-4121-87ed-4c2d6b3d193b";
 const targetEvidenceId = "aaec48b6-0ce0-43f1-95e7-1954129d79ca";
+const defaultTopic = "broad-llm-agents";
 
 const paperDetail = {
   ...paper,
@@ -519,7 +520,9 @@ test("partial run and grounded paper analysis render without live credentials", 
 
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "What changed in agent research?" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "What changed in this research domain?" }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: paper.title, exact: true }).first()).toBeVisible();
   await expect(page.getByText("PARTIAL", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Partial daily run")).toBeVisible();
@@ -527,7 +530,7 @@ test("partial run and grounded paper analysis render without live credentials", 
 
   await page.getByRole("link", { name: "Papers", exact: true }).click();
 
-  await expect(page).toHaveURL(/\/papers$/);
+  await expect(page).toHaveURL(new RegExp(`/papers\\?topic=${defaultTopic}$`));
   await expect(page.getByRole("heading", { name: "Papers" })).toBeVisible();
   await expect(page.getByText(paper.title)).toBeVisible();
   await expect(page.getByRole("link", { name: /Open PDF/ })).toHaveAttribute(
@@ -537,7 +540,7 @@ test("partial run and grounded paper analysis render without live credentials", 
 
   await page.getByRole("link", { name: paper.title }).click();
 
-  await expect(page).toHaveURL(new RegExp(`/papers/${paper.id}$`));
+  await expect(page).toHaveURL(new RegExp(`/papers/${paper.id}\\?topic=${defaultTopic}$`));
   await expect(page.getByRole("heading", { name: "Analysis of arXiv v2" })).toBeVisible();
   await expect(page.locator(".scope-badge", { hasText: "full text" })).toBeVisible();
   await expect(page.getByText(parsedPaperId)).toBeVisible();
@@ -555,7 +558,9 @@ test("partial run and grounded paper analysis render without live credentials", 
 
   await page.getByRole("link", { name: "Open structured comparison" }).click();
 
-  await expect(page).toHaveURL(new RegExp(`/comparisons/${comparisonId}$`));
+  await expect(page).toHaveURL(
+    new RegExp(`/comparisons/${comparisonId}\\?topic=${defaultTopic}$`),
+  );
   await expect(page.getByRole("heading", { name: "Structured paper comparison" })).toBeVisible();
   await expect(page.getByText("partially comparable")).toBeVisible();
   await expect(page.getByText(comparison.comparability_reason)).toBeVisible();
@@ -586,7 +591,7 @@ test("M4 reports, graph, trends, lineage, and run failures remain traceable", as
   await expect(page.getByText("GROBID_INVALID_TEI").last()).toBeVisible();
   await expect(page.getByRole("link", { name: "Open evidence in paper" })).toHaveAttribute(
     "href",
-    `/papers/${paper.id}#evidence-${sourceEvidenceId}`,
+    `/papers/${paper.id}?topic=${defaultTopic}#evidence-${sourceEvidenceId}`,
   );
 
   await page.getByRole("link", { name: "Graph", exact: true }).click();
@@ -597,11 +602,11 @@ test("M4 reports, graph, trends, lineage, and run failures remain traceable", as
   await expect(page.getByText("llm inferred / unverified", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Evidence 1 (source)" }).first()).toHaveAttribute(
     "href",
-    `/papers/${paper.id}#evidence-${sourceEvidenceId}`,
+    `/papers/${paper.id}?topic=${defaultTopic}#evidence-${sourceEvidenceId}`,
   );
   await expect(page.getByRole("link", { name: "Evidence 2 (target)" })).toHaveAttribute(
     "href",
-    `/papers/${targetPaperId}#evidence-${targetEvidenceId}`,
+    `/papers/${targetPaperId}?topic=${defaultTopic}#evidence-${targetEvidenceId}`,
   );
   await page.getByRole("link", { name: "View related paper lineage" }).click();
 
@@ -610,11 +615,11 @@ test("M4 reports, graph, trends, lineage, and run failures remain traceable", as
   await expect(page.getByText("AI-inferred")).toBeVisible();
   await expect(page.getByRole("link", { name: "Evidence 1 (source)" })).toHaveAttribute(
     "href",
-    `/papers/${paper.id}#evidence-${sourceEvidenceId}`,
+    `/papers/${paper.id}?topic=${defaultTopic}#evidence-${sourceEvidenceId}`,
   );
   await expect(page.getByRole("link", { name: "Evidence 2 (target)" })).toHaveAttribute(
     "href",
-    `/papers/${targetPaperId}#evidence-${targetEvidenceId}`,
+    `/papers/${targetPaperId}?topic=${defaultTopic}#evidence-${targetEvidenceId}`,
   );
 
   await page.getByRole("link", { name: "Trends", exact: true }).click();

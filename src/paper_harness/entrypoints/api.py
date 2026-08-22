@@ -149,7 +149,7 @@ from paper_harness.ports.repository import (
 def create_app(repository: RepositoryPort | None = None) -> FastAPI:
     app = FastAPI(
         title="Domain-Specific Paper Harness API",
-        description="Private read-oriented API for broad LLM-agent research intelligence.",
+        description="Private read-oriented API for topic-scoped research intelligence.",
         version="0.1.0",
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",

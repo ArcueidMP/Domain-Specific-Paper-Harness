@@ -108,7 +108,7 @@ from .models import (
 )
 from .product_repository import ProductRepositoryMixin
 
-EXPECTED_DATABASE_REVISION = "0005_m5_pipeline_provenance"
+EXPECTED_DATABASE_REVISION = "0006_topic_reprocessing"
 
 
 class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
@@ -141,7 +141,11 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
             "topic_id": execution.topic_id,
             "logical_date": execution.logical_date,
             "execution_mode": execution.execution_mode.value,
-            "execution_key": "canonical",
+            "execution_key": (
+                "canonical"
+                if execution.execution_mode is PipelineExecutionMode.NORMAL
+                else str(execution.id)
+            ),
             "analysis_scope": execution.analysis_scope.value,
             "selection_limit": execution.selection_limit,
             "execution_contract": _pipeline_execution_contract_values(execution.contract),
@@ -606,8 +610,9 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
                 ).one_or_none()
                 if locked_run is None:
                     raise RepositoryError(f"run {run_id} is missing or no longer running")
-                expected_cursor_policy = (
-                    locked_run.pipeline_execution_mode != PipelineExecutionMode.SMOKE.value
+                expected_cursor_policy = locked_run.pipeline_execution_mode not in (
+                    PipelineExecutionMode.REPROCESS.value,
+                    PipelineExecutionMode.SMOKE.value,
                 )
                 if advance_shared_cursor is not expected_cursor_policy:
                     raise RepositoryIntegrityError(
@@ -1939,6 +1944,7 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
                     or existing.configured_model != bundle.analysis.configured_model
                     or existing.model_version != bundle.analysis.model_version
                     or existing.prompt_version != bundle.analysis.prompt_version
+                    or existing.revision_id != bundle.analysis.revision_id
                 ):
                     raise RepositoryError("stable analysis identity conflicts with stored data")
                 item.stage = PaperStage.EVIDENCE_EXTRACTED.value
@@ -2498,6 +2504,7 @@ def _add_analysis_bundle(session: Session, bundle: AnalysisBundle) -> None:
             configured_model=analysis.configured_model,
             model_version=analysis.model_version,
             prompt_version=analysis.prompt_version,
+            revision_id=analysis.revision_id,
             generated_at=analysis.generated_at,
             source=analysis.source,
             verification_status=analysis.verification_status.value,
@@ -2965,6 +2972,7 @@ def _analysis_from_row(row: PaperAnalysisRow) -> PaperAnalysis:
         ),
         schema_version=row.schema_version,
         created_at=row.created_at,
+        revision_id=row.revision_id,
     )
 
 

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -15,6 +15,8 @@ import {
 import type { TrendSnapshot, TrendWindow } from "../api/client";
 import { trendsQuery } from "../api/queries";
 import { StateNotice } from "../components/StateNotice";
+import { TopicLink } from "../components/TopicLink";
+import { useTopicSlug } from "../lib/topic";
 
 const windows = ["7D", "30D", "90D"] as const satisfies readonly TrendWindow[];
 
@@ -38,15 +40,18 @@ function relativeChange(snapshot: TrendSnapshot): string {
 }
 
 export function TrendsPage() {
+  const topicSlug = useTopicSlug();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialWindow = searchParams.get("window");
   const [window, setWindow] = useState<TrendWindow>(isWindow(initialWindow) ? initialWindow : "7D");
-  const trends = useQuery(trendsQuery([window]));
+  const trends = useQuery(trendsQuery(topicSlug, [window]));
   const snapshot = trends.data?.items[0];
 
   function chooseWindow(value: TrendWindow) {
     setWindow(value);
-    setSearchParams({ window: value });
+    const next = new URLSearchParams(searchParams);
+    next.set("window", value);
+    setSearchParams(next);
   }
 
   const paperCounts = snapshot
@@ -234,7 +239,9 @@ export function TrendsPage() {
                   <li className="card" key={entity.entity_id}>
                     <div>
                       <span>{readable(entity.entity_type)}</span>
-                      <Link to={`/graph?entity_id=${entity.entity_id}`}>{entity.label}</Link>
+                      <TopicLink to={`/graph?entity_id=${entity.entity_id}`}>
+                        {entity.label}
+                      </TopicLink>
                     </div>
                     <dl>
                       <div>
@@ -278,7 +285,7 @@ export function TrendsPage() {
               <ol>
                 {snapshot.representative_papers.map((paper) => (
                   <li key={paper.paper_version_id}>
-                    <Link to={`/papers/${paper.paper_id}`}>{paper.title}</Link>
+                    <TopicLink to={`/papers/${paper.paper_id}`}>{paper.title}</TopicLink>
                     <span>{paper.activity_date}</span>
                   </li>
                 ))}

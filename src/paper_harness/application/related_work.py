@@ -350,6 +350,8 @@ class RelatedWorkSearch:
                                 source_title=source_version.title,
                                 source_research_problem=(analysis_detail.analysis.research_problem),
                                 source_method=analysis_detail.analysis.method_summary,
+                                topic_name=topic.name,
+                                topic_description=topic.description,
                                 topic_include_terms=topic.include_terms,
                                 topic_exclude_terms=topic.exclude_terms,
                                 year_from=year_from,
@@ -1146,6 +1148,15 @@ class RelatedWorkSearch:
         if value.tzinfo is None or value.utcoffset() is None:
             raise DomainInvariantError("related-work clock must return a timezone-aware datetime")
         return value.astimezone(UTC)
+
+
+def build_related_work_objective(topic: TopicConfig) -> str:
+    """Describe the configured topic for evidence-backed prior-work retrieval."""
+
+    return (
+        f"Identify historical and related work for {topic.name}: {topic.description} "
+        "Use persisted evidence for systematic comparison to the source paper."
+    )
 
 
 def allowed_search_tools() -> frozenset[SearchTool]:

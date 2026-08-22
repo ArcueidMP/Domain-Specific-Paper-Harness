@@ -32,10 +32,10 @@ export const topicsQuery = () =>
     queryFn: getTopics,
   });
 
-export const papersQuery = (limit: number, offset: number) =>
+export const papersQuery = (topic: string, limit: number, offset: number) =>
   queryOptions({
-    queryKey: ["papers", { limit, offset }],
-    queryFn: () => getPapers({ limit, offset }),
+    queryKey: ["papers", { topic, limit, offset }],
+    queryFn: () => getPapers({ topic, limit, offset }),
   });
 
 export const paperQuery = (paperId: string) =>
@@ -73,28 +73,28 @@ export const comparisonQuery = (comparisonId: string) =>
     queryFn: () => getComparison(comparisonId),
   });
 
-export const latestRunQuery = () =>
+export const latestRunQuery = (topic: string) =>
   queryOptions({
-    queryKey: ["runs", "latest"],
-    queryFn: getLatestRun,
+    queryKey: ["runs", "latest", { topic }],
+    queryFn: () => getLatestRun({ topic }),
   });
 
-export const latestDailyQuery = () =>
+export const latestDailyQuery = (topic: string) =>
   queryOptions({
-    queryKey: ["daily", "latest"],
-    queryFn: () => getLatestDaily(),
+    queryKey: ["daily", "latest", { topic }],
+    queryFn: () => getLatestDaily({ topic }),
   });
 
-export const dailyQuery = (logicalDate: string) =>
+export const dailyQuery = (topic: string, logicalDate: string) =>
   queryOptions({
-    queryKey: ["daily", logicalDate],
-    queryFn: () => getDaily(logicalDate),
+    queryKey: ["daily", logicalDate, { topic }],
+    queryFn: () => getDaily(logicalDate, { topic }),
   });
 
-export const dailyReportsQuery = (limit = 20, offset = 0) =>
+export const dailyReportsQuery = (topic: string, limit = 20, offset = 0) =>
   queryOptions({
-    queryKey: ["reports", "daily", { limit, offset }],
-    queryFn: () => getDailyReports({ limit, offset }),
+    queryKey: ["reports", "daily", { topic, limit, offset }],
+    queryFn: () => getDailyReports({ topic, limit, offset }),
   });
 
 export type GraphFilters = {
@@ -105,11 +105,12 @@ export type GraphFilters = {
   entityId?: string;
 };
 
-export const knowledgeGraphQuery = (filters: GraphFilters = {}) =>
+export const knowledgeGraphQuery = (topic: string, filters: GraphFilters = {}) =>
   queryOptions({
-    queryKey: ["graph", filters],
+    queryKey: ["graph", { topic, ...filters }],
     queryFn: () =>
       getKnowledgeGraph({
+        topic,
         entity_type: filters.entityType,
         relation_type: filters.relationType,
         provenance: filters.provenance,
@@ -120,28 +121,37 @@ export const knowledgeGraphQuery = (filters: GraphFilters = {}) =>
       }),
   });
 
-export const trendsQuery = (windows?: TrendWindow[]) =>
+export const trendsQuery = (topic: string, windows?: TrendWindow[]) =>
   queryOptions({
-    queryKey: ["trends", { windows }],
+    queryKey: ["trends", { topic, windows }],
     queryFn: () =>
-      getTrends(windows ? { window: windows, max_entities: 50 } : { max_entities: 50 }),
+      getTrends(
+        windows
+          ? { topic, window: windows, max_entities: 50 }
+          : { topic, max_entities: 50 },
+      ),
   });
 
-export const lineageQuery = (entityOrPaperId: string, maxDepth = 5) =>
+export const lineageQuery = (topic: string, entityOrPaperId: string, maxDepth = 5) =>
   queryOptions({
-    queryKey: ["lineages", entityOrPaperId, { maxDepth }],
+    queryKey: ["lineages", entityOrPaperId, { topic, maxDepth }],
     queryFn: () =>
-      getLineage(entityOrPaperId, { max_depth: maxDepth, max_nodes: 100, max_edges: 200 }),
+      getLineage(entityOrPaperId, {
+        topic,
+        max_depth: maxDepth,
+        max_nodes: 100,
+        max_edges: 200,
+      }),
   });
 
-export const runsQuery = (limit = 50, offset = 0) =>
+export const runsQuery = (topic: string, limit = 50, offset = 0) =>
   queryOptions({
-    queryKey: ["runs", { limit, offset }],
-    queryFn: () => getRuns({ limit, offset }),
+    queryKey: ["runs", { topic, limit, offset }],
+    queryFn: () => getRuns({ topic, limit, offset }),
   });
 
-export const runQuery = (runId?: string) =>
+export const runQuery = (topic: string, runId?: string) =>
   queryOptions({
-    queryKey: ["runs", runId ?? "latest", "detail"],
-    queryFn: () => (runId ? getRun(runId) : getLatestRun()),
+    queryKey: ["runs", runId ?? "latest", "detail", { topic }],
+    queryFn: () => (runId ? getRun(runId) : getLatestRun({ topic })),
   });

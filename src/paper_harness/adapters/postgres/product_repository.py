@@ -9,9 +9,9 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID, uuid4, uuid5
 
-from sqlalchemy import case, delete, func, or_, select, union, update
+from sqlalchemy import and_, case, delete, func, or_, select, union, update
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from paper_harness.application.product_models import (
     ComparisonGraphInput,
@@ -170,10 +170,30 @@ def _sorted_ids(values: Iterable[UUID]) -> tuple[UUID, ...]:
 
 
 def _published_product_run_ids(*, topic_id: UUID | None = None, as_of: date | None = None) -> Any:
+    newer = aliased(DailyRunRow)
+    newer_published_revision = (
+        select(newer.id)
+        .where(
+            newer.topic_id == DailyRunRow.topic_id,
+            newer.logical_date == DailyRunRow.logical_date,
+            newer.operation == RunOperation.PRODUCT_PUBLICATION.value,
+            newer.status.in_(_PUBLISHED_PRODUCT_STATUSES),
+            newer.pipeline_execution_mode != PipelineExecutionMode.SMOKE.value,
+            or_(
+                newer.started_at > DailyRunRow.started_at,
+                and_(
+                    newer.started_at == DailyRunRow.started_at,
+                    newer.id > DailyRunRow.id,
+                ),
+            ),
+        )
+        .exists()
+    )
     statement = select(DailyRunRow.id).where(
         DailyRunRow.operation == RunOperation.PRODUCT_PUBLICATION.value,
         DailyRunRow.status.in_(_PUBLISHED_PRODUCT_STATUSES),
         DailyRunRow.pipeline_execution_mode != PipelineExecutionMode.SMOKE.value,
+        ~newer_published_revision,
     )
     if topic_id is not None:
         statement = statement.where(DailyRunRow.topic_id == topic_id)
@@ -2674,6 +2694,7 @@ def _analysis_from_row(row: PaperAnalysisRow) -> PaperAnalysis:
         ),
         schema_version=row.schema_version,
         created_at=row.created_at,
+        revision_id=row.revision_id,
     )
 
 

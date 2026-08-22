@@ -4,15 +4,17 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { papersQuery } from "../api/queries";
 import { PaperCard } from "../components/PaperCard";
 import { StateNotice } from "../components/StateNotice";
+import { useTopicSlug } from "../lib/topic";
 
 const pageSize = 20;
 
 export function PapersPage() {
+  const topicSlug = useTopicSlug();
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search.trim().toLocaleLowerCase());
   const papers = useQuery({
-    ...papersQuery(pageSize, offset),
+    ...papersQuery(topicSlug, pageSize, offset),
     placeholderData: keepPreviousData,
   });
 

@@ -36,7 +36,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -147,12 +148,42 @@ a {
 }
 
 .private-label {
-  justify-self: end;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.header-tools {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.topic-selector {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.topic-selector select {
+  width: 190px;
+  min-height: 34px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: 5px 28px 5px 9px;
+  background: var(--paper);
+  color: var(--forest);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .private-dot {
@@ -1989,6 +2020,11 @@ a {
   color: var(--warning);
 }
 
+.execution-mode-badge.reprocess {
+  background: #e4e8f5;
+  color: #3f4f82;
+}
+
 .execution-identity {
   max-width: 70%;
   overflow-wrap: anywhere;
@@ -3092,6 +3128,11 @@ a {
     overflow-x: auto;
   }
 
+  .header-tools {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
   .private-label {
     display: none;
   }
@@ -3132,6 +3173,16 @@ a {
     grid-template-columns: 1fr;
     gap: 10px;
     padding-block: 12px;
+  }
+
+  .header-tools {
+    grid-column: auto;
+    justify-self: stretch;
+  }
+
+  .topic-selector,
+  .topic-selector select {
+    width: 100%;
   }
 
   .brand-copy small,

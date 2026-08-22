@@ -2,8 +2,8 @@
 
 ## System context
 
-Domain-Specific Paper Harness is a private research-intelligence product for
-broad LLM-agent research. It continuously discovers arXiv papers, analyzes
+Domain-Specific Paper Harness is a private multi-topic research-intelligence
+product. It continuously discovers arXiv papers, analyzes
 selected full text, retrieves approved historical work, creates traceable
 comparisons, and publishes a provenance-aware graph, trends, lineages, and
 reports.
@@ -13,8 +13,8 @@ deployed runtime units:
 
 1. `web-api` serves FastAPI under `/api/v1`, health endpoints, and the compiled
    React application.
-2. `daily` runs bounded discovery through atomic product publication as a Cloud
-   Run Job.
+2. `daily` runs one bounded Cloud Run Job per TopicConfig through atomic product
+   publication; all topic Jobs share the same image and runtime dependencies.
 3. `grobid` is the sole scientific PDF parser and is an IAM-private Cloud Run
    service.
 
@@ -82,7 +82,10 @@ Completed child artifacts may be reused when their source ownership, target
 versions, and analysis scope are compatible with the consuming operation. A
 failed or interrupted unpublished pipeline may re-evaluate and replan from
 current valid persisted inputs; it is not forced to reuse a stale candidate or
-comparison snapshot. Terminal published artifacts remain immutable.
+comparison snapshot. `--reprocess` creates a new immutable same-date revision;
+public reads select the latest successful revision for the topic/date. A
+reprocess reads its logical-date lookback window and does not advance that
+topic's cursor used by scheduled NORMAL executions.
 
 External calls happen outside write transactions. Every phase has bounded
 timeouts, retries, candidate counts, search steps, queue size, citation depth,
@@ -160,7 +163,9 @@ lineage, and report rows are staged under one product run. The final report,
 links, item publication states, canonical graph updates, and terminal run state
 commit atomically. Failed unpublished staging is discarded; a later attempt may
 replan from current valid persisted inputs without inheriting a frozen target
-set. Terminal published artifacts remain immutable.
+set. Each terminal publication revision remains immutable; same-date
+reprocessing creates a new revision and public reads select the latest
+successful one.
 
 Publication states are:
 
@@ -218,18 +223,19 @@ Terraform declares:
 - a one-task, zero-retry Alembic migration Job;
 - IAP-protected Web/API with the owner as the sole application accessor;
 - IAM-private GROBID callable only by the Daily identity;
-- the bounded Daily Job with fixed numeric secret versions; and
-- a paused-by-default 05:00 `Asia/Kuala_Lumpur` Scheduler target.
+- the bounded topic Daily Jobs with fixed numeric secret versions; and
+- staggered `Asia/Kuala_Lumpur` Scheduler targets, paused by default before
+  production acceptance and enabled after verification.
 
 All Cloud Run services use zero minimum instances. Terraform contains no public
 principal, project-wide runtime role, Cloud SQL, load balancer, VM, Kubernetes,
 Redis, VPC connector, NAT, or exported service-account key.
 
 Operations are direct: build images, resolve immutable digests, inspect and
-apply Terraform, run migration, verify private runtime, run the Daily Job once,
-verify persisted output, then create Scheduler paused and enable it only after a
-successful forced invocation. Deployment scripts do not grant temporary IAM
-roles or maintain a parallel release-state database.
+apply Terraform, run migration, verify private runtime, run every topic Job,
+verify persisted output, then enable each Scheduler after its corresponding Job
+is accepted. Deployment scripts do not grant temporary IAM roles or maintain a
+parallel release-state database.
 
 ## Upstream reuse
 
@@ -254,9 +260,8 @@ Terraform formatting and validation, repository hygiene, and persistence
 integration.
 
 During iteration, run only focused unit, contract, static, and infrastructure
-checks for the changed boundary. Run the canonical entrypoint once after M5
-implementation and production acceptance are complete and the source is ready
-for the completion commit.
+checks for the changed boundary. Run the canonical entrypoint once when the
+source and production state are ready for a milestone or release commit.
 
 Default verification has no live DeepSeek, Semantic Scholar, GROBID, or cloud
 dependency. Live provider checks are explicitly opt-in and fail clearly when

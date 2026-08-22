@@ -1,8 +1,7 @@
-import { Link } from "react-router-dom";
-
 import type { RunItem, RunSummary } from "../api/client";
 import { formatDateTime } from "../lib/format";
 import { RunStatusBadge } from "./RunStatusBadge";
+import { TopicLink } from "./TopicLink";
 
 type LatestRunPanelProps = {
   run: RunSummary;
@@ -20,7 +19,9 @@ export function LatestRunPanel({ run, items = [], heading = "Daily run" }: Lates
       ? "Deployment smoke"
       : run.pipeline_execution_mode === "NORMAL"
         ? "Normal execution"
-        : "Standalone operation";
+        : run.pipeline_execution_mode === "REPROCESS"
+          ? "Reprocessed publication"
+          : "Standalone operation";
 
   return (
     <article className="run-panel card">
@@ -117,10 +118,10 @@ export function LatestRunPanel({ run, items = [], heading = "Daily run" }: Lates
               const identifier = `arXiv:${item.canonical_arxiv_id}`;
               return (
                 <li key={item.id}>
-                  <Link to={`/papers/${item.paper_id}`}>
+                  <TopicLink to={`/papers/${item.paper_id}`}>
                     <strong>{item.paper_title}</strong>
                     <span>{identifier}</span>
-                  </Link>
+                  </TopicLink>
                   <dl>
                     <div>
                       <dt>Failed stage</dt>

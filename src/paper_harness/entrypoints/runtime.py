@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from time import monotonic
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from paper_harness.adapters.arxiv import ArxivClient
 from paper_harness.adapters.config import load_topic_config
@@ -58,7 +58,11 @@ from paper_harness.application.read_models import (
     RunDetail,
     SearchSessionDetail,
 )
-from paper_harness.application.related_work import RelatedWorkInputError, RelatedWorkSearch
+from paper_harness.application.related_work import (
+    RelatedWorkInputError,
+    RelatedWorkSearch,
+    build_related_work_objective,
+)
 from paper_harness.domain.analysis import AnalysisScope
 from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.domain.historical import (
@@ -335,6 +339,7 @@ def execute_daily_pipeline(
     analysis_scope: AnalysisScope,
     narrative_mode: ReportNarrativeMode,
     max_selected_papers: int,
+    reprocess: bool = False,
     backfill_max_queries: int = 8,
     backfill_per_query_limit: int = 100,
     backfill_timeout_seconds: float = 1800.0,
@@ -398,11 +403,12 @@ def execute_daily_pipeline(
     )
     run_date = logical_date or datetime.now(UTC).astimezone(SCHEDULE_TIME_ZONE).date()
     execution_started_at = datetime.now(UTC)
+    execution_mode = PipelineExecutionMode.REPROCESS if reprocess else PipelineExecutionMode.NORMAL
     execution = PipelineExecution(
-        id=stable_pipeline_execution_id(topic.id, run_date),
+        id=(uuid4() if reprocess else stable_pipeline_execution_id(topic.id, run_date)),
         topic_id=topic.id,
         logical_date=run_date,
-        execution_mode=PipelineExecutionMode.NORMAL,
+        execution_mode=execution_mode,
         analysis_scope=analysis_scope,
         selection_limit=max_selected_papers,
         contract=PipelineExecutionContract(
@@ -475,7 +481,7 @@ def execute_daily_pipeline(
         ingestion_run = IngestArxiv(arxiv=arxiv, repository=repository).execute(
             topic,
             logical_date=run_date,
-            pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+            pipeline_execution_mode=execution.execution_mode,
             pipeline_selection_limit=max_selected_papers,
             pipeline_execution_id=execution.id,
             resume_existing=True,
@@ -516,12 +522,12 @@ def execute_daily_pipeline(
             paper_version_ids=selected_paper_version_ids,
             analysis_scope=analysis_scope,
             logical_date=run_date,
-            pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+            pipeline_execution_mode=execution.execution_mode,
             pipeline_selection_limit=max_selected_papers,
             pipeline_execution_id=execution.id,
             run_operation=RunOperation.STRUCTURED_ANALYSIS,
             resume_existing=True,
-            reuse_contract=analysis_reuse_contract,
+            reuse_contract=(None if reprocess else analysis_reuse_contract),
         )
         if analysis_run.status is RunStatus.FAILED:
             raise _failed_pipeline_run_error(repository, analysis_run, "structured analysis")
@@ -614,7 +620,7 @@ def execute_daily_pipeline(
                 paper_version_ids=batch,
                 analysis_scope=analysis_scope,
                 logical_date=run_date,
-                pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+                pipeline_execution_mode=execution.execution_mode,
                 pipeline_selection_limit=max_selected_papers,
                 pipeline_execution_id=execution.id,
                 run_operation=RunOperation.HISTORICAL_ANALYSIS,
@@ -712,10 +718,7 @@ def execute_daily_pipeline(
                 ).execute(
                     topic=topic,
                     source_paper_id=paper.paper_id,
-                    objective=(
-                        "Identify historical and related LLM-agent research with "
-                        "persisted evidence for systematic comparison to this source paper."
-                    ),
+                    objective=build_related_work_objective(topic),
                     year_from=max(1900, run_date.year - 10),
                     year_to=run_date.year,
                     limits=limits,

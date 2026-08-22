@@ -126,4 +126,35 @@ describe("RunsPage", () => {
     expect(screen.getAllByText("Deployment smoke").length).toBeGreaterThan(0);
     expect(screen.queryByText("Normal execution")).not.toBeInTheDocument();
   });
+
+  it("labels a same-date reprocessed publication", async () => {
+    const reprocessRun = {
+      ...runDetail,
+      pipeline_execution_mode: "REPROCESS" as const,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/v1/runs") {
+          return Promise.resolve(
+            jsonResponse({ items: [reprocessRun], total: 1, limit: 50, offset: 0 }),
+          );
+        }
+        if (path === `/api/v1/runs/${runId}`) {
+          return Promise.resolve(jsonResponse(reprocessRun));
+        }
+        return Promise.resolve(jsonResponse({ detail: "Not found" }, 404));
+      }),
+    );
+
+    renderWithProviders(
+      <Routes>
+        <Route path="/runs/:runId" element={<RunsPage />} />
+      </Routes>,
+      `/runs/${runId}`,
+    );
+
+    expect((await screen.findAllByText("Reprocessed publication")).length).toBeGreaterThan(0);
+  });
 });

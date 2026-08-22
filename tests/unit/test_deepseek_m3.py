@@ -154,6 +154,8 @@ def _crawler_request() -> CrawlerPlanRequest:
         source_title="Bounded Agent Planning",
         source_research_problem="Agents need reliable long-horizon planning.",
         source_method="A bounded tree planner.",
+        topic_name="Broad LLM Agents",
+        topic_description="Research on LLM-centered agent systems.",
         topic_include_terms=("LLM agent", "web agent"),
         topic_exclude_terms=("traditional reinforcement learning",),
         year_from=2025,
@@ -290,10 +292,19 @@ def test_crawler_returns_only_strict_bounded_plan_controls() -> None:
     assert result.use_recommendations is True
     assert result.expand_references is True
     assert result.expand_citations is False
-    assert result.prompt_version == "m3-crawler-v1"
+    assert result.prompt_version == "m3-crawler-v2"
     body = observed["body"]
     assert isinstance(body, dict)
     assert body["thinking"] == {"type": "disabled"}
+    messages = cast(list[dict[str, str]], body["messages"])
+    source = json.loads(messages[1]["content"].split("\n", maxsplit=1)[1])
+    assert source["topic"] == {
+        "name": "Broad LLM Agents",
+        "description": "Research on LLM-centered agent systems.",
+        "include_terms": ["LLM agent", "web agent"],
+        "exclude_terms": ["traditional reinforcement learning"],
+    }
+    assert "traditional RL" not in messages[0]["content"]
 
 
 def test_crawler_timeout_bounds_http_requests_and_the_shared_retry_deadline() -> None:

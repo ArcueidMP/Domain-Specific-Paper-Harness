@@ -1,0 +1,30 @@
+schema_version: 1
+topic_id: 52a58258-1ffa-5001-8dd5-aa0be035c4c4
+slug: brain-computer-interfaces
+name: Brain-Computer Interfaces
+description: >-
+  Research on brain-computer and brain-machine interfaces, neural signal decoding,
+  neural control, communication, rehabilitation, assistive systems, and their
+  evaluation in invasive and non-invasive settings.
+arxiv:
+  categories:
+    - q-bio.NC
+    - cs.HC
+    - cs.LG
+    - eess.SP
+    - eess.SY
+  include_terms:
+    - brain-computer interface
+    - brain-machine interface
+    - neural interface
+    - neural decoding
+    - EEG decoding
+    - intracortical BCI
+    - motor imagery BCI
+    - assistive neurotechnology
+  exclude_terms: []
+discovery:
+  overlap_hours: 48
+  initial_lookback_days: 7
+  max_results: 500
+representative_full_text_count: 100

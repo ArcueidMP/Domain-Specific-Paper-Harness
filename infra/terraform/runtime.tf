@@ -1,3 +1,23 @@
+locals {
+  daily_topics = {
+    "broad-llm-agents" = {
+      job_name          = "${var.name_prefix}-daily"
+      topic_config_path = "/app/configs/topics/broad-llm-agents.yaml"
+      schedule          = var.schedule
+    }
+    "brain-computer-interfaces" = {
+      job_name          = "${var.name_prefix}-daily-brain-computer-interfaces"
+      topic_config_path = "/app/configs/topics/brain-computer-interfaces.yaml"
+      schedule          = var.brain_computer_interfaces_schedule
+    }
+    "world-models" = {
+      job_name          = "${var.name_prefix}-daily-world-models"
+      topic_config_path = "/app/configs/topics/world-models.yaml"
+      schedule          = var.world_models_schedule
+    }
+  }
+}
+
 resource "google_cloud_run_v2_job" "migration" {
   count = var.deploy_migration_resources ? 1 : 0
 
@@ -283,10 +303,10 @@ resource "google_cloud_run_v2_service_iam_binding" "grobid_invokers" {
 }
 
 resource "google_cloud_run_v2_job" "daily" {
-  count = var.deploy_daily_resources ? 1 : 0
+  for_each = var.deploy_daily_resources ? local.daily_topics : {}
 
   project             = var.project_id
-  name                = "${var.name_prefix}-daily"
+  name                = each.value.job_name
   location            = var.region
   deletion_protection = true
 
@@ -305,7 +325,7 @@ resource "google_cloud_run_v2_job" "daily" {
         args = [
           "run-pipeline",
           "--topic-config",
-          "/app/configs/topics/broad-llm-agents.yaml",
+          each.value.topic_config_path,
           "--analysis-scope",
           "full_text",
           "--narrative-mode",
@@ -354,7 +374,7 @@ resource "google_cloud_run_v2_job" "daily" {
 
         env {
           name  = "TOPIC_CONFIG_PATH"
-          value = "/app/configs/topics/broad-llm-agents.yaml"
+          value = each.value.topic_config_path
         }
 
         env {
@@ -426,23 +446,23 @@ resource "google_cloud_run_v2_job" "daily" {
 }
 
 resource "google_cloud_run_v2_job_iam_binding" "scheduler_invokers" {
-  count = var.deploy_scheduler ? 1 : 0
+  for_each = var.deploy_scheduler ? local.daily_topics : {}
 
   project  = var.project_id
-  location = google_cloud_run_v2_job.daily[0].location
-  name     = google_cloud_run_v2_job.daily[0].name
+  location = google_cloud_run_v2_job.daily[each.key].location
+  name     = google_cloud_run_v2_job.daily[each.key].name
   role     = "roles/run.invoker"
   members  = ["serviceAccount:${google_service_account.scheduler.email}"]
 }
 
 resource "google_cloud_scheduler_job" "daily" {
-  count = var.deploy_scheduler ? 1 : 0
+  for_each = var.deploy_scheduler ? local.daily_topics : {}
 
   project          = var.project_id
   region           = var.region
-  name             = "${var.name_prefix}-daily"
+  name             = each.value.job_name
   description      = "Execute the Paper Harness Daily Job"
-  schedule         = var.schedule
+  schedule         = each.value.schedule
   time_zone        = var.schedule_time_zone
   attempt_deadline = "320s"
   paused           = var.scheduler_paused
@@ -456,7 +476,7 @@ resource "google_cloud_scheduler_job" "daily" {
 
   http_target {
     http_method = "POST"
-    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/jobs/${google_cloud_run_v2_job.daily[0].name}:run"
+    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/jobs/${google_cloud_run_v2_job.daily[each.key].name}:run"
     body        = base64encode("{}")
 
     headers = {
@@ -473,4 +493,19 @@ resource "google_cloud_scheduler_job" "daily" {
     google_project_service.required["cloudscheduler.googleapis.com"],
     google_cloud_run_v2_job_iam_binding.scheduler_invokers,
   ]
+}
+
+moved {
+  from = google_cloud_run_v2_job.daily[0]
+  to   = google_cloud_run_v2_job.daily["broad-llm-agents"]
+}
+
+moved {
+  from = google_cloud_run_v2_job_iam_binding.scheduler_invokers[0]
+  to   = google_cloud_run_v2_job_iam_binding.scheduler_invokers["broad-llm-agents"]
+}
+
+moved {
+  from = google_cloud_scheduler_job.daily[0]
+  to   = google_cloud_scheduler_job.daily["broad-llm-agents"]
 }

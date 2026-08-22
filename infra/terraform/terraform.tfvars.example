@@ -13,10 +13,10 @@ scheduler_paused = true
 # migration_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/web-api@sha256:..."
 # migration_database_secret_version = "1"
 
-# Migrations are deployed and executed before the Web/API service or Daily Job.
+# Migrations are deployed and executed before the Web/API service or topic Daily Jobs.
 # deploy_migration_resources = true
 
-# Web/API and its IAP boundary can be deployed without the Daily Job.
+# Web/API and its IAP boundary can be deployed without the topic Daily Jobs.
 # deploy_runtime_resources = true
 # web_api_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/web-api@sha256:..."
 # database_secret_version = "1"
@@ -29,16 +29,21 @@ scheduler_paused = true
 # deploy_analysis_resources = true
 # grobid_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/grobid@sha256:..."
 
-# The complete Daily Job requires GROBID plus fixed database, DeepSeek, and
+# The topic Daily Jobs require GROBID plus fixed database, DeepSeek, and
 # Semantic Scholar secret versions. It can be deployed independently of Web/API.
 # Keep it disabled while either required API key version is unavailable. SPECTER2
-# Base is baked into the production Daily image and does not use either API key.
+# Base is baked into the shared production Daily image and does not use either API key.
 # deploy_daily_resources = true
 # daily_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/daily@sha256:..."
 # database_secret_version = "1"
 # deepseek_secret_version = "1"
 # semantic_scholar_secret_version = "1"
 
-# Create Scheduler paused only after a successful manual Daily execution.
+# Create the topic Schedulers paused until all manual topic executions are accepted.
+# The broad topic runs at 05:00 Asia/Kuala_Lumpur; BCI and World Models are
+# staggered at 05:20 and 05:40 while sharing the same image and runtime inputs.
 # deploy_scheduler = true
 # scheduler_paused = true
+# schedule = "0 5 * * *"
+# brain_computer_interfaces_schedule = "20 5 * * *"
+# world_models_schedule = "40 5 * * *"

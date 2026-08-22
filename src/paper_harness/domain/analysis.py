@@ -366,6 +366,7 @@ class PaperAnalysis:
     usage: ModelUsage
     schema_version: int
     created_at: datetime
+    revision_id: UUID | None = None
 
     def __post_init__(self) -> None:
         _require_aware(self.generated_at, "generated_at")

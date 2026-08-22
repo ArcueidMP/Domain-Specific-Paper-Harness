@@ -18,8 +18,13 @@ output "web_service_uri" {
 }
 
 output "daily_job_name" {
-  description = "Daily Cloud Run Job name, or null before complete Daily deployment."
-  value       = var.deploy_daily_resources ? google_cloud_run_v2_job.daily[0].name : null
+  description = "Broad LLM Agents Daily Cloud Run Job name, or null before complete Daily deployment."
+  value       = var.deploy_daily_resources ? google_cloud_run_v2_job.daily["broad-llm-agents"].name : null
+}
+
+output "daily_job_names" {
+  description = "Daily Cloud Run Job names keyed by topic slug."
+  value       = { for topic, job in google_cloud_run_v2_job.daily : topic => job.name }
 }
 
 output "migration_job_name" {
@@ -28,13 +33,23 @@ output "migration_job_name" {
 }
 
 output "scheduler_job_name" {
-  description = "Cloud Scheduler job name, or null before the verified scheduler gate is enabled."
-  value       = var.deploy_scheduler ? google_cloud_scheduler_job.daily[0].name : null
+  description = "Broad LLM Agents Cloud Scheduler job name, or null before the verified scheduler gate is enabled."
+  value       = var.deploy_scheduler ? google_cloud_scheduler_job.daily["broad-llm-agents"].name : null
+}
+
+output "scheduler_job_names" {
+  description = "Cloud Scheduler job names keyed by topic slug."
+  value       = { for topic, scheduler in google_cloud_scheduler_job.daily : topic => scheduler.name }
 }
 
 output "scheduler_paused" {
-  description = "Whether the deployed Scheduler remains paused before direct verification."
-  value       = var.deploy_scheduler ? google_cloud_scheduler_job.daily[0].paused : null
+  description = "Whether the deployed broad LLM Agents Scheduler remains paused before direct verification."
+  value       = var.deploy_scheduler ? google_cloud_scheduler_job.daily["broad-llm-agents"].paused : null
+}
+
+output "scheduler_paused_by_topic" {
+  description = "Paused state for each deployed topic Scheduler."
+  value       = { for topic, scheduler in google_cloud_scheduler_job.daily : topic => scheduler.paused }
 }
 
 output "runtime_service_accounts" {
@@ -71,6 +86,7 @@ output "deployment_topology" {
       deployed                         = var.deploy_runtime_resources
       analysis_deployed                = var.deploy_analysis_resources
       daily_deployed                   = var.deploy_daily_resources
+      daily_topics                     = var.deploy_daily_resources ? keys(local.daily_topics) : []
       semantic_scholar_secret_attached = var.deploy_daily_resources
       web_api_image                    = var.deploy_runtime_resources ? var.web_api_image : null
       daily_image                      = var.deploy_daily_resources ? var.daily_image : null
@@ -83,6 +99,9 @@ output "deployment_topology" {
     scheduler = {
       deployed = var.deploy_scheduler
       paused   = var.deploy_scheduler ? var.scheduler_paused : null
+      topic_schedules = var.deploy_scheduler ? {
+        for topic, config in local.daily_topics : topic => config.schedule
+      } : {}
     }
     identity = {
       owner_email = var.owner_email

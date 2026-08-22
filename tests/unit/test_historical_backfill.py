@@ -278,7 +278,11 @@ def test_backfill_filters_exact_window_and_persists_embeddings_atomically(
     assert result.embedding_model_revision == _Embeddings.model_revision
 
 
-def test_backfill_resumes_at_persisted_query_boundary(topic_config: TopicConfig) -> None:
+@pytest.mark.parametrize("status", (BackfillStatus.RUNNING, BackfillStatus.FAILED))
+def test_backfill_resumes_at_persisted_query_boundary(
+    topic_config: TopicConfig,
+    status: BackfillStatus,
+) -> None:
     window_from, window_to = six_month_window(date(2026, 8, 9))
     existing = HistoricalBackfillRun(
         id=UUID("824a0698-c1e2-4cb1-a978-2cf3da723e70"),
@@ -296,15 +300,19 @@ def test_backfill_resumes_at_persisted_query_boundary(topic_config: TopicConfig)
         embedding_preprocessing_contract=_Embeddings.preprocessing_contract,
         embedding_model_provenance=_Embeddings.model_provenance,
         embedding_source=_Embeddings.source,
-        status=BackfillStatus.RUNNING,
+        status=status,
         next_query_index=1,
         discovered_count=3,
         persisted_count=2,
         representative_count=0,
         started_at=NOW,
-        completed_at=None,
-        error_code=None,
-        error_detail=None,
+        completed_at=NOW if status is BackfillStatus.FAILED else None,
+        error_code=("SCHOLARLY_SEARCH_UNAVAILABLE" if status is BackfillStatus.FAILED else None),
+        error_detail=(
+            "Semantic Scholar exhausted bounded retries."
+            if status is BackfillStatus.FAILED
+            else None
+        ),
         schema_version=1,
         created_at=NOW,
     )
@@ -600,7 +608,7 @@ def test_timeout_during_representative_selection_fails_without_finalizing_and_re
     )
 
     assert resumed.status is BackfillStatus.COMPLETE
-    assert resumed_search.queries == ["LLM agent", "web agent"]
+    assert resumed_search.queries == []
     assert repository.finalize_calls == 1
 
 

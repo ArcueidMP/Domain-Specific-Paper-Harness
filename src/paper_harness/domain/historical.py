@@ -12,7 +12,7 @@ from paper_harness.domain.analysis import AnalysisScope, ModelUsage, Verificatio
 from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.domain.identity import validate_canonical_arxiv_id
 
-M3_CRAWLER_PROMPT_VERSION = "m3-crawler-v1"
+M3_CRAWLER_PROMPT_VERSION = "m3-crawler-v2"
 M3_SELECTOR_PROMPT_VERSION = "m3-selector-v1"
 M3_COMPARISON_PROMPT_VERSION = "m3-comparison-v1"
 MAX_SELECTOR_CANDIDATES = 300
@@ -943,6 +943,8 @@ class CrawlerPlanRequest:
     source_title: str
     source_research_problem: str
     source_method: str
+    topic_name: str
+    topic_description: str
     topic_include_terms: tuple[str, ...]
     topic_exclude_terms: tuple[str, ...]
     year_from: int
@@ -955,6 +957,8 @@ class CrawlerPlanRequest:
             (self.source_title, "crawler source title", 4000),
             (self.source_research_problem, "crawler source problem", 4000),
             (self.source_method, "crawler source method", 4000),
+            (self.topic_name, "crawler topic name", 200),
+            (self.topic_description, "crawler topic description", 2000),
         ):
             _require_text(value, name, maximum=maximum)
         if not 1000 <= self.year_from <= self.year_to <= 9999:

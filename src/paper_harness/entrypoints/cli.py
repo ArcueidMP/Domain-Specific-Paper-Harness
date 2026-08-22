@@ -141,8 +141,20 @@ def run_pipeline(
     ] = Path("configs/topics/broad-llm-agents.yaml"),
     logical_date: Annotated[
         str | None,
-        typer.Option("--logical-date", help="Logical run date in YYYY-MM-DD format."),
+        typer.Option(
+            "--logical-date",
+            help="Logical run date in YYYY-MM-DD format.",
+            envvar="PIPELINE_LOGICAL_DATE",
+        ),
     ] = None,
+    reprocess: Annotated[
+        bool,
+        typer.Option(
+            "--reprocess",
+            help="Run a fresh publishable revision for an already processed logical date.",
+            envvar="PIPELINE_REPROCESS",
+        ),
+    ] = False,
     analysis_scope: Annotated[
         str,
         typer.Option(
@@ -219,6 +231,9 @@ def run_pipeline(
         parsed_date = None if logical_date is None else date.fromisoformat(logical_date)
         parsed_scope = AnalysisScope(analysis_scope.strip().upper())
         parsed_narrative_mode = ReportNarrativeMode(narrative_mode.strip().upper())
+        execution_mode = (
+            PipelineExecutionMode.REPROCESS if reprocess else PipelineExecutionMode.NORMAL
+        )
         limits = SearchLimits(
             max_steps=max_search_steps,
             max_queries=max_search_queries,
@@ -235,7 +250,7 @@ def run_pipeline(
                     "level": "INFO",
                     "event": "daily_job_started",
                     "logical_date": None if parsed_date is None else parsed_date.isoformat(),
-                    "execution_mode": PipelineExecutionMode.NORMAL.value,
+                    "execution_mode": execution_mode.value,
                     "analysis_scope": parsed_scope.value,
                     "narrative_mode": parsed_narrative_mode.value,
                     "max_selected_papers": max_selected_papers,
@@ -251,6 +266,7 @@ def run_pipeline(
             analysis_scope=parsed_scope,
             narrative_mode=parsed_narrative_mode,
             max_selected_papers=max_selected_papers,
+            reprocess=reprocess,
             backfill_max_queries=backfill_max_queries,
             backfill_per_query_limit=backfill_per_query_limit,
             backfill_timeout_seconds=backfill_timeout_seconds,

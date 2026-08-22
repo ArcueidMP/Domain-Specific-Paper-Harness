@@ -48,6 +48,24 @@ def _execution() -> PipelineExecution:
     )
 
 
+def test_reprocess_execution_uses_a_fresh_publishable_identity() -> None:
+    execution = replace(
+        _execution(),
+        id=UUID("3b301c07-9aa3-4a3d-b13a-e7b3ba4db146"),
+        execution_mode=PipelineExecutionMode.REPROCESS,
+    )
+
+    assert execution.execution_mode is PipelineExecutionMode.REPROCESS
+
+
+def test_normal_execution_still_requires_the_canonical_identity() -> None:
+    with pytest.raises(DomainInvariantError, match="not stable"):
+        replace(
+            _execution(),
+            id=UUID("3b301c07-9aa3-4a3d-b13a-e7b3ba4db146"),
+        )
+
+
 def _changed_contract(field_name: str) -> PipelineExecutionContract:
     contract = fake_pipeline_execution_contract()
     value: object = getattr(contract, field_name)

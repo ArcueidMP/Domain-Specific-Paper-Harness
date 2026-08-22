@@ -54,6 +54,7 @@ PIPELINE_EXECUTION_ID = stable_pipeline_execution_id(
     UUID("4b7db6d4-349c-5c06-bc41-f84091580fcb"),
     date(2026, 8, 10),
 )
+REPROCESS_EXECUTION_ID = UUID("3b301c07-9aa3-4a3d-b13a-e7b3ba4db146")
 
 
 def _embedding_stub() -> SimpleNamespace:
@@ -357,6 +358,31 @@ def test_daily_pipeline_reuses_compatible_terminal_ingestion_and_analysis_runs(
     assert result.ingestion_run is harness.ingestion
     assert result.analysis_run is harness.analysis
     assert result.product_run is harness.product
+
+
+def test_daily_reprocess_creates_a_fresh_revision_and_regenerates_source_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime_module, "uuid4", lambda: REPROCESS_EXECUTION_ID)
+    harness = _configure_reused_pipeline(
+        monkeypatch,
+        execution_mode=PipelineExecutionMode.REPROCESS,
+        pipeline_execution_id=REPROCESS_EXECUTION_ID,
+    )
+
+    result = _execute_pipeline(max_selected_papers=1, reprocess=True)
+
+    requested = harness.repository.start_pipeline_execution.call_args.args[0]
+    assert requested.id == REPROCESS_EXECUTION_ID
+    assert requested.execution_mode is PipelineExecutionMode.REPROCESS
+    assert harness.ingest_execute.call_args.kwargs["pipeline_execution_mode"] is (
+        PipelineExecutionMode.REPROCESS
+    )
+    assert harness.analyze_execute.call_args.kwargs["pipeline_execution_mode"] is (
+        PipelineExecutionMode.REPROCESS
+    )
+    assert harness.analyze_execute.call_args.kwargs["reuse_contract"] is None
+    assert result.product_run.pipeline_execution_id == REPROCESS_EXECUTION_ID
 
 
 def test_daily_pipeline_holds_outer_lock_through_product_publication(
@@ -897,6 +923,11 @@ def test_daily_pipeline_constructs_specter2_once_and_reuses_it_for_backfill_and_
     harness.embedding_loader.assert_called_once_with()
     assert harness.backfill_constructor.call_args.kwargs["embeddings"] is embeddings
     assert harness.search_constructor.call_args.kwargs["embeddings"] is embeddings
+    assert harness.search_execute.call_args.kwargs["objective"] == (
+        "Identify historical and related work for Broad LLM Agents: "
+        "Broad LLM-agent research. Use persisted evidence for systematic comparison "
+        "to the source paper."
+    )
     assert result.search_session_count == 1
 
 
@@ -1468,9 +1499,12 @@ def _configure_reused_pipeline(
     candidates: tuple[runtime_module.DailySelectionCandidate, ...] | None = None,
     analysis_items: tuple[SimpleNamespace, ...] | None = None,
     embeddings: object | None = None,
+    execution_mode: PipelineExecutionMode = PipelineExecutionMode.NORMAL,
+    pipeline_execution_id: UUID = PIPELINE_EXECUTION_ID,
 ) -> SimpleNamespace:
     now = datetime(2026, 8, 10, 5, tzinfo=UTC)
     topic = _pipeline_topic()
+    expected_pipeline_execution_id = pipeline_execution_id
     candidates = candidates or (
         _selection_candidate(
             UUID("d8fdbf73-cf9a-487f-9b6a-237e13272d55"),
@@ -1488,6 +1522,8 @@ def _configure_reused_pipeline(
         operation=RunOperation.ARXIV_INGESTION,
         now=now,
         selection_limit=max_selected_papers,
+        execution_mode=execution_mode,
+        pipeline_execution_id=pipeline_execution_id,
     )
     analysis = _pipeline_run(
         run_id=UUID("a3069769-e9af-43aa-9b51-2d1863ef453f"),
@@ -1497,6 +1533,8 @@ def _configure_reused_pipeline(
         status=analysis_status,
         selected_count=len(candidates),
         selection_limit=max_selected_papers,
+        execution_mode=execution_mode,
+        pipeline_execution_id=pipeline_execution_id,
     )
     product = _pipeline_run(
         run_id=UUID("7b9eb955-e227-4f97-a5f8-3956552fd7da"),
@@ -1506,6 +1544,8 @@ def _configure_reused_pipeline(
         source_run_id=analysis.id,
         selected_count=len(candidates),
         selection_limit=max_selected_papers,
+        execution_mode=execution_mode,
+        pipeline_execution_id=pipeline_execution_id,
     )
     repository = MagicMock()
 
@@ -1521,7 +1561,7 @@ def _configure_reused_pipeline(
         *,
         pipeline_execution_id: UUID | None = None,
     ) -> DailyRun:
-        assert pipeline_execution_id in (None, PIPELINE_EXECUTION_ID)
+        assert pipeline_execution_id in (None, expected_pipeline_execution_id)
         return run_state["ingestion"]
 
     def get_analysis_run_stub(
@@ -1531,7 +1571,7 @@ def _configure_reused_pipeline(
         operation: RunOperation = RunOperation.STRUCTURED_ANALYSIS,
         pipeline_execution_id: UUID | None = None,
     ) -> DailyRun | None:
-        assert pipeline_execution_id == PIPELINE_EXECUTION_ID
+        assert pipeline_execution_id == expected_pipeline_execution_id
         return None if operation is RunOperation.HISTORICAL_ANALYSIS else run_state["analysis"]
 
     repository.get_run_for_date.side_effect = get_ingestion_run_stub
@@ -1702,13 +1742,18 @@ def _configure_reused_pipeline(
     )
 
 
-def _execute_pipeline(*, max_selected_papers: int) -> runtime_module.DailyPipelineResult:
+def _execute_pipeline(
+    *,
+    max_selected_papers: int,
+    reprocess: bool = False,
+) -> runtime_module.DailyPipelineResult:
     return execute_daily_pipeline(
         topic_config=Path("unused.yaml"),
         logical_date=date(2026, 8, 10),
         analysis_scope=AnalysisScope.FULL_TEXT,
         narrative_mode=ReportNarrativeMode.DEEPSEEK,
         max_selected_papers=max_selected_papers,
+        reprocess=reprocess,
     )
 
 
@@ -1716,6 +1761,8 @@ def _pipeline_topic() -> SimpleNamespace:
     return SimpleNamespace(
         id=UUID("4b7db6d4-349c-5c06-bc41-f84091580fcb"),
         slug="broad-llm-agents",
+        name="Broad LLM Agents",
+        description="Broad LLM-agent research.",
         categories=("cs.AI",),
         include_terms=("agent",),
         exclude_terms=(),
@@ -1838,6 +1885,7 @@ def _pipeline_run(
     selected_count: int = 1,
     execution_mode: PipelineExecutionMode = PipelineExecutionMode.NORMAL,
     selection_limit: int = 1,
+    pipeline_execution_id: UUID = PIPELINE_EXECUTION_ID,
 ) -> DailyRun:
     is_ingestion = operation is RunOperation.ARXIV_INGESTION
     is_analysis = operation in (
@@ -1869,5 +1917,5 @@ def _pipeline_run(
         created_at=now,
         pipeline_execution_mode=execution_mode,
         pipeline_selection_limit=selection_limit,
-        pipeline_execution_id=PIPELINE_EXECUTION_ID,
+        pipeline_execution_id=pipeline_execution_id,
     )

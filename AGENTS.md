@@ -12,24 +12,20 @@ user-facing product copy must be written in English.
 ## Mission
 
 Build and deploy **Domain-Specific Paper Harness**, a private internal product
-that continuously discovers and analyzes research about broad LLM agents. This
+that continuously discovers and analyzes configured research domains. This
 is a software product, not a paper-writing project, a generic search engine, a
 generic chatbot, a Codex fork, or an email-only summarizer.
 
-Included areas are agent planning, reasoning, memory, tool use, web agents,
-computer-use agents, multi-agent coordination, agent evaluation and benchmarks,
-and agent safety and security.
-
-Exclude traditional reinforcement-learning agents without an LLM-centered
-workflow, agent-based social simulation, chemical or biological agents,
-ordinary chatbots, pure RAG without an agent workflow, and embodied systems
-without a material LLM-agent component.
+The initial topics are broad LLM agents, brain-computer interfaces, and world
+models. Each TopicConfig owns its description, arXiv categories, inclusion
+terms, exclusions, cursor, selection, reports, graph, trends, and lineage.
+Never apply one topic's exclusions globally to another topic.
 
 The finished product must:
 
 - discover new or updated arXiv papers every day;
 - normalize stable paper identities and explicit arXiv versions;
-- filter for relevance to broad LLM agents;
+- filter for relevance to the active TopicConfig;
 - parse and analyze selected arXiv papers;
 - extract structured, traceable evidence;
 - retrieve historical and related work with approved Semantic Scholar sources
@@ -49,6 +45,10 @@ current-state documentation accurate as material state changes. Run the single
 canonical verification only once after M5 implementation and production
 acceptance are complete, then commit the verified milestone. Do not provide
 calendar estimates.
+
+Do not add nonfunctional approval gates, SHA/digest approval systems, recovery
+markers, wrappers, compatibility fallbacks, or validation that does not protect
+a real configuration, external-response, persistence, or publication boundary.
 
 Before modifying implementation or infrastructure:
 
@@ -166,20 +166,21 @@ deployed runtime units:
 
 1. A Web/API Cloud Run service serving FastAPI under /api/v1 and the production
    React build.
-2. A Daily Cloud Run Job for discovery, analysis, scholarly search, comparison,
-   graph/trend computation, and report publication.
+2. Topic-specific Daily Cloud Run Jobs sharing one image for discovery,
+   analysis, scholarly search, comparison, graph/trend computation, and report
+   publication.
 3. A private GROBID Cloud Run service called only through authenticated internal
    access.
 
 The browser reaches the Web/API service through a private cloud authentication
-boundary. Both application runtimes use PostgreSQL plus pgvector. Cloud
-Scheduler invokes the Daily Job, which calls arXiv, Semantic Scholar, DeepSeek,
-and private GROBID.
+boundary. Both application runtimes use PostgreSQL plus pgvector. One thin
+Cloud Scheduler job per topic invokes its Daily Job, which calls arXiv,
+Semantic Scholar, DeepSeek, and private GROBID.
 
 Deployment defaults:
 
 - GCP region: asia-southeast1
-- Schedule: 0 5 * * *
+- Schedules: 05:00, 05:20, and 05:40 for the three initial topics
 - Schedule time zone: Asia/Kuala_Lumpur
 - Cloud Run minimum instances: 0 where supported
 - Artifact Registry for images
@@ -223,7 +224,7 @@ apps/web/
 src/paper_harness/{domain,application,ports,adapters,entrypoints}/
 third_party/pasa/
 migrations/
-configs/topics/broad-llm-agents.yaml
+configs/topics/{broad-llm-agents,brain-computer-interfaces,world-models}.yaml
 infra/{terraform,docker,cloud-run}/
 tests/{unit,integration,contract,fixtures,e2e}/
 docs/{ARCHITECTURE.md,BOUNDARIES.md,FAILURE_POLICY.md,STATUS.md,reuse-register.yaml,adr/}
@@ -389,7 +390,9 @@ run status.
 A failed unpublished Daily or product run may discard its own staging and
 replan from current valid persisted inputs. Do not freeze a failed run to stale
 candidate, analysis, or comparison target sets. Source ownership, declared
-scope, required identities, and terminal published artifacts remain immutable.
+scope, and required identities remain strict. Each terminal publication
+revision is immutable; explicit same-date reprocessing creates a new revision,
+and product reads select the latest successful publication for that topic/date.
 
 Parser failure must not silently become abstract-only analysis. Abstract-only
 and full-text are explicit preselected modes recorded in provenance.
@@ -612,15 +615,16 @@ limitations without presenting target capabilities as completed.
 
 ## Milestone state and current gate
 
-M1 through M4 are the implemented product baseline: platform and arXiv
-ingestion, grounded full-text analysis, authenticated historical comparison,
-and the graph/trend/report product. Do not reopen their historical completion
-gates or rerun whole-milestone verification merely because M5 encounters a
-provider payload variation or an item-level failure. Preserve their real
-identity, provenance, transaction, security, and source boundaries, and verify
-only a baseline boundary affected by the current change.
+M1 through M5 and the private production MVP are implemented and deployed. The
+baseline includes platform and arXiv ingestion, grounded full-text analysis,
+authenticated historical comparison, graph/trend/report publication,
+multi-topic production operation, and deployment hardening. Do not reopen
+historical completion gates merely because a provider payload varies or one
+item fails. Preserve real identity, provenance, transaction, security, and
+source boundaries, and verify only the baseline boundary affected by a current
+change.
 
-### M5 — Product hardening and deployment
+### M5 regression gate — Product hardening and deployment
 
 Complete all contract/integration/migration/API/frontend/Playwright,
 idempotency, duplicate-scheduler, and failure-policy tests; security, secret,
@@ -630,10 +634,11 @@ Scheduler, Secret Manager, private auth, health checks; and final documentation.
 
 M5 is complete only when one final canonical verification and the required
 images pass; reviewed Terraform matches applied infrastructure; no unapproved
-fixed-cost resource exists; an actual manual Daily Job publishes a terminal
-COMPLETE or honest PARTIAL product result; authenticated/private Web/API,
-database readiness, persisted report/graph/trend/lineage data, frontend, the
-05:00 Asia/Kuala_Lumpur schedule, and private GROBID are actually verified;
+fixed-cost resource exists; a manual execution for every configured topic
+publishes a terminal COMPLETE or honest PARTIAL product result;
+authenticated/private Web/API, database readiness, persisted
+report/graph/trend/lineage data, frontend, the staggered Asia/Kuala_Lumpur
+topic schedules, and private GROBID are actually verified;
 secrets are absent from source/logs; and docs are current.
 
 Commit: **chore(m5): harden and deploy the product**

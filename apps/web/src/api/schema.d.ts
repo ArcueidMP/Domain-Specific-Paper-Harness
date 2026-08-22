@@ -1377,7 +1377,7 @@ export interface components {
          * @description Preselected execution policy for an operator command or full Daily pipeline.
          * @enum {string}
          */
-        PipelineExecutionMode: "STANDALONE" | "NORMAL" | "SMOKE";
+        PipelineExecutionMode: "STANDALONE" | "NORMAL" | "REPROCESS" | "SMOKE";
         /** ReadyResponse */
         ReadyResponse: {
             /**

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 
 import { ApiRequestError } from "../api/client";
 import { paperAnalysisQuery, paperEvidenceQuery, paperQuery } from "../api/queries";
@@ -7,6 +7,7 @@ import { AnalysisDetail } from "../components/AnalysisDetail";
 import { EvidenceViewer } from "../components/EvidenceViewer";
 import { RelatedWorkPanel } from "../components/RelatedWorkPanel";
 import { StateNotice } from "../components/StateNotice";
+import { TopicLink } from "../components/TopicLink";
 import { formatDate, formatDateTime } from "../lib/format";
 
 function requestMessage(error: Error): string {
@@ -49,9 +50,9 @@ export function PaperDetailPage() {
     const missing = paper.error instanceof ApiRequestError && paper.error.status === 404;
     return (
       <section className="page-section">
-        <Link className="back-link" to="/papers">
+        <TopicLink className="back-link" to="/papers">
           Back to papers
-        </Link>
+        </TopicLink>
         {missing ? (
           <StateNotice
             kind="empty"
@@ -74,9 +75,9 @@ export function PaperDetailPage() {
 
   return (
     <section className="page-section paper-detail-page">
-      <Link className="back-link" to="/papers">
+      <TopicLink className="back-link" to="/papers">
         <span aria-hidden="true">←</span> Back to papers
-      </Link>
+      </TopicLink>
 
       <header className="paper-detail-header">
         <div>
@@ -90,12 +91,12 @@ export function PaperDetailPage() {
           <a className="primary-button" href={detail.pdf_url} target="_blank" rel="noreferrer">
             Open source PDF <span aria-hidden="true">↗</span>
           </a>
-          <Link className="section-link" to={`/graph?paper_id=${detail.id}`}>
+          <TopicLink className="section-link" to={`/graph?paper_id=${detail.id}`}>
             View paper graph
-          </Link>
-          <Link className="section-link" to={`/lineages/${detail.id}`}>
+          </TopicLink>
+          <TopicLink className="section-link" to={`/lineages/${detail.id}`}>
             View research lineage
-          </Link>
+          </TopicLink>
         </div>
       </header>
 

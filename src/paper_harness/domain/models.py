@@ -58,6 +58,7 @@ class PipelineExecutionMode(StrEnum):
 
     STANDALONE = "STANDALONE"
     NORMAL = "NORMAL"
+    REPROCESS = "REPROCESS"
     SMOKE = "SMOKE"
 
 
@@ -199,13 +200,20 @@ class PipelineExecution:
     def __post_init__(self) -> None:
         from paper_harness.domain.identity import stable_pipeline_execution_id
 
-        if self.execution_mode is not PipelineExecutionMode.NORMAL:
-            raise DomainInvariantError("pipeline execution must use NORMAL mode")
+        if self.execution_mode not in (
+            PipelineExecutionMode.NORMAL,
+            PipelineExecutionMode.REPROCESS,
+        ):
+            raise DomainInvariantError("pipeline execution must use a publishable mode")
         if not 1 <= self.selection_limit <= 200:
             raise DomainInvariantError("pipeline selection limit is outside the supported bound")
-        if self.id != stable_pipeline_execution_id(
-            self.topic_id,
-            self.logical_date,
+        if (
+            self.execution_mode is PipelineExecutionMode.NORMAL
+            and self.id
+            != stable_pipeline_execution_id(
+                self.topic_id,
+                self.logical_date,
+            )
         ):
             raise DomainInvariantError("pipeline execution ID is not stable for its scope")
         _require_aware(self.deadline_at, "deadline_at")

@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
 
 import type { RelatedWork, RelatedWorkItem } from "../api/client";
 import { paperRelatedWorkQuery } from "../api/queries";
 import { formatDateTime } from "../lib/format";
 import { StateNotice } from "./StateNotice";
+import { TopicLink } from "./TopicLink";
 
 type RelatedWorkPanelProps = {
   paperId: string;
@@ -45,7 +45,9 @@ function CandidateCard({
           </p>
           <h3>
             {item.candidate.local_paper_id ? (
-              <Link to={`/papers/${item.candidate.local_paper_id}`}>{item.paper.title}</Link>
+              <TopicLink to={`/papers/${item.candidate.local_paper_id}`}>
+                {item.paper.title}
+              </TopicLink>
             ) : (
               item.paper.title
             )}
@@ -150,9 +152,12 @@ function CandidateCard({
       ) : null}
 
       {item.comparison_id ? (
-        <Link className="primary-button comparison-link" to={`/comparisons/${item.comparison_id}`}>
+        <TopicLink
+          className="primary-button comparison-link"
+          to={`/comparisons/${item.comparison_id}`}
+        >
           Open structured comparison
-        </Link>
+        </TopicLink>
       ) : (
         <p className="comparison-unavailable">No persisted comparison is available.</p>
       )}

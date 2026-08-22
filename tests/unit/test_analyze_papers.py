@@ -1012,6 +1012,41 @@ def test_multiple_passage_ids_expand_to_stably_ordered_source_evidence() -> None
     )
 
 
+def test_reprocess_revision_gets_fresh_analysis_identity_without_changing_legacy_identity() -> None:
+    passage = AnalysisPassage(id="abstract", section="Abstract", text="A grounded method.")
+    request = _grounding_request(passage)
+    generated = _generated_analysis(
+        claims=(
+            GeneratedClaim(
+                key="method_claim",
+                claim_type=ClaimType.METHOD,
+                text="The paper presents a grounded method.",
+            ),
+        ),
+        evidence=(
+            GeneratedEvidence(
+                key="method_evidence",
+                claim_keys=("method_claim",),
+                passage_ids=(passage.id,),
+                evidence_type=EvidenceType.SUPPORTS,
+            ),
+        ),
+    )
+    revision_id = UUID("3b301c07-9aa3-4a3d-b13a-e7b3ba4db146")
+
+    legacy = build_analysis_bundle(request, generated, created_at=generated.generated_at)
+    revised = build_analysis_bundle(
+        request,
+        generated,
+        created_at=generated.generated_at,
+        revision_id=revision_id,
+    )
+
+    assert revised.analysis.revision_id == revision_id
+    assert revised.analysis.id != legacy.analysis.id
+    assert legacy.analysis.revision_id is None
+
+
 def test_missing_passage_invalidates_its_whole_evidence_and_unsupported_claim() -> None:
     passage = AnalysisPassage(id="abstract", section="Abstract", text="A grounded method.")
     request = _grounding_request(passage)

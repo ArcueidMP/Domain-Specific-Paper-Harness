@@ -7,7 +7,11 @@ from uuid import UUID
 import pytest
 from tests.fakes import FakeArxiv, FakeRepository
 
-from paper_harness.application.ingest_arxiv import IngestArxiv, IngestionResumeError
+from paper_harness.application.ingest_arxiv import (
+    SCHEDULE_TIME_ZONE,
+    IngestArxiv,
+    IngestionResumeError,
+)
 from paper_harness.domain.errors import DuplicateDailyRunError
 from paper_harness.domain.models import (
     DailyRun,
@@ -156,6 +160,47 @@ def test_smoke_ingestion_persists_results_without_advancing_the_shared_cursor(
     assert arxiv.calls[0][1:] == (
         prior_watermark - timedelta(hours=topic_config.overlap_hours),
         now,
+        topic_config.max_results,
+    )
+
+
+def test_reprocess_uses_logical_date_lookback_without_advancing_shared_cursor(
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    prior_watermark = datetime(2026, 1, 10, 4, tzinfo=UTC)
+    now = datetime(2026, 1, 12, 5, tzinfo=UTC)
+    logical_date = date(2026, 1, 10)
+    repository = FakeRepository()
+    prior_cursor = IngestionCursor(
+        topic_id=topic_config.id,
+        watermark=prior_watermark,
+        schema_version=1,
+        created_at=prior_watermark,
+        updated_at=prior_watermark,
+    )
+    repository.cursor = prior_cursor
+    arxiv = FakeArxiv((arxiv_record_v1,))
+
+    run = IngestArxiv(arxiv=arxiv, repository=repository, clock=lambda: now).execute(
+        topic_config,
+        logical_date=logical_date,
+        pipeline_execution_mode=PipelineExecutionMode.REPROCESS,
+        pipeline_selection_limit=1,
+        pipeline_execution_id=PIPELINE_EXECUTION_ID,
+    )
+
+    logical_date_end = datetime(2026, 1, 11, 0, tzinfo=SCHEDULE_TIME_ZONE).astimezone(UTC)
+    assert run.status is RunStatus.COMPLETE
+    assert run.pipeline_execution_mode is PipelineExecutionMode.REPROCESS
+    assert repository.cursor == prior_cursor
+    assert arxiv.calls[0][1:] == (
+        logical_date_end
+        - timedelta(
+            days=topic_config.initial_lookback_days,
+            hours=topic_config.overlap_hours,
+        ),
+        logical_date_end,
         topic_config.max_results,
     )
 

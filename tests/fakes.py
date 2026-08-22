@@ -109,7 +109,7 @@ def fake_pipeline_execution_contract() -> PipelineExecutionContract:
         search_overall_timeout_seconds=300.0,
         max_comparisons_per_paper=3,
         pipeline_timeout_seconds=28800,
-        crawler_prompt_version="m3-crawler-v1",
+        crawler_prompt_version="m3-crawler-v2",
         selector_prompt_version="m3-selector-v1",
         comparison_prompt_version="m3-comparison-v1",
         report_prompt_version="m4-report-v1",
@@ -503,7 +503,10 @@ class FakeRepository:
         )
         if self.run is None or self.run.id != run_id:
             raise AssertionError("run was not started")
-        expected_cursor_policy = self.run.pipeline_execution_mode is not PipelineExecutionMode.SMOKE
+        expected_cursor_policy = self.run.pipeline_execution_mode not in (
+            PipelineExecutionMode.REPROCESS,
+            PipelineExecutionMode.SMOKE,
+        )
         if advance_shared_cursor is not expected_cursor_policy:
             raise AssertionError("cursor policy does not match the persisted execution mode")
         if advance_shared_cursor:

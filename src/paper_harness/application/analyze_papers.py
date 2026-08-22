@@ -229,6 +229,11 @@ class AnalyzePapers:
                         run_id=run.id,
                         target=target,
                         analysis_scope=analysis_scope,
+                        revision_id=(
+                            pipeline_execution_id
+                            if pipeline_execution_mode is PipelineExecutionMode.REPROCESS
+                            else None
+                        ),
                     )
                 except (
                     LLMAuthenticationError,
@@ -287,6 +292,7 @@ class AnalyzePapers:
         run_id: UUID,
         target: AnalysisTarget,
         analysis_scope: AnalysisScope,
+        revision_id: UUID | None,
     ) -> None:
         parsed: ParsedPaper | None = None
         expected_stage = PaperStage.SELECTED
@@ -379,6 +385,7 @@ class AnalyzePapers:
                 request,
                 generated,
                 created_at=self._aware_now(),
+                revision_id=revision_id,
             )
             self._repository.persist_analysis_bundle(
                 run_id=run_id,
@@ -574,6 +581,7 @@ def build_analysis_bundle(
     generated: GeneratedAnalysis,
     *,
     created_at: datetime,
+    revision_id: UUID | None = None,
 ) -> AnalysisBundle:
     passage_by_id = {passage.id: passage for passage in request.passages}
     if len(passage_by_id) != len(request.passages):
@@ -606,6 +614,7 @@ def build_analysis_bundle(
         generated.configured_model,
         generated.model_version,
         generated.prompt_version,
+        revision_id,
     )
     claim_ids = {
         claim.key: stable_claim_id(analysis_id, claim.key) for claim in grounded_generated_claims
@@ -647,6 +656,7 @@ def build_analysis_bundle(
         usage=generated.usage,
         schema_version=1,
         created_at=created_at,
+        revision_id=revision_id,
     )
     claims = tuple(
         AnalysisClaim(

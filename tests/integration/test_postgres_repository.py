@@ -1400,7 +1400,7 @@ def test_database_upgrades_from_m1_revision_to_current_head(
         with postgres_engine.connect() as connection:
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == ("0005_m5_pipeline_provenance")
+            ).scalar_one() == ("0006_topic_reprocessing")
     finally:
         command.upgrade(config, "head")
 
@@ -1421,7 +1421,7 @@ def test_database_upgrades_from_m2_revision_to_current_head(
         with postgres_engine.connect() as connection:
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == ("0005_m5_pipeline_provenance")
+            ).scalar_one() == ("0006_topic_reprocessing")
     finally:
         command.upgrade(config, "head")
 
@@ -1479,7 +1479,7 @@ def test_database_upgrades_from_m3_and_backfills_analysis_reports(
         with postgres_engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == "0005_m5_pipeline_provenance"
+                == "0006_topic_reprocessing"
             )
             assert connection.execute(
                 text(
@@ -1550,7 +1550,7 @@ def test_database_upgrades_populated_m4_to_m5_pipeline_provenance(
         with postgres_engine.connect() as connection:
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == ("0005_m5_pipeline_provenance")
+            ).scalar_one() == ("0006_topic_reprocessing")
             assert connection.execute(
                 text(
                     "SELECT pipeline_execution_mode, pipeline_selection_limit "
@@ -1584,7 +1584,7 @@ def test_m5_downgrade_refuses_persisted_pipeline_provenance_without_guard(
 
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0005_m5_pipeline_provenance"
+            "0006_topic_reprocessing"
         )
 
 
@@ -1674,7 +1674,7 @@ def test_m5_downgrade_refuses_standalone_comparison_target_decisions(
 
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0005_m5_pipeline_provenance"
+            "0006_topic_reprocessing"
         )
 
 
@@ -1709,7 +1709,7 @@ def test_m2_downgrade_refuses_existing_analysis_without_explicit_data_loss_guard
         command.downgrade(config, "0001_m1_ingestion")
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0005_m5_pipeline_provenance"
+            "0006_topic_reprocessing"
         )
 
 
@@ -1757,7 +1757,7 @@ def test_m3_downgrade_refuses_existing_historical_data_without_explicit_guard(
         command.downgrade(config, "0002_m2_structured_analysis")
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0005_m5_pipeline_provenance"
+            "0006_topic_reprocessing"
         )
 
 
@@ -1791,5 +1791,5 @@ def test_m4_downgrade_refuses_existing_graph_data_without_explicit_guard(
         command.downgrade(config, "0003_m3_pasa_semantic_scholar")
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0005_m5_pipeline_provenance"
+            "0006_topic_reprocessing"
         )

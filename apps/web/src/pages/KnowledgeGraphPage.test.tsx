@@ -69,19 +69,19 @@ describe("KnowledgeGraphPage", () => {
     expect(screen.getByText(/not a probability/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open paper" })).toHaveAttribute(
       "href",
-      `/papers/${paperId}`,
+      `/papers/${paperId}?topic=broad-llm-agents`,
     );
     expect(screen.getByRole("link", { name: "View related paper lineage" })).toHaveAttribute(
       "href",
-      `/lineages/${paperId}`,
+      `/lineages/${paperId}?topic=broad-llm-agents`,
     );
     expect(screen.getAllByRole("link", { name: "Evidence 1 (source)" })[0]).toHaveAttribute(
       "href",
-      `/papers/${paperId}#evidence-${evidenceId}`,
+      `/papers/${paperId}?topic=broad-llm-agents#evidence-${evidenceId}`,
     );
     expect(screen.getByRole("link", { name: "Evidence 2 (target)" })).toHaveAttribute(
       "href",
-      `/papers/${historicalPaperId}#evidence-${historicalEvidenceId}`,
+      `/papers/${historicalPaperId}?topic=broad-llm-agents#evidence-${historicalEvidenceId}`,
     );
 
     await userEvent.selectOptions(screen.getByLabelText("Provenance"), "LLM_INFERRED");

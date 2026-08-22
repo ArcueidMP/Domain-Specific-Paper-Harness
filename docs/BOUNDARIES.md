@@ -2,13 +2,10 @@
 
 ## Product scope
 
-Domain-Specific Paper Harness covers research whose material workflow centers
-on broad LLM agents: planning, reasoning, memory, tool use, web and computer
-use, multi-agent coordination, evaluation, benchmarks, safety, and security.
-
-It excludes traditional non-LLM reinforcement-learning agents, agent-based
-social simulation, chemical or biological agents, ordinary chatbots, pure RAG,
-and embodied systems without a material LLM-agent component.
+Domain-Specific Paper Harness initially covers three independent topics: Broad
+LLM Agents, Brain-Computer Interfaces, and World Models. TopicConfig owns each
+topic's scope, categories, inclusion terms, and exclusions; no topic-specific
+exclusion is applied as a global product restriction.
 
 ## Source boundaries
 
@@ -117,9 +114,9 @@ The three runtime identities are separated:
   invoke private GROBID.
 - Migration can read only `DATABASE_URL` and runs only Alembic.
 
-Scheduler has its own identity and can invoke only the Daily Job. GROBID has no
-secret accessor. The browser receives no database URL, provider key, service
-credential, or direct database access.
+Scheduler has its own identity and can invoke only the corresponding topic
+Daily Jobs. GROBID has no secret accessor. The browser receives no database URL,
+provider key, service credential, or direct database access.
 
 Terraform references fixed enabled numeric Secret Manager versions. Secret
 values do not enter Git, `.tfvars`, plans, state, images, logs, frontend code,
@@ -169,11 +166,14 @@ its failure does not stop independent valid items.
 Publication is one explicit transaction. `COMPLETE`, `PARTIAL`, and `FAILED`
 have the meanings defined in `docs/FAILURE_POLICY.md`. Only terminal complete or
 partial runs enter public reads. A failed publication cannot expose staging
-rows or change prior canonical product data. Upstream child statuses need not
+rows or change prior publication revisions. Upstream child statuses need not
 equal the product-publication status; the report matches its owning product run
 and preserves relevant item errors. A failed unpublished run may clear staging
-and replan from current valid persisted inputs, while terminal published runs
-remain immutable.
+and replan from current valid persisted inputs. Explicit same-date reprocessing
+creates an additive immutable publication revision; public reads select the
+latest successful revision for that topic and logical date. Reprocessing uses
+the logical-date lookback without advancing that topic's scheduled-ingestion
+cursor.
 
 ## Cloud boundary
 
@@ -186,7 +186,7 @@ VM, Kubernetes, Redis, fixed-cost load balancer, VPC connector, Cloud NAT, or
 exported key. All Cloud Run services use zero minimum instances where supported.
 
 Cloud changes are explicit: inspect a plan, apply it directly, execute migration
-and Daily Jobs directly, and create Scheduler paused only after successful
+and Daily Jobs directly, and enable each Scheduler only after successful
 production data verification. Operator scripts do not add IAM roles or retain a
 second source of truth for deployed cloud state.
 
@@ -203,9 +203,9 @@ Daily production target prepares the pinned SPECTER2 artifact; the default
 verification target never downloads model weights.
 
 Use focused checks for the changed boundary during implementation, then run the
-single canonical verification after M5 implementation and production acceptance
-are complete. Release remains blocked by a failed final canonical check, a
-modified merged migration, generated contract drift, credential-shaped content,
-missing license material, an unpinned required image/action, a failing image
-build, a destructive or public Terraform plan, a non-immutable runtime image
-reference, or an invalid secret version.
+single canonical verification when source and production acceptance are ready
+for a milestone or release commit. Release remains blocked by a failed final
+canonical check, a modified merged migration, generated contract drift,
+credential-shaped content, missing license material, an unpinned required
+image/action, a failing image build, a destructive or public Terraform plan, a
+non-immutable runtime image reference, or an invalid secret version.

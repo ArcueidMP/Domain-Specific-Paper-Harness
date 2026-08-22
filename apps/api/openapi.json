@@ -2447,6 +2447,7 @@
         "enum": [
           "STANDALONE",
           "NORMAL",
+          "REPROCESS",
           "SMOKE"
         ],
         "title": "PipelineExecutionMode",
@@ -5385,7 +5386,7 @@
     }
   },
   "info": {
-    "description": "Private read-oriented API for broad LLM-agent research intelligence.",
+    "description": "Private read-oriented API for topic-scoped research intelligence.",
     "title": "Domain-Specific Paper Harness API",
     "version": "0.1.0"
   },

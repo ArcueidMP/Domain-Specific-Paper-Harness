@@ -1,10 +1,10 @@
 # Domain-Specific Paper Harness
 
-Domain-Specific Paper Harness is a private research-intelligence product for
-broad LLM-agent research. It discovers new and updated arXiv papers, analyzes
-selected full text, retrieves approved historical work, builds traceable
-comparisons and a provenance-aware knowledge graph, and publishes reports and
-trend views through a FastAPI and React product.
+Domain-Specific Paper Harness is a private multi-topic research-intelligence
+product. The production MVP is deployed. It discovers new and updated arXiv
+papers, analyzes selected full text, retrieves approved historical work, builds
+traceable comparisons and a provenance-aware knowledge graph, and publishes
+reports and trend views through a FastAPI and React product.
 
 This repository contains application code, tests, containers, and Google Cloud
 infrastructure. It is not a paper-writing project, a generic search engine, or a
@@ -12,9 +12,9 @@ general chatbot.
 
 ## Product scope
 
-Included topics are LLM-agent planning, reasoning, memory, tool use, web and
-computer-use agents, multi-agent coordination, evaluation, benchmarks, safety,
-and security. Daily discovery is arXiv-only.
+The initial independent topics are Broad LLM Agents, Brain-Computer Interfaces,
+and World Models. Each topic has its own arXiv query, cursor, Daily runs,
+reports, graph, trends, and lineage. Daily discovery remains arXiv-only.
 
 Historical retrieval is limited to the local corpus and authenticated Semantic
 Scholar search, metadata, reference, citation, and recommendation endpoints.
@@ -25,6 +25,9 @@ and publisher PDFs are never scraped.
 
 - Canonical arXiv identity and explicit version tracking with cursor overlap,
   database uniqueness, idempotent ingestion, and PostgreSQL advisory locking.
+- Independent Broad LLM Agents, Brain-Computer Interfaces, and World Models
+  TopicConfigs with topic-scoped Jobs, reports, graph, trends, lineage, API
+  queries, and frontend selection.
 - Exact CPython 3.13.13 runtime, uv lock, FastAPI read API, generated TypeScript
   contract, React product views, Alembic migrations, PostgreSQL, and pgvector.
 - Strict DeepSeek structured analysis, private GROBID full-text parsing,
@@ -37,9 +40,9 @@ and publisher PDFs are never scraped.
 - M5 pipeline accounting, bounded execution, dependency-license review,
   container hardening, Terraform resources, and production operator scripts.
 
-Migration `0005_m5_pipeline_provenance` is the current schema addition for the
-complete Daily pipeline and its provenance. Existing merged migrations remain
-immutable.
+Migration `0006_topic_reprocessing` adds additive same-date publication
+revisions while preserving earlier analyses and reports. Existing merged
+migrations remain immutable.
 
 ## Architecture
 
@@ -47,8 +50,8 @@ The code is a Ports-and-Adapters modular monolith with three deployable units:
 
 1. `web-api`: FastAPI under `/api/v1`, health endpoints, and the production
    React build. It has no DeepSeek or Semantic Scholar credential.
-2. `daily`: a bounded Cloud Run Job that performs discovery through atomic
-   product publication.
+2. `daily`: three topic-specific bounded Cloud Run Jobs sharing one image and
+   performing discovery through atomic product publication.
 3. `grobid`: the sole scientific PDF parser, deployed as an IAM-private Cloud
    Run service.
 
@@ -59,13 +62,14 @@ contract. FastAPI is read-oriented and never starts the Daily pipeline.
 external system -> adapter -> port -> application use case -> domain
 ```
 
-The production defaults are `asia-southeast1`, a 05:00 schedule in
-`Asia/Kuala_Lumpur`, zero minimum Cloud Run instances, immutable Artifact
-Registry image digests, Secret Manager numeric versions, and an IAP owner
-allowlist.
+The production defaults are `asia-southeast1`, staggered 05:00/05:20/05:40
+schedules in `Asia/Kuala_Lumpur`, zero minimum Cloud Run instances, immutable
+Artifact Registry image digests, Secret Manager numeric versions, and an IAP
+owner allowlist.
 
 See [Architecture](docs/ARCHITECTURE.md), [Boundaries](docs/BOUNDARIES.md),
-[Failure policy](docs/FAILURE_POLICY.md), and the [Runbook](docs/RUNBOOK.md).
+[Failure policy](docs/FAILURE_POLICY.md), [Current status](docs/STATUS.md), and
+the [Runbook](docs/RUNBOOK.md).
 
 ## Prerequisites
 
@@ -132,6 +136,12 @@ $env:GROBID_AUTH_MODE = "none"
 scripts/run-daily.ps1 run-pipeline
 ```
 
+Select another topic explicitly when needed:
+
+```powershell
+scripts/run-daily.ps1 run-pipeline --topic-config configs/topics/world-models.yaml
+```
+
 The full pipeline is bounded by configured paper counts, search limits,
 timeouts, retries, comparison limits, and a global application deadline. It
 fails closed when a required dependency or configuration is missing.
@@ -140,28 +150,24 @@ fails closed when a required dependency or configuration is missing.
 
 Production operations are direct and deliberately small:
 
-1. Inspect the active account, project, billing, APIs, existing resources,
-   remote Terraform state, secret version metadata, and current image digests.
+1. Inspect the active account, project, billing, APIs, and existing resources.
 2. Create the remote state bucket once, if it does not already exist, with
    `scripts/bootstrap-terraform-state.ps1`.
 3. Add secret values through `scripts/add-secret-version.ps1`; never place a
    value in Terraform variables or command history.
 4. Build and optionally push only the changed runtime images with
    `scripts/build-images.ps1 -Component ...`.
-5. Put immutable image digests and enabled numeric secret versions in an
+5. Put the built image references and enabled Secret Manager versions in an
    untracked production `.tfvars` file.
 6. Run `scripts/deploy.ps1` without `-Apply`, inspect the Terraform plan, and
    rerun with `-Apply` only when the planned changes are authorized.
 7. Run `scripts/run-production-migration.ps1` and confirm Alembic head.
 8. Verify private service and IAM configuration with
    `scripts/verify-private-runtime.ps1`.
-9. Run one direct Daily execution with `scripts/run-production-daily.ps1`, then
-   verify persisted reports, graph, trends, lineage, and read API output.
-10. Create Scheduler paused through Terraform and inspect it with
-    `scripts/verify-scheduler.ps1`. Then apply `scheduler_paused = false`
-    through Terraform before triggering one Scheduler invocation and confirming
-    that it creates one Daily execution. Cloud Scheduler does not run paused
-    jobs, including manual invocations.
+9. Run each topic Job directly with `scripts/run-production-daily.ps1`, then
+   verify its persisted report, graph, trends, lineage, and read API output.
+   Add `-LogicalDate YYYY-MM-DD -Reprocess` for an additive same-date revision.
+10. Apply and inspect the three one-to-one Scheduler targets through Terraform.
 
 No deployment script grants temporary IAM roles. No script creates a public
 endpoint. Terraform apply, secret changes, job executions, and Scheduler
@@ -174,7 +180,7 @@ numeric versions.
 
 - `paper-harness-database-url`: normalized direct or session-affine PostgreSQL
   URL using `postgresql+psycopg://` and TLS.
-- `paper-harness-deepseek-api-key`: required only by the Daily Job.
+- `paper-harness-deepseek-api-key`: required only by the Daily Jobs.
 - `paper-harness-semantic-scholar-api-key`: a real non-empty API key required
   only by authenticated historical and related-work operations.
 
@@ -191,3 +197,6 @@ accounts receive only the secret versions required by their runtime.
   no implicit production substitutes.
 - Weekly and longer synthesis requires sufficient persisted source coverage;
   insufficient windows are reported honestly.
+- arXiv PDFs above the configured 30 MiB ingestion bound remain item-level
+  failures, and schema-invalid DeepSeek output remains visible in honest
+  `PARTIAL` reports.

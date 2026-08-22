@@ -161,7 +161,7 @@ def test_staged_infrastructure_defaults_are_safe_and_required_resources_are_decl
     )
     for source, resource_type, name in conditional_resources:
         block = _resource_block(source, resource_type, name)
-        assert "count = var." in block
+        assert re.search(r"\b(?:count|for_each)\s*=\s*var\.", block)
 
 
 def test_web_and_grobid_can_be_enabled_without_daily_or_api_key_versions() -> None:
@@ -295,7 +295,7 @@ def test_daily_is_the_only_consumer_gate_for_complete_pipeline_inputs() -> None:
         assert f'can(regex("^[1-9][0-9]*$", var.{secret_version}))' in daily_gate
 
     daily = _resource_block(runtime, "google_cloud_run_v2_job", "daily")
-    assert "count = var.deploy_daily_resources ? 1 : 0" in daily
+    assert "for_each = var.deploy_daily_resources ? local.daily_topics : {}" in daily
     for required_environment_name in (
         "GROBID_AUTH_MODE",
         "DEEPSEEK_API_KEY",
@@ -315,11 +315,14 @@ def test_daily_job_arguments_match_the_direct_cli_contract() -> None:
     assert 'command = ["paper-harness-daily"]' in daily
     args_match = re.search(r"(?ms)^\s*args\s*=\s*\[(.*?)^\s*\]", daily)
     assert args_match is not None
-    args = tuple(re.findall(r'"([^"]*)"', args_match.group(1)))
+    argument_source = args_match.group(1).replace(
+        "each.value.topic_config_path", '"<topic-config>"'
+    )
+    args = tuple(re.findall(r'"([^"]*)"', argument_source))
     assert args == (
         "run-pipeline",
         "--topic-config",
-        "/app/configs/topics/broad-llm-agents.yaml",
+        "<topic-config>",
         "--analysis-scope",
         "full_text",
         "--narrative-mode",
@@ -357,6 +360,54 @@ def test_daily_job_arguments_match_the_direct_cli_contract() -> None:
     assert "--execution-key" not in args
 
 
+def test_daily_jobs_cover_all_topics_with_stable_names_and_config_paths() -> None:
+    runtime = _read("runtime.tf")
+    topics = _named_block(runtime, "locals")
+    daily = _resource_block(runtime, "google_cloud_run_v2_job", "daily")
+
+    expected = {
+        "broad-llm-agents": (
+            '"${var.name_prefix}-daily"',
+            "/app/configs/topics/broad-llm-agents.yaml",
+            "var.schedule",
+        ),
+        "brain-computer-interfaces": (
+            '"${var.name_prefix}-daily-brain-computer-interfaces"',
+            "/app/configs/topics/brain-computer-interfaces.yaml",
+            "var.brain_computer_interfaces_schedule",
+        ),
+        "world-models": (
+            '"${var.name_prefix}-daily-world-models"',
+            "/app/configs/topics/world-models.yaml",
+            "var.world_models_schedule",
+        ),
+    }
+    for slug, (job_name, config_path, schedule) in expected.items():
+        topic = _named_block(topics, f'"{slug}" =')
+        assert f"job_name          = {job_name}" in topic
+        assert f'topic_config_path = "{config_path}"' in topic
+        assert f"schedule          = {schedule}" in topic
+
+    assert "for_each = var.deploy_daily_resources ? local.daily_topics : {}" in daily
+    assert "name                = each.value.job_name" in daily
+    assert "each.value.topic_config_path" in daily
+    assert 'name  = "TOPIC_CONFIG_PATH"' in daily
+
+
+def test_broad_daily_state_moves_to_the_topic_key_without_replacing_its_name() -> None:
+    runtime = _read("runtime.tf")
+
+    assert "from = google_cloud_run_v2_job.daily[0]" in runtime
+    assert 'to   = google_cloud_run_v2_job.daily["broad-llm-agents"]' in runtime
+    assert "from = google_cloud_run_v2_job_iam_binding.scheduler_invokers[0]" in runtime
+    assert (
+        'to   = google_cloud_run_v2_job_iam_binding.scheduler_invokers["broad-llm-agents"]'
+        in runtime
+    )
+    assert "from = google_cloud_scheduler_job.daily[0]" in runtime
+    assert 'to   = google_cloud_scheduler_job.daily["broad-llm-agents"]' in runtime
+
+
 def test_scheduler_and_outputs_follow_the_daily_boundary() -> None:
     variables = _read("variables.tf")
     outputs = _read("outputs.tf")
@@ -367,8 +418,14 @@ def test_scheduler_and_outputs_follow_the_daily_boundary() -> None:
 
     daily_output = _named_block(outputs, 'output "daily_job_name"')
     assert (
-        "var.deploy_daily_resources ? google_cloud_run_v2_job.daily[0].name : null" in daily_output
+        'var.deploy_daily_resources ? google_cloud_run_v2_job.daily["broad-llm-agents"].name : null'
+        in daily_output
     )
+    daily_outputs = _named_block(outputs, 'output "daily_job_names"')
+    assert "for topic, job in google_cloud_run_v2_job.daily" in daily_outputs
+
+    scheduler_output = _named_block(outputs, 'output "scheduler_job_names"')
+    assert "for topic, scheduler in google_cloud_scheduler_job.daily" in scheduler_output
 
     topology = _named_block(outputs, 'output "deployment_topology"')
     assert "daily_deployed                   = var.deploy_daily_resources" in topology
@@ -386,3 +443,6 @@ def test_scheduler_and_outputs_follow_the_daily_boundary() -> None:
     assert "deploy_daily_resources = false" in example
     assert "GROBID is independently deployable" in example
     assert "Keep it disabled while" in example
+    assert '# schedule = "0 5 * * *"' in example
+    assert '# brain_computer_interfaces_schedule = "20 5 * * *"' in example
+    assert '# world_models_schedule = "40 5 * * *"' in example

@@ -79,6 +79,8 @@ class IngestArxiv:
                         self._repository,
                         topic,
                         started_at=started_at,
+                        logical_date=run_date,
+                        pipeline_execution_mode=pipeline_execution_mode,
                     )
                 else:
                     if existing.cursor_from is None or existing.cursor_to is None:
@@ -97,6 +99,8 @@ class IngestArxiv:
                     self._repository,
                     topic,
                     started_at=started_at,
+                    logical_date=run_date,
+                    pipeline_execution_mode=pipeline_execution_mode,
                 )
                 run = self._repository.start_ingestion_run(
                     topic_id=topic.id,
@@ -133,7 +137,11 @@ class IngestArxiv:
                     records=unique_records,
                     watermark=cursor_to,
                     advance_shared_cursor=(
-                        pipeline_execution_mode is not PipelineExecutionMode.SMOKE
+                        pipeline_execution_mode
+                        not in (
+                            PipelineExecutionMode.REPROCESS,
+                            PipelineExecutionMode.SMOKE,
+                        )
                     ),
                     persisted_at=self._aware_now(),
                     completed_at=self._aware_now(),
@@ -174,7 +182,20 @@ def _current_cursor_window(
     topic: TopicConfig,
     *,
     started_at: datetime,
+    logical_date: date,
+    pipeline_execution_mode: PipelineExecutionMode,
 ) -> tuple[datetime, datetime]:
+    if pipeline_execution_mode is PipelineExecutionMode.REPROCESS:
+        logical_date_end = datetime.combine(
+            logical_date + timedelta(days=1),
+            datetime.min.time(),
+            tzinfo=SCHEDULE_TIME_ZONE,
+        ).astimezone(UTC)
+        cursor_to = min(started_at, logical_date_end)
+        return (
+            cursor_to - timedelta(days=topic.initial_lookback_days, hours=topic.overlap_hours),
+            cursor_to,
+        )
     cursor = repository.get_ingestion_cursor(topic.id)
     base_watermark = (
         cursor.watermark

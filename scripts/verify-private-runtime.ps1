@@ -39,7 +39,10 @@ function Assert-NoPublicPrincipal {
         [Parameter(Mandatory)][string]$ResourceName
     )
 
-    $Members = @($Policy.bindings | ForEach-Object { @($_.members) })
+    $Members = @()
+    if ($Policy.PSObject.Properties.Name -contains "bindings") {
+        $Members = @($Policy.bindings | ForEach-Object { @($_.members) })
+    }
     if ($Members -contains "allUsers" -or $Members -contains "allAuthenticatedUsers") {
         throw "Resource '$ResourceName' grants access to a public principal."
     }
@@ -52,7 +55,11 @@ if ($LASTEXITCODE -ne 0 -or $ActiveProject -cne $ProjectId) {
 
 $WebName = "$NamePrefix-web"
 $GrobidName = "$NamePrefix-grobid"
-$DailyName = "$NamePrefix-daily"
+$DailyNames = @(
+    "$NamePrefix-daily",
+    "$NamePrefix-daily-brain-computer-interfaces",
+    "$NamePrefix-daily-world-models"
+)
 $MigrationName = "$NamePrefix-migration"
 
 foreach ($ServiceName in @($WebName, $GrobidName)) {
@@ -70,7 +77,7 @@ foreach ($ServiceName in @($WebName, $GrobidName)) {
     Assert-NoPublicPrincipal -Policy $Policy -ResourceName "Cloud Run service '$ServiceName'"
 }
 
-foreach ($JobName in @($DailyName, $MigrationName)) {
+foreach ($JobName in @($DailyNames + $MigrationName)) {
     $Job = Invoke-GcloudJson @(
         "run", "jobs", "describe", $JobName,
         "--project=$ProjectId", "--region=$Region"

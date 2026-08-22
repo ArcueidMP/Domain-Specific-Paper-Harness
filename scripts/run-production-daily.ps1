@@ -4,7 +4,9 @@ param(
     [ValidatePattern("^[a-z][a-z0-9-]{4,28}[a-z0-9]$")]
     [string]$ProjectId,
     [string]$Region = "asia-southeast1",
-    [string]$JobName = "paper-harness-daily"
+    [string]$JobName = "paper-harness-daily",
+    [string]$LogicalDate,
+    [switch]$Reprocess
 )
 
 Set-StrictMode -Version Latest
@@ -21,7 +23,22 @@ if ($LASTEXITCODE -ne 0) {
     throw "Cloud Run Daily Job '$JobName' is unavailable."
 }
 
-& $Gcloud run jobs execute $JobName --project=$ProjectId --region=$Region --tasks=1 --wait
+$ExecutionArguments = @(
+    "run", "jobs", "execute", $JobName,
+    "--project=$ProjectId", "--region=$Region", "--tasks=1", "--wait"
+)
+$EnvironmentOverrides = @()
+if ($LogicalDate) {
+    $EnvironmentOverrides += "PIPELINE_LOGICAL_DATE=$LogicalDate"
+}
+if ($Reprocess) {
+    $EnvironmentOverrides += "PIPELINE_REPROCESS=true"
+}
+if ($EnvironmentOverrides.Count -gt 0) {
+    $ExecutionArguments += "--update-env-vars=$($EnvironmentOverrides -join ',')"
+}
+
+& $Gcloud @ExecutionArguments
 if ($LASTEXITCODE -ne 0) {
     throw "Cloud Run Daily Job '$JobName' failed with exit code $LASTEXITCODE."
 }
