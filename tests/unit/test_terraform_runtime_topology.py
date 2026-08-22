@@ -217,9 +217,7 @@ def test_variable_validation_accepts_independently_staged_web_and_daily() -> Non
         "deepseek_secret_version": "2",
         "semantic_scholar_secret_version": "3",
     }
-    with tempfile.TemporaryDirectory(
-        prefix="terraform-topology-", dir=REPOSITORY_ROOT / "data"
-    ) as root:
+    with tempfile.TemporaryDirectory(prefix="terraform-topology-") as root:
         web_result = _run_variable_plan(Path(root) / "web-only", web_only)
         daily_result = _run_variable_plan(Path(root) / "daily-without-web", daily_without_web)
 
@@ -235,9 +233,7 @@ def test_variable_validation_rejects_incomplete_daily_and_scheduler_topologies()
         "daily_image": digest,
         "deepseek_secret_version": "2",
     }
-    with tempfile.TemporaryDirectory(
-        prefix="terraform-topology-", dir=REPOSITORY_ROOT / "data"
-    ) as root:
+    with tempfile.TemporaryDirectory(prefix="terraform-topology-") as root:
         daily_result = _run_variable_plan(Path(root) / "incomplete-daily", incomplete_daily)
 
         assert daily_result.returncode != 0
@@ -268,9 +264,7 @@ def test_variable_validation_accepts_complete_daily_topology() -> None:
         "deepseek_secret_version": "2",
         "semantic_scholar_secret_version": "3",
     }
-    with tempfile.TemporaryDirectory(
-        prefix="terraform-topology-", dir=REPOSITORY_ROOT / "data"
-    ) as root:
+    with tempfile.TemporaryDirectory(prefix="terraform-topology-") as root:
         result = _run_variable_plan(Path(root) / "complete-daily", complete_daily)
 
     assert result.returncode == 0, result.stdout + result.stderr
