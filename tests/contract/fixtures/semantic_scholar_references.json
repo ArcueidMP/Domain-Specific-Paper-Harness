@@ -3,6 +3,21 @@
   "total": 1,
   "data": [
     {
+      "contexts": [
+        "We compare against bounded tool use for language-model agents."
+      ],
+      "intents": [
+        "methodology"
+      ],
+      "contextsWithIntent": [
+        {
+          "context": "We compare against bounded tool use for language-model agents.",
+          "intents": [
+            "methodology"
+          ]
+        }
+      ],
+      "isInfluential": true,
       "citedPaper": {
         "paperId": "2222222222222222222222222222222222222222",
         "corpusId": 202,

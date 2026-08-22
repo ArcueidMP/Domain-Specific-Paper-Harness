@@ -1,7 +1,6 @@
-import { Link } from "react-router-dom";
-
 import type { PaperSummary } from "../api/client";
 import { formatDate } from "../lib/format";
+import { TopicLink } from "./TopicLink";
 
 type PaperCardProps = {
   paper: PaperSummary;
@@ -28,14 +27,14 @@ export function PaperCard({ paper, compact = false }: PaperCardProps) {
         <span className="paper-category">{paper.primary_category}</span>
       </div>
       <h3>
-        <Link to={`/papers/${paper.id}`}>{paper.title}</Link>
+        <TopicLink to={`/papers/${paper.id}`}>{paper.title}</TopicLink>
       </h3>
       <p className="paper-authors">{formatAuthors(paper.authors)}</p>
       {!compact ? <p className="paper-abstract">{paper.abstract}</p> : null}
       <div className="paper-card-footer">
         <span>Updated {formatDate(paper.latest_updated_at)}</span>
         <span className="paper-card-actions">
-          <Link to={`/papers/${paper.id}`}>View analysis</Link>
+          <TopicLink to={`/papers/${paper.id}`}>View analysis</TopicLink>
           <a href={paper.pdf_url} target="_blank" rel="noreferrer">
             Open PDF <span aria-hidden="true">↗</span>
           </a>

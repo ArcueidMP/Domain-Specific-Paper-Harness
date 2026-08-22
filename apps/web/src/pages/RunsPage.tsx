@@ -1,21 +1,37 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 
 import { runQuery, runsQuery } from "../api/queries";
 import { LatestRunPanel } from "../components/LatestRunPanel";
 import { ReportDetail } from "../components/ReportDetail";
 import { RunStatusBadge } from "../components/RunStatusBadge";
 import { StateNotice } from "../components/StateNotice";
+import { TopicLink } from "../components/TopicLink";
 import { formatDateTime } from "../lib/format";
+import { useTopicSlug } from "../lib/topic";
 
 function readable(value: string): string {
   return value.replaceAll("_", " ").toLocaleLowerCase();
 }
 
+function executionModeLabel(value: string): string {
+  if (value === "SMOKE") {
+    return "Deployment smoke";
+  }
+  if (value === "NORMAL") {
+    return "Normal execution";
+  }
+  if (value === "REPROCESS") {
+    return "Reprocessed publication";
+  }
+  return "Standalone operation";
+}
+
 export function RunsPage() {
+  const topicSlug = useTopicSlug();
   const { runId } = useParams();
-  const runs = useQuery(runsQuery());
-  const detail = useQuery(runQuery(runId));
+  const runs = useQuery(runsQuery(topicSlug));
+  const detail = useQuery(runQuery(topicSlug, runId));
 
   return (
     <section className="page-section">
@@ -55,14 +71,30 @@ export function RunsPage() {
             <ol className="run-index-list">
               {runs.data.items.map((run) => (
                 <li key={run.id}>
-                  <Link className={run.id === detail.data?.id ? "active" : ""} to={`/runs/${run.id}`}>
+                  <TopicLink
+                    className={run.id === detail.data?.id ? "active" : ""}
+                    to={`/runs/${run.id}`}
+                  >
                     <div>
                       <strong>{run.logical_date}</strong>
-                      <RunStatusBadge status={run.status} />
+                      <div className="run-index-statuses" aria-label="Operation and pipeline status">
+                        <span>
+                          <small>Operation</small>
+                          <RunStatusBadge status={run.status} />
+                        </span>
+                        {run.pipeline_status ? (
+                          <span>
+                            <small>Pipeline</small>
+                            <RunStatusBadge status={run.pipeline_status} />
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
-                    <span>{readable(run.operation)}</span>
+                    <span>
+                      {executionModeLabel(run.pipeline_execution_mode)} · {readable(run.operation)}
+                    </span>
                     <small>{run.completed_count} completed / {run.failed_count} failed</small>
-                  </Link>
+                  </TopicLink>
                 </li>
               ))}
             </ol>
@@ -115,7 +147,9 @@ export function RunsPage() {
                         {detail.data.items.map((item) => (
                           <tr key={item.id}>
                             <td>
-                              <Link to={`/papers/${item.paper_id}`}>{item.paper_title}</Link>
+                              <TopicLink to={`/papers/${item.paper_id}`}>
+                                {item.paper_title}
+                              </TopicLink>
                               <small>arXiv:{item.canonical_arxiv_id}</small>
                             </td>
                             <td>{readable(item.stage)}</td>

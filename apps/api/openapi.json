@@ -2442,6 +2442,17 @@
         "title": "PaperVersionResponse",
         "type": "object"
       },
+      "PipelineExecutionMode": {
+        "description": "Preselected execution policy for an operator command or full Daily pipeline.",
+        "enum": [
+          "STANDALONE",
+          "NORMAL",
+          "REPROCESS",
+          "SMOKE"
+        ],
+        "title": "PipelineExecutionMode",
+        "type": "string"
+      },
       "ReadyResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3452,6 +3463,90 @@
           "operation": {
             "$ref": "#/components/schemas/RunOperation"
           },
+          "pipeline_completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Completed At"
+          },
+          "pipeline_deadline_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Deadline At"
+          },
+          "pipeline_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Error Code"
+          },
+          "pipeline_error_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Error Detail"
+          },
+          "pipeline_execution_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Execution Id"
+          },
+          "pipeline_execution_mode": {
+            "$ref": "#/components/schemas/PipelineExecutionMode"
+          },
+          "pipeline_selection_limit": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Selection Limit"
+          },
+          "pipeline_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "report": {
             "anyOf": [
               {
@@ -3502,9 +3597,11 @@
           "id",
           "topic_id",
           "source_run_id",
+          "pipeline_execution_id",
           "logical_date",
           "operation",
           "analysis_scope",
+          "pipeline_execution_mode",
           "status",
           "started_at",
           "completed_at",
@@ -3690,6 +3787,7 @@
         "enum": [
           "ARXIV_INGESTION",
           "STRUCTURED_ANALYSIS",
+          "HISTORICAL_ANALYSIS",
           "PRODUCT_PUBLICATION"
         ],
         "title": "RunOperation",
@@ -3814,6 +3912,90 @@
           "operation": {
             "$ref": "#/components/schemas/RunOperation"
           },
+          "pipeline_completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Completed At"
+          },
+          "pipeline_deadline_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Deadline At"
+          },
+          "pipeline_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Error Code"
+          },
+          "pipeline_error_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Error Detail"
+          },
+          "pipeline_execution_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Execution Id"
+          },
+          "pipeline_execution_mode": {
+            "$ref": "#/components/schemas/PipelineExecutionMode"
+          },
+          "pipeline_selection_limit": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Selection Limit"
+          },
+          "pipeline_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_version": {
             "minimum": 1.0,
             "title": "Schema Version",
@@ -3854,9 +4036,11 @@
           "id",
           "topic_id",
           "source_run_id",
+          "pipeline_execution_id",
           "logical_date",
           "operation",
           "analysis_scope",
+          "pipeline_execution_mode",
           "status",
           "started_at",
           "completed_at",
@@ -4483,6 +4667,18 @@
             "title": "Objective",
             "type": "string"
           },
+          "pipeline_execution_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Execution Id"
+          },
           "prompt_version": {
             "anyOf": [
               {
@@ -4570,6 +4766,7 @@
         },
         "required": [
           "id",
+          "pipeline_execution_id",
           "topic_id",
           "source_paper_id",
           "source_paper_version_id",
@@ -5189,7 +5386,7 @@
     }
   },
   "info": {
-    "description": "Private read-oriented API for broad LLM-agent research intelligence.",
+    "description": "Private read-oriented API for topic-scoped research intelligence.",
     "title": "Domain-Specific Paper Harness API",
     "version": "0.1.0"
   },

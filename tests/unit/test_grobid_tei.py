@@ -114,17 +114,83 @@ def test_tei_rejects_empty_malformed_oversized_and_non_namespaced_documents() ->
         )
 
 
-def test_tei_rejects_invalid_coordinates_and_unresolved_citations() -> None:
+def test_invalid_optional_coordinates_normalize_to_empty() -> None:
     fixture = _FIXTURE.read_bytes()
     invalid_coordinates = fixture.replace(
-        b'coords="1,201.0,115.0,16.0,12.0"', b'coords="not-coordinates"', 1
-    )
-    with pytest.raises(PdfParserOutputError, match="coordinates"):
-        _map(invalid_coordinates)
+        b'coords="1,72.0,115.0,468.0,12.0"', b'coords="not-passage-coordinates"', 1
+    ).replace(b'coords="1,201.0,115.0,16.0,12.0"', b'coords="not-coordinates"', 1)
+    parsed = _map(invalid_coordinates)
 
-    unresolved = fixture.replace(b'target="#b0"', b'target="#missing"', 1)
-    with pytest.raises(PdfParserOutputError, match="does not resolve"):
-        _map(unresolved)
+    assert parsed.sections[0].passages[0].coordinates == ()
+    assert parsed.citation_contexts[0].coordinates == ()
+
+
+def test_duplicate_bibliography_ids_keep_first_reference() -> None:
+    document = (
+        b'<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body><p>'
+        b'Claim <ref type="bibr" target="#b0">[1]</ref>.</p></body>'
+        b'<back><listBibl><biblStruct xml:id="b0"><analytic>'
+        b"<title>First Reference</title></analytic></biblStruct>"
+        b'<biblStruct xml:id="b0"><analytic><title>Duplicate Reference</title>'
+        b"</analytic></biblStruct></listBibl></back></text></TEI>"
+    )
+
+    parsed = _map(document)
+
+    assert [(reference.source_id, reference.title) for reference in parsed.references] == [
+        ("b0", "First Reference")
+    ]
+    assert [context.reference_source_id for context in parsed.citation_contexts] == ["b0"]
+
+
+def test_targetless_bibliography_marker_remains_in_mixed_linked_passage() -> None:
+    document = (
+        b'<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body><div>'
+        b'<head>Introduction</head><p xml:id="mixed-citations">'
+        b'An unresolved marker <ref type="bibr">[?]</ref> remains, while '
+        b'<ref type="bibr" target="#b0">[1]</ref> is linked.</p></div></body>'
+        b'<back><listBibl><biblStruct xml:id="b0"><analytic>'
+        b"<title>Linked Reference</title></analytic></biblStruct></listBibl></back>"
+        b"</text></TEI>"
+    )
+
+    first = _map(document)
+    second = _map(document)
+
+    passage = first.sections[0].passages[0]
+    assert passage.text == "An unresolved marker [?] remains, while [1] is linked."
+    assert [context.reference_source_id for context in first.citation_contexts] == ["b0"]
+    assert first.citation_contexts[0].excerpt == passage.text
+    assert first.citation_contexts[0].parsed_passage_id == passage.id
+    assert [context.id for context in first.citation_contexts] == [
+        context.id for context in second.citation_contexts
+    ]
+
+
+@pytest.mark.parametrize("target", ["", "   ", "#", " #   # ", "#unknown"])
+def test_blank_and_unresolved_citation_targets_are_omitted(target: str) -> None:
+    parsed = _map(_citation_document(target))
+
+    assert parsed.sections[0].passages[0].text == "Claim [1]."
+    assert parsed.citation_contexts == ()
+
+
+@pytest.mark.parametrize(
+    ("document", "message"),
+    [
+        (
+            b'<TEI xmlns="http://www.tei-c.org/ns/1.0"><text /></TEI>',
+            "does not contain a body",
+        ),
+        (
+            b'<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body><p>   </p></body></text></TEI>',
+            "no non-empty passages",
+        ),
+    ],
+)
+def test_tei_keeps_required_body_and_passages_strict(document: bytes, message: str) -> None:
+    with pytest.raises(PdfParserOutputError, match=message):
+        _map(document)
 
 
 def test_mapping_is_deterministic_for_the_same_version_and_parser_identity() -> None:
@@ -143,6 +209,22 @@ def test_mapping_is_deterministic_for_the_same_version_and_parser_identity() -> 
 
 def _map_fixture() -> ParsedPaper:
     return _map(_FIXTURE.read_bytes())
+
+
+def _citation_document(target: str) -> bytes:
+    return f"""<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <text>
+    <body><p>Claim <ref type="bibr" target="{target}">[1]</ref>.</p></body>
+    <back>
+      <listBibl>
+        <biblStruct xml:id="b0">
+          <analytic><title>Known Reference</title></analytic>
+        </biblStruct>
+      </listBibl>
+    </back>
+  </text>
+</TEI>
+""".encode()
 
 
 def _map(document: bytes) -> ParsedPaper:

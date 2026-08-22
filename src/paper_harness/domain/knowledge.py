@@ -11,7 +11,7 @@ from __future__ import annotations
 import unicodedata
 from collections import defaultdict, deque
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal, localcontext
 from enum import StrEnum
@@ -222,6 +222,7 @@ class GraphEntity:
         )
         canonical_label = normalizer(self.canonical_label)
         display_label = normalizer(self.display_label)
+        object.__setattr__(self, "canonical_label", canonical_label)
         _require_text(self.source, "graph entity source", maximum=100)
         if self.schema_version < 1:
             raise DomainInvariantError("schema_version must be positive")
@@ -239,7 +240,7 @@ class GraphEntity:
                 raise DomainInvariantError("non-paper graph entity cannot carry a paper ID")
             expected_key = normalized_entity_key(canonical_label)
             if normalized_entity_key(display_label) != expected_key:
-                raise DomainInvariantError("graph display label must match its canonical key")
+                display_label = canonical_label
             expected_id = stable_graph_entity_id(
                 self.topic_id,
                 self.entity_type.value,
@@ -249,13 +250,13 @@ class GraphEntity:
             raise DomainInvariantError("graph entity normalized key is not canonical")
         if self.id != expected_id:
             raise DomainInvariantError("graph entity ID is not stable for its canonical key")
-        cleaned_aliases = tuple(normalizer(alias) for alias in self.aliases)
-        if len(set(cleaned_aliases)) != len(cleaned_aliases):
-            raise DomainInvariantError("graph entity aliases must be unique")
-        if self.entity_type is not GraphEntityType.PAPER and any(
-            normalized_entity_key(alias) != expected_key for alias in cleaned_aliases
-        ):
-            raise DomainInvariantError("entity aliases cannot introduce an unverified equivalence")
+        object.__setattr__(self, "display_label", display_label)
+        cleaned_aliases = tuple(dict.fromkeys(normalizer(alias) for alias in self.aliases))
+        if self.entity_type is not GraphEntityType.PAPER:
+            cleaned_aliases = tuple(
+                alias for alias in cleaned_aliases if normalized_entity_key(alias) == expected_key
+            )
+        object.__setattr__(self, "aliases", cleaned_aliases)
 
 
 def _validate_occurrence_provenance(
@@ -312,6 +313,7 @@ class GraphEntityMention:
     generated_at: datetime
     schema_version: int
     created_at: datetime
+    pipeline_execution_id: UUID | None = None
 
     def __post_init__(self) -> None:
         _require_text(
@@ -331,6 +333,7 @@ class GraphEntityMention:
             self.paper_version_id,
             analysis_id=self.analysis_id,
             comparison_id=self.comparison_id,
+            pipeline_execution_id=self.pipeline_execution_id,
         )
         if self.id != expected_id:
             raise DomainInvariantError("graph entity mention ID is not stable for its owner")
@@ -360,6 +363,7 @@ class GraphEdge:
     generated_at: datetime
     schema_version: int
     created_at: datetime
+    pipeline_execution_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if self.source_entity_id == self.target_entity_id:
@@ -402,6 +406,7 @@ class GraphEdge:
             analysis_id=self.analysis_id,
             comparison_id=self.comparison_id,
             paper_relation_id=self.paper_relation_id,
+            pipeline_execution_id=self.pipeline_execution_id,
         )
         if self.id != expected_id:
             raise DomainInvariantError("graph edge ID is not stable for its source occurrence")
@@ -606,6 +611,53 @@ class KnowledgeGraphBundle:
             and mention.comparison_id == edge.comparison_id
             for mention in self.mentions
         )
+
+
+def namespace_knowledge_graph_bundle(
+    bundle: KnowledgeGraphBundle,
+    pipeline_execution_id: UUID,
+) -> KnowledgeGraphBundle:
+    """Salt publication occurrences while preserving shared graph entities."""
+
+    mentions = tuple(
+        replace(
+            mention,
+            id=stable_graph_entity_mention_id(
+                mention.entity_id,
+                mention.paper_version_id,
+                analysis_id=mention.analysis_id,
+                comparison_id=mention.comparison_id,
+                pipeline_execution_id=pipeline_execution_id,
+            ),
+            pipeline_execution_id=pipeline_execution_id,
+        )
+        for mention in bundle.mentions
+    )
+    edges = tuple(
+        replace(
+            edge,
+            id=stable_graph_edge_id(
+                edge.source_entity_id,
+                edge.target_entity_id,
+                edge.relation_type.value,
+                edge.source_paper_version_id,
+                target_paper_version_id=edge.target_paper_version_id,
+                analysis_id=edge.analysis_id,
+                comparison_id=edge.comparison_id,
+                paper_relation_id=edge.paper_relation_id,
+                pipeline_execution_id=pipeline_execution_id,
+            ),
+            pipeline_execution_id=pipeline_execution_id,
+        )
+        for edge in bundle.edges
+    )
+    return KnowledgeGraphBundle(
+        topic_id=bundle.topic_id,
+        entities=bundle.entities,
+        mentions=mentions,
+        edges=edges,
+        references=bundle.references,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1213,8 +1265,15 @@ class LineageSnapshot:
     lineage_version: str
     generated_at: datetime
     schema_version: int
+    pipeline_execution_id: UUID | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "nodes", tuple(sorted(self.nodes, key=_lineage_node_sort_key)))
+        object.__setattr__(
+            self,
+            "permitted_relation_types",
+            tuple(sorted(set(self.permitted_relation_types), key=lambda item: item.value)),
+        )
         if not 1 <= self.max_depth <= MAX_LINEAGE_DEPTH:
             raise DomainInvariantError("lineage max depth is outside the supported bound")
         if not 1 <= self.max_nodes <= MAX_LINEAGE_NODES:
@@ -1232,14 +1291,9 @@ class LineageSnapshot:
             raise DomainInvariantError("lineage root must appear exactly once at depth zero")
         if any(item.depth > self.max_depth for item in self.nodes):
             raise DomainInvariantError("lineage node exceeds the configured depth")
-        expected_node_order = tuple(sorted(self.nodes, key=_lineage_node_sort_key))
-        if self.nodes != expected_node_order:
-            raise DomainInvariantError("lineage nodes must be in chronological stable order")
         permitted = tuple(sorted(set(self.permitted_relation_types), key=lambda item: item.value))
         if not permitted or any(item not in PAPER_GRAPH_RELATION_TYPES for item in permitted):
             raise DomainInvariantError("lineage permits only explicit paper relation types")
-        if self.permitted_relation_types != permitted:
-            raise DomainInvariantError("lineage permitted relations must be unique and sorted")
         node_ids = {item.graph_entity_id for item in self.nodes}
         nodes_by_id = {item.graph_entity_id: item for item in self.nodes}
         if len(self.edges) > self.max_edges:
@@ -1282,9 +1336,33 @@ class LineageSnapshot:
             max_nodes=self.max_nodes,
             max_edges=self.max_edges,
             lineage_version=self.lineage_version,
+            pipeline_execution_id=self.pipeline_execution_id,
         )
         if self.id != expected_id:
             raise DomainInvariantError("lineage snapshot ID is not stable for its scope")
+
+
+def namespace_lineage_snapshot(
+    snapshot: LineageSnapshot,
+    pipeline_execution_id: UUID,
+) -> LineageSnapshot:
+    return replace(
+        snapshot,
+        id=stable_lineage_snapshot_id(
+            snapshot.topic_id,
+            snapshot.root_paper_id,
+            snapshot.as_of_date,
+            permitted_relation_types=tuple(
+                item.value for item in snapshot.permitted_relation_types
+            ),
+            max_depth=snapshot.max_depth,
+            max_nodes=snapshot.max_nodes,
+            max_edges=snapshot.max_edges,
+            lineage_version=snapshot.lineage_version,
+            pipeline_execution_id=pipeline_execution_id,
+        ),
+        pipeline_execution_id=pipeline_execution_id,
+    )
 
 
 def _lineage_paper_sort_key(item: LineagePaper) -> tuple[bool, date, str]:
@@ -1637,8 +1715,20 @@ class TrendSnapshot:
     aggregation_version: str
     generated_at: datetime
     schema_version: int
+    pipeline_execution_id: UUID | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "new_entity_ids", tuple(sorted(set(self.new_entity_ids), key=str)))
+        object.__setattr__(
+            self,
+            "recurring_entity_ids",
+            tuple(sorted(set(self.recurring_entity_ids), key=str)),
+        )
+        object.__setattr__(
+            self,
+            "representative_paper_ids",
+            tuple(dict.fromkeys(self.representative_paper_ids)),
+        )
         expected_start = self.as_of_date - timedelta(days=self.window.days - 1)
         expected_preceding_end = expected_start - timedelta(days=1)
         expected_preceding_start = expected_preceding_end - timedelta(days=self.window.days - 1)
@@ -1664,14 +1754,8 @@ class TrendSnapshot:
             raise DomainInvariantError("trend entity counts must be unique")
         if len({item.relation_type for item in self.relation_counts}) != len(self.relation_counts):
             raise DomainInvariantError("trend relation counts must be unique")
-        if tuple(sorted(set(self.new_entity_ids), key=str)) != self.new_entity_ids:
-            raise DomainInvariantError("new trend entity IDs must be unique and sorted")
-        if tuple(sorted(set(self.recurring_entity_ids), key=str)) != self.recurring_entity_ids:
-            raise DomainInvariantError("recurring trend entity IDs must be unique and sorted")
         if set(self.new_entity_ids).intersection(self.recurring_entity_ids):
             raise DomainInvariantError("new and recurring trend entity sets cannot overlap")
-        if len(set(self.representative_paper_ids)) != len(self.representative_paper_ids):
-            raise DomainInvariantError("representative trend paper IDs must be unique")
         _require_text(self.aggregation_version, "trend aggregation version", maximum=100)
         _require_aware(self.generated_at, "generated_at")
         if self.schema_version < 1:
@@ -1681,9 +1765,27 @@ class TrendSnapshot:
             self.as_of_date,
             self.window.value,
             self.aggregation_version,
+            pipeline_execution_id=self.pipeline_execution_id,
         )
         if self.id != expected_id:
             raise DomainInvariantError("trend snapshot ID is not stable for its scope")
+
+
+def namespace_trend_snapshot(
+    snapshot: TrendSnapshot,
+    pipeline_execution_id: UUID,
+) -> TrendSnapshot:
+    return replace(
+        snapshot,
+        id=stable_trend_snapshot_id(
+            snapshot.topic_id,
+            snapshot.as_of_date,
+            snapshot.window.value,
+            snapshot.aggregation_version,
+            pipeline_execution_id=pipeline_execution_id,
+        ),
+        pipeline_execution_id=pipeline_execution_id,
+    )
 
 
 def _data_sufficiency(
@@ -1786,20 +1888,16 @@ def aggregate_trend_snapshots(
     mention_ids = {item.id for item in all_mention_values}
     if len(mention_ids) != len(all_mention_values):
         raise DomainInvariantError("trend graph mentions must be unique")
-    if set(mention_activity_dates) != mention_ids:
-        raise DomainInvariantError(
-            "trend mention activity dates must exactly cover the supplied mentions"
-        )
+    if not mention_ids.issubset(mention_activity_dates):
+        raise DomainInvariantError("trend aggregation is missing mention activity dates")
     if any(type(value) is not date for value in mention_activity_dates.values()):
         raise DomainInvariantError("trend mention activity dates must be dates")
     all_edge_values = tuple(edges)
     edge_ids = {item.id for item in all_edge_values}
     if len(edge_ids) != len(all_edge_values):
         raise DomainInvariantError("trend graph edges must be unique")
-    if set(edge_activity_dates) != edge_ids:
-        raise DomainInvariantError(
-            "trend edge activity dates must exactly cover the supplied edges"
-        )
+    if not edge_ids.issubset(edge_activity_dates):
+        raise DomainInvariantError("trend aggregation is missing edge activity dates")
     if any(type(value) is not date for value in edge_activity_dates.values()):
         raise DomainInvariantError("trend edge activity dates must be dates")
     mention_values = tuple(

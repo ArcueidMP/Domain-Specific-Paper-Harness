@@ -242,20 +242,26 @@ class GeneratedClaim:
 class GeneratedEvidence:
     key: str
     claim_keys: tuple[str, ...]
-    passage_id: str
-    excerpt: str
+    passage_ids: tuple[str, ...]
     evidence_type: EvidenceType
+    rationale: str | None = None
 
     def __post_init__(self) -> None:
         _require_text(self.key, "evidence key", maximum=80)
-        _require_text(self.passage_id, "evidence passage id", maximum=200)
-        _require_text(self.excerpt, "evidence excerpt", maximum=600)
         if not self.claim_keys:
             raise DomainInvariantError("evidence must support at least one claim")
         if len(set(self.claim_keys)) != len(self.claim_keys):
             raise DomainInvariantError("evidence claim keys must be unique")
         for key in self.claim_keys:
             _require_text(key, "evidence claim key", maximum=80)
+        if not self.passage_ids:
+            raise DomainInvariantError("evidence must reference at least one source passage")
+        if len(set(self.passage_ids)) != len(self.passage_ids):
+            raise DomainInvariantError("evidence passage IDs must be unique")
+        for passage_id in self.passage_ids:
+            _require_text(passage_id, "evidence passage id", maximum=200)
+        if self.rationale is not None:
+            _require_text(self.rationale, "evidence rationale", maximum=1000)
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,11 +318,6 @@ class GeneratedAnalysis:
     model_version: str
     prompt_version: str
     generated_at: datetime
-    summary: str
-    research_problem: str
-    method_summary: str
-    key_contributions: tuple[str, ...]
-    limitations: tuple[str, ...]
     claims: tuple[GeneratedClaim, ...]
     evidence: tuple[GeneratedEvidence, ...]
     usage: ModelUsage
@@ -327,18 +328,11 @@ class GeneratedAnalysis:
             (self.configured_model, "configured model", 200),
             (self.model_version, "model version", 200),
             (self.prompt_version, "prompt version", 100),
-            (self.summary, "analysis summary", 8000),
-            (self.research_problem, "research problem", 4000),
-            (self.method_summary, "method summary", 4000),
         ):
             _require_text(value, name, maximum=maximum)
         _require_aware(self.generated_at, "generated_at")
-        if not self.key_contributions or not self.claims or not self.evidence:
-            raise DomainInvariantError("analysis needs contributions, claims, and evidence")
-        for value in self.key_contributions:
-            _require_text(value, "analysis contribution", maximum=2000)
-        for value in self.limitations:
-            _require_text(value, "analysis limitation", maximum=2000)
+        if not self.claims or not self.evidence:
+            raise DomainInvariantError("analysis needs claims and evidence")
         claim_keys = {claim.key for claim in self.claims}
         evidence_keys = {item.key for item in self.evidence}
         if len(claim_keys) != len(self.claims) or len(evidence_keys) != len(self.evidence):
@@ -372,6 +366,7 @@ class PaperAnalysis:
     usage: ModelUsage
     schema_version: int
     created_at: datetime
+    revision_id: UUID | None = None
 
     def __post_init__(self) -> None:
         _require_aware(self.generated_at, "generated_at")

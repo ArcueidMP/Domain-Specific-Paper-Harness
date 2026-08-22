@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "domain-specific-paper-harness"
 version = "0.1.0"
-description = "Private research intelligence for broad LLM-agent papers."
+description = "Private multi-topic research intelligence for arXiv papers."
 readme = "README.md"
 requires-python = ">=3.13.13,<3.14"
 license = { text = "Proprietary" }

@@ -1,8 +1,7 @@
-import { Link } from "react-router-dom";
-
 import type { RunItem, RunSummary } from "../api/client";
 import { formatDateTime } from "../lib/format";
 import { RunStatusBadge } from "./RunStatusBadge";
+import { TopicLink } from "./TopicLink";
 
 type LatestRunPanelProps = {
   run: RunSummary;
@@ -14,6 +13,15 @@ export function LatestRunPanel({ run, items = [], heading = "Daily run" }: Lates
   const failedItems = items.filter(
     (item) => item.status === "FAILED" || item.failed_stage !== null,
   );
+  const pipelineOutcome = run.pipeline_status;
+  const executionModeLabel =
+    run.pipeline_execution_mode === "SMOKE"
+      ? "Deployment smoke"
+      : run.pipeline_execution_mode === "NORMAL"
+        ? "Normal execution"
+        : run.pipeline_execution_mode === "REPROCESS"
+          ? "Reprocessed publication"
+          : "Standalone operation";
 
   return (
     <article className="run-panel card">
@@ -22,13 +30,29 @@ export function LatestRunPanel({ run, items = [], heading = "Daily run" }: Lates
           <p className="eyebrow">{heading}</p>
           <h2 className="panel-title">{run.logical_date}</h2>
           <span className="run-operation">{run.operation.replaceAll("_", " ")}</span>
+          <span
+            className={`execution-mode-badge ${run.pipeline_execution_mode.toLocaleLowerCase()}`}
+          >
+            {executionModeLabel}
+          </span>
           {run.analysis_scope ? (
             <span className={`scope-badge ${run.analysis_scope.toLocaleLowerCase()}`}>
               {run.analysis_scope === "FULL_TEXT" ? "Full text analysis" : "Abstract-only analysis"}
             </span>
           ) : null}
         </div>
-        <RunStatusBadge status={run.status} />
+        <div className="run-status-summary" aria-label="Operation and pipeline status">
+          <div>
+            <span>Operation</span>
+            <RunStatusBadge status={run.status} />
+          </div>
+          {pipelineOutcome ? (
+            <div>
+              <span>Pipeline</span>
+              <RunStatusBadge status={pipelineOutcome} />
+            </div>
+          ) : null}
+        </div>
       </div>
       <dl className="run-metrics">
         <div>
@@ -57,15 +81,33 @@ export function LatestRunPanel({ run, items = [], heading = "Daily run" }: Lates
           <span>Completed</span>
           <strong>{formatDateTime(run.completed_at)}</strong>
         </div>
+        {run.pipeline_execution_id ? (
+          <div>
+            <span>Execution ID</span>
+            <strong className="execution-identity">{run.pipeline_execution_id}</strong>
+          </div>
+        ) : null}
       </div>
-      {run.status === "PARTIAL" ? (
+      {(pipelineOutcome ?? run.status) === "PARTIAL" ? (
         <div className="partial-run-banner" role="alert">
           <strong>Partial daily run</strong>
           <span>
             {failedItems.length > 0
               ? `${failedItems.length} selected paper${failedItems.length === 1 ? "" : "s"} did not complete every required stage.`
-              : "One or more selected papers did not complete every required stage."}
+              : "The full pipeline completed with one or more persisted failures."}
           </span>
+        </div>
+      ) : null}
+      {run.pipeline_status === "FAILED" ? (
+        <div className="run-warning" role="alert">
+          <strong>{run.pipeline_error_code ?? "DAILY_PIPELINE_FAILED"}</strong>
+          <span>
+            {run.pipeline_error_detail ??
+              "The full pipeline failed even though this child operation may have completed."}
+          </span>
+          {run.pipeline_deadline_at ? (
+            <small>Execution deadline: {formatDateTime(run.pipeline_deadline_at)}</small>
+          ) : null}
         </div>
       ) : null}
       {failedItems.length > 0 ? (
@@ -76,10 +118,10 @@ export function LatestRunPanel({ run, items = [], heading = "Daily run" }: Lates
               const identifier = `arXiv:${item.canonical_arxiv_id}`;
               return (
                 <li key={item.id}>
-                  <Link to={`/papers/${item.paper_id}`}>
+                  <TopicLink to={`/papers/${item.paper_id}`}>
                     <strong>{item.paper_title}</strong>
                     <span>{identifier}</span>
-                  </Link>
+                  </TopicLink>
                   <dl>
                     <div>
                       <dt>Failed stage</dt>
@@ -107,7 +149,7 @@ export function LatestRunPanel({ run, items = [], heading = "Daily run" }: Lates
           </ul>
         </section>
       ) : null}
-      {run.error_code ? (
+      {run.error_code && run.pipeline_error_code !== run.error_code ? (
         <div className="run-warning" role="alert">
           <strong>{run.error_code}</strong>
           <span>{run.error_detail ?? "The run recorded an item-level failure."}</span>

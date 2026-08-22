@@ -278,7 +278,11 @@ def test_backfill_filters_exact_window_and_persists_embeddings_atomically(
     assert result.embedding_model_revision == _Embeddings.model_revision
 
 
-def test_backfill_resumes_at_persisted_query_boundary(topic_config: TopicConfig) -> None:
+@pytest.mark.parametrize("status", (BackfillStatus.RUNNING, BackfillStatus.FAILED))
+def test_backfill_resumes_at_persisted_query_boundary(
+    topic_config: TopicConfig,
+    status: BackfillStatus,
+) -> None:
     window_from, window_to = six_month_window(date(2026, 8, 9))
     existing = HistoricalBackfillRun(
         id=UUID("824a0698-c1e2-4cb1-a978-2cf3da723e70"),
@@ -296,15 +300,19 @@ def test_backfill_resumes_at_persisted_query_boundary(topic_config: TopicConfig)
         embedding_preprocessing_contract=_Embeddings.preprocessing_contract,
         embedding_model_provenance=_Embeddings.model_provenance,
         embedding_source=_Embeddings.source,
-        status=BackfillStatus.RUNNING,
+        status=status,
         next_query_index=1,
         discovered_count=3,
         persisted_count=2,
         representative_count=0,
         started_at=NOW,
-        completed_at=None,
-        error_code=None,
-        error_detail=None,
+        completed_at=NOW if status is BackfillStatus.FAILED else None,
+        error_code=("SCHOLARLY_SEARCH_UNAVAILABLE" if status is BackfillStatus.FAILED else None),
+        error_detail=(
+            "Semantic Scholar exhausted bounded retries."
+            if status is BackfillStatus.FAILED
+            else None
+        ),
         schema_version=1,
         created_at=NOW,
     )
@@ -363,7 +371,43 @@ def test_completed_backfill_is_idempotent(topic_config: TopicConfig) -> None:
     assert scholarly.queries == []
 
 
-def test_completed_backfill_rejects_changed_model_provenance(
+def test_smoke_and_normal_profiles_reuse_the_same_weekly_backfill_contract(
+    topic_config: TopicConfig,
+) -> None:
+    repository = _Repository()
+    smoke_search = _ScholarlySearch(())
+    smoke = _service(repository, smoke_search).execute(
+        topic=topic_config,
+        through=date(2026, 8, 9),
+        max_queries=8,
+        per_query_limit=100,
+        overall_timeout_seconds=1800,
+    )
+    normal_search = _ScholarlySearch(())
+
+    normal = _service(repository, normal_search).execute(
+        topic=topic_config,
+        through=date(2026, 8, 9),
+        max_queries=8,
+        per_query_limit=100,
+        overall_timeout_seconds=1800,
+    )
+
+    assert smoke.status is BackfillStatus.COMPLETE
+    assert normal is smoke
+    assert normal_search.queries == []
+
+    changed_profile = _service(repository, _ScholarlySearch(())).execute(
+        topic=topic_config,
+        through=date(2026, 8, 9),
+        max_queries=8,
+        per_query_limit=50,
+        overall_timeout_seconds=1800,
+    )
+    assert changed_profile is smoke
+
+
+def test_completed_backfill_remains_terminal_after_model_configuration_changes(
     topic_config: TopicConfig,
 ) -> None:
     window_from, window_to = six_month_window(date(2026, 8, 9))
@@ -397,16 +441,16 @@ def test_completed_backfill_rejects_changed_model_provenance(
     )
     scholarly = _ScholarlySearch(())
 
-    with pytest.raises(DomainInvariantError, match="persisted query plan"):
-        _service(_Repository(existing), scholarly).execute(
-            topic=topic_config,
-            through=date(2026, 8, 9),
-        )
+    result = _service(_Repository(existing), scholarly).execute(
+        topic=topic_config,
+        through=date(2026, 8, 9),
+    )
 
+    assert result is existing
     assert scholarly.queries == []
 
 
-def test_backfill_rejects_resume_when_query_plan_changed(topic_config: TopicConfig) -> None:
+def test_running_backfill_continues_its_persisted_query_plan(topic_config: TopicConfig) -> None:
     window_from, window_to = six_month_window(date(2026, 8, 9))
     existing = HistoricalBackfillRun(
         id=UUID("824a0698-c1e2-4cb1-a978-2cf3da723e70"),
@@ -438,13 +482,13 @@ def test_backfill_rejects_resume_when_query_plan_changed(topic_config: TopicConf
     )
     scholarly = _ScholarlySearch(())
 
-    with pytest.raises(DomainInvariantError, match="persisted query plan"):
-        _service(_Repository(existing), scholarly).execute(
-            topic=topic_config,
-            through=date(2026, 8, 9),
-        )
+    result = _service(_Repository(existing), scholarly).execute(
+        topic=topic_config,
+        through=date(2026, 8, 9),
+    )
 
-    assert scholarly.queries == []
+    assert result.status is BackfillStatus.COMPLETE
+    assert scholarly.queries == ["different query"]
 
 
 def test_backfill_excludes_out_of_scope_results(topic_config: TopicConfig) -> None:

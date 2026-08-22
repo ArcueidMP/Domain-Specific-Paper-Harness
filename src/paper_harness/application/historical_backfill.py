@@ -124,37 +124,25 @@ class HistoricalBackfill:
                 )
             )
         else:
-            if (
-                existing.query_plan != queries
-                or existing.max_results_per_query != per_query_limit
-                or existing.overall_timeout_seconds != overall_timeout_seconds
-                or existing.embedding_model_identifier != self._embeddings.model_identifier
-                or existing.embedding_model_revision != self._embeddings.model_revision
-                or existing.embedding_tokenizer_identifier != self._embeddings.tokenizer_identifier
-                or existing.embedding_tokenizer_revision != self._embeddings.tokenizer_revision
-                or existing.embedding_dimension != self._embeddings.dimension
-                or existing.embedding_preprocessing_contract
-                != self._embeddings.preprocessing_contract
-                or existing.embedding_model_provenance != self._embeddings.model_provenance
-                or existing.embedding_source != self._embeddings.source
-            ):
-                raise DomainInvariantError(
-                    "historical backfill resume configuration does not match the persisted "
-                    "query plan"
-                )
             if existing.status is BackfillStatus.COMPLETE:
                 return existing
             if existing.status is BackfillStatus.FAILED:
+                queries = existing.query_plan
+                per_query_limit = existing.max_results_per_query
                 run = self._repository.start_historical_backfill(
                     replace(
                         existing,
+                        overall_timeout_seconds=overall_timeout_seconds,
                         status=BackfillStatus.RUNNING,
+                        started_at=self._aware_now(),
                         completed_at=None,
                         error_code=None,
                         error_detail=None,
                     )
                 )
             else:
+                queries = existing.query_plan
+                per_query_limit = existing.max_results_per_query
                 run = existing
         deadline = self._monotonic() + overall_timeout_seconds
         try:

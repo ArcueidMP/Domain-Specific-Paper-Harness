@@ -213,11 +213,11 @@ describe("PaperDetailPage", () => {
     );
     expect(screen.getByRole("link", { name: "View paper graph" })).toHaveAttribute(
       "href",
-      `/graph?paper_id=${paperId}`,
+      `/graph?paper_id=${paperId}&topic=broad-llm-agents`,
     );
     expect(screen.getByRole("link", { name: "View research lineage" })).toHaveAttribute(
       "href",
-      `/lineages/${paperId}`,
+      `/lineages/${paperId}?topic=broad-llm-agents`,
     );
   });
 
@@ -475,7 +475,7 @@ describe("PaperDetailPage", () => {
     expect(screen.getByText(/uncalibrated model-assessed evidential confidence/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open structured comparison" })).toHaveAttribute(
       "href",
-      `/comparisons/${comparisonId}`,
+      `/comparisons/${comparisonId}?topic=broad-llm-agents`,
     );
   });
 

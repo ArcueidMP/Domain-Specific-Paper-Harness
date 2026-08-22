@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 
 from paper_harness.adapters.grobid import GrobidClient
 from paper_harness.adapters.grobid import client as grobid_client_module
+from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.ports.pdf_parser import (
     PdfParserAuthenticationError,
     PdfParseRequest,
@@ -259,16 +261,34 @@ def test_invalid_retry_after_uses_bounded_backoff() -> None:
     assert sleeps == [2.0]
 
 
-def test_client_rejects_empty_wrong_type_declared_oversized_and_large_pdf() -> None:
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Content-Type": "text/plain"},
+        {"Content-Type": "application/xml", "Content-Length": "not-a-number"},
+        {"Content-Type": "application/xml", "Content-Length": "999999999"},
+    ],
+)
+def test_client_uses_actual_xml_body_instead_of_presentation_headers(
+    headers: dict[str, str],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers=headers, content=_FIXTURE, request=request)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        parsed = GrobidClient(
+            "http://grobid:8070",
+            client=http_client,
+            clock=lambda: _NOW,
+        ).parse(_request())
+
+    assert parsed.sections[0].title == "Introduction"
+
+
+def test_client_rejects_empty_or_oversized_actual_tei_body_and_large_pdf() -> None:
     responses = (
-        httpx.Response(200, headers={"Content-Type": "application/xml"}, content=b""),
-        httpx.Response(200, headers={"Content-Type": "text/plain"}, content=_FIXTURE),
-        httpx.Response(
-            200,
-            headers={"Content-Type": "application/xml", "Content-Length": "100"},
-            content=b"<TEI />",
-        ),
-        httpx.Response(200, headers={"Content-Type": "application/xml"}, content=_FIXTURE),
+        httpx.Response(200, headers={"Content-Length": "1"}, content=b""),
+        httpx.Response(200, headers={"Content-Length": "1"}, content=_FIXTURE),
     )
     for response in responses:
         with (
@@ -296,34 +316,66 @@ def test_client_rejects_empty_wrong_type_declared_oversized_and_large_pdf() -> N
         ).parse(_request())
 
 
-@pytest.mark.parametrize("content_encoding", ["gzip", "br"])
-def test_client_rejects_encoded_tei_before_httpx_decompression(content_encoding: str) -> None:
-    calls = 0
+def test_client_accepts_gzip_when_decoded_body_is_valid_xml() -> None:
+    encoded = gzip.compress(_FIXTURE)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
         return httpx.Response(
             200,
             headers={
-                "Content-Encoding": content_encoding,
-                "Content-Type": "application/xml",
+                "Content-Encoding": "gzip",
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(len(encoded)),
             },
-            stream=httpx.ByteStream(b"not-compressed-test-data"),
+            stream=httpx.ByteStream(encoded),
+            request=request,
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        parsed = GrobidClient(
+            "http://grobid:8070",
+            client=http_client,
+            clock=lambda: _NOW,
+        ).parse(_request())
+
+    assert parsed.sections[0].title == "Introduction"
+
+
+def test_client_applies_tei_bound_to_decoded_body() -> None:
+    encoded = gzip.compress(_FIXTURE)
+    decoded_limit = len(_FIXTURE) - 1
+    assert len(encoded) < decoded_limit
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"Content-Encoding": "gzip"},
+            stream=httpx.ByteStream(encoded),
             request=request,
         )
 
     with (
         httpx.Client(transport=httpx.MockTransport(handler)) as http_client,
-        pytest.raises(PdfParserOutputError, match="unsupported encoded response") as raised,
+        pytest.raises(PdfParserOutputError, match="configured limit"),
     ):
         GrobidClient(
             "http://grobid:8070",
             client=http_client,
+            max_tei_bytes=decoded_limit,
             clock=lambda: _NOW,
         ).parse(_request())
-    assert content_encoding not in str(raised.value)
-    assert calls == 1
+
+
+def test_pdf_parse_request_rejects_missing_pdf_signature() -> None:
+    valid = _request()
+    with pytest.raises(DomainInvariantError, match="PDF signature"):
+        PdfParseRequest(
+            paper_id=valid.paper_id,
+            paper_version_id=valid.paper_version_id,
+            canonical_arxiv_id=valid.canonical_arxiv_id,
+            arxiv_version=valid.arxiv_version,
+            content=b"not a PDF",
+        )
 
 
 def test_token_provider_failure_is_sanitized_and_not_retried() -> None:

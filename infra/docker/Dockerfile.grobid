@@ -1,16 +1,31 @@
 # Preserve the human-readable release tag and pin the independently verified
 # multi-platform Docker Hub manifest. Production additionally pins the mirrored
-# wrapper image through the `grobid_image` Terraform input.
+# service image through the `grobid_image` Terraform input.
 FROM grobid/grobid:0.9.0-crf@sha256:24ba90eb1c959f65d812bcdb2cf79c677fa5fd7b95235de616b8bc9fa1317849
 
 LABEL org.opencontainers.image.title="Domain-Specific Paper Harness GROBID runtime" \
-      org.opencontainers.image.description="Unmodified GROBID 0.9.0 CRF runtime with Paper Harness provenance" \
+      org.opencontainers.image.description="Pinned GROBID 0.9.0 CRF runtime with Paper Harness non-root hardening and license material" \
       org.opencontainers.image.source="https://github.com/grobidOrg/grobid" \
       org.opencontainers.image.version="0.9.0-crf" \
+      org.opencontainers.image.revision="b2251cb" \
       org.opencontainers.image.licenses="Apache-2.0" \
       io.paper-harness.upstream-image="grobid/grobid:0.9.0-crf@sha256:24ba90eb1c959f65d812bcdb2cf79c677fa5fd7b95235de616b8bc9fa1317849" \
       io.paper-harness.upstream-source-copied="false"
 
+RUN groupadd --system --gid 10001 paper-harness \
+    && useradd --system --uid 10001 --gid paper-harness \
+        --home-dir /nonexistent --shell /usr/sbin/nologin paper-harness \
+    && install -d -o 10001 -g 10001 -m 0700 \
+        /opt/grobid/grobid-home/tmp /opt/grobid/logs \
+    && install -d /opt/licenses/grobid /opt/licenses/paper-harness \
+    && cp /usr/share/common-licenses/Apache-2.0 /opt/licenses/grobid/Apache-2.0.txt
+COPY THIRD_PARTY_NOTICES.md /opt/licenses/paper-harness/THIRD_PARTY_NOTICES.md
+
 EXPOSE 8070
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD bash -ec 'exec 3<>/dev/tcp/127.0.0.1/8070; printf "GET /api/health HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3; IFS= read -r status <&3; [[ "$status" == *" 200 "* ]]'
+
+USER 10001:10001
 
 STOPSIGNAL SIGTERM

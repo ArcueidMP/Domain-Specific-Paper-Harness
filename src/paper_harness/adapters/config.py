@@ -25,23 +25,27 @@ class ArxivTopicDocument(BaseModel):
     @field_validator("categories")
     @classmethod
     def validate_categories(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        if len(set(values)) != len(values) or any(
-            _CATEGORY.fullmatch(value) is None for value in values
-        ):
-            raise ValueError("arXiv categories must be unique canonical category identifiers")
-        return values
+        normalized = tuple(dict.fromkeys(value.strip() for value in values))
+        if not normalized or any(_CATEGORY.fullmatch(value) is None for value in normalized):
+            raise ValueError("arXiv categories must be canonical category identifiers")
+        return normalized
 
     @field_validator("include_terms", "exclude_terms")
     @classmethod
     def validate_terms(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        if len(set(values)) != len(values):
-            raise ValueError("arXiv query terms must be unique")
+        normalized: list[str] = []
+        seen: set[str] = set()
         for value in values:
-            if not value.strip() or len(value) > 120 or any(char in value for char in '"\\\r\n'):
+            item = " ".join(value.split())
+            if not item or len(item) > 120 or any(char in value for char in '"\\\r\n'):
                 raise ValueError(
                     "arXiv query terms must be plain, non-empty text under 121 characters"
                 )
-        return values
+            key = item.casefold()
+            if key not in seen:
+                normalized.append(item)
+                seen.add(key)
+        return tuple(normalized)
 
 
 class DiscoveryDocument(BaseModel):

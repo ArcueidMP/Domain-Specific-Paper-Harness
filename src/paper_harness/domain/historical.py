@@ -12,7 +12,7 @@ from paper_harness.domain.analysis import AnalysisScope, ModelUsage, Verificatio
 from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.domain.identity import validate_canonical_arxiv_id
 
-M3_CRAWLER_PROMPT_VERSION = "m3-crawler-v1"
+M3_CRAWLER_PROMPT_VERSION = "m3-crawler-v2"
 M3_SELECTOR_PROMPT_VERSION = "m3-selector-v1"
 M3_COMPARISON_PROMPT_VERSION = "m3-comparison-v1"
 MAX_SELECTOR_CANDIDATES = 300
@@ -83,6 +83,12 @@ class SelectionDecision(StrEnum):
     PENDING = "PENDING"
     SELECTED = "SELECTED"
     REJECTED = "REJECTED"
+
+
+class ComparisonTargetDecision(StrEnum):
+    TARGET = "TARGET"
+    NOT_TARGET = "NOT_TARGET"
+    INELIGIBLE = "INELIGIBLE"
 
 
 class BackfillStatus(StrEnum):
@@ -290,6 +296,7 @@ class SearchSession:
     crawler_expand_citations: bool | None = None
     crawler_decision_reason: str | None = None
     crawler_generated_at: datetime | None = None
+    pipeline_execution_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if not 1000 <= self.requested_year_from <= self.effective_year_to <= 9999:
@@ -517,6 +524,8 @@ class SearchCandidate:
     verification_status: VerificationStatus
     schema_version: int
     created_at: datetime
+    comparison_target_decision: ComparisonTargetDecision | None = None
+    comparison_target_reason: str | None = None
 
     def __post_init__(self) -> None:
         _require_text(self.semantic_scholar_id, "candidate paper ID", maximum=128)
@@ -541,6 +550,14 @@ class SearchCandidate:
             raise DomainInvariantError("terminal candidate decision requires complete provenance")
         if self.generated_at is not None:
             _require_aware(self.generated_at, "generated_at")
+        if (self.comparison_target_decision is None) != (self.comparison_target_reason is None):
+            raise DomainInvariantError("candidate comparison-target decision and reason are paired")
+        if self.comparison_target_reason is not None:
+            _require_text(
+                self.comparison_target_reason,
+                "candidate comparison-target reason",
+                maximum=1000,
+            )
         _require_aware(self.created_at, "created_at")
         if self.schema_version < 1:
             raise DomainInvariantError("schema_version must be positive")
@@ -884,8 +901,12 @@ class GeneratedComparison:
             _require_text(value, name, maximum=maximum)
         _require_aware(self.generated_at, "generated_at")
         names = tuple(item.name for item in self.dimensions)
-        if names != COMPARISON_DIMENSION_ORDER:
-            raise DomainInvariantError("comparison dimensions must be complete and ordered")
+        if len(set(names)) != len(names) or names != tuple(
+            sorted(names, key=COMPARISON_DIMENSION_ORDER.index)
+        ):
+            raise DomainInvariantError(
+                "comparison dimensions must be unique and canonically ordered"
+            )
         relation_types = tuple(item.relation_type for item in self.relations)
         if len(set(relation_types)) != len(relation_types):
             raise DomainInvariantError("generated comparison relation types must be unique")
@@ -905,7 +926,9 @@ class GeneratedComparison:
             }
             by_name = {item.name: item for item in self.dimensions}
             if any(
-                not by_name[name].source_evidence_ids or not by_name[name].target_evidence_ids
+                name not in by_name
+                or not by_name[name].source_evidence_ids
+                or not by_name[name].target_evidence_ids
                 for name in required
             ):
                 raise DomainInvariantError(
@@ -920,6 +943,8 @@ class CrawlerPlanRequest:
     source_title: str
     source_research_problem: str
     source_method: str
+    topic_name: str
+    topic_description: str
     topic_include_terms: tuple[str, ...]
     topic_exclude_terms: tuple[str, ...]
     year_from: int
@@ -932,6 +957,8 @@ class CrawlerPlanRequest:
             (self.source_title, "crawler source title", 4000),
             (self.source_research_problem, "crawler source problem", 4000),
             (self.source_method, "crawler source method", 4000),
+            (self.topic_name, "crawler topic name", 200),
+            (self.topic_description, "crawler topic description", 2000),
         ):
             _require_text(value, name, maximum=maximum)
         if not 1000 <= self.year_from <= self.year_to <= 9999:
@@ -1118,8 +1145,13 @@ class Comparison:
     def __post_init__(self) -> None:
         if self.source_paper_version_id == self.target_paper_version_id:
             raise DomainInvariantError("comparison source and target versions must differ")
-        if tuple(item.name for item in self.dimensions) != COMPARISON_DIMENSION_ORDER:
-            raise DomainInvariantError("persisted comparison dimensions must be complete")
+        names = tuple(item.name for item in self.dimensions)
+        if len(set(names)) != len(names) or names != tuple(
+            sorted(names, key=COMPARISON_DIMENSION_ORDER.index)
+        ):
+            raise DomainInvariantError(
+                "persisted comparison dimensions must be unique and canonically ordered"
+            )
         if any(item.comparison_id != self.id for item in self.dimensions):
             raise DomainInvariantError("comparison dimensions must belong to their comparison")
         for value, name, maximum in (
@@ -1143,7 +1175,9 @@ class Comparison:
             }
             by_name = {item.name: item for item in self.dimensions}
             if any(
-                not by_name[name].source_evidence_ids or not by_name[name].target_evidence_ids
+                name not in by_name
+                or not by_name[name].source_evidence_ids
+                or not by_name[name].target_evidence_ids
                 for name in required
             ):
                 raise DomainInvariantError(

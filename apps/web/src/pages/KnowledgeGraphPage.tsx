@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 
 import type {
   GraphEntityType,
@@ -11,6 +11,8 @@ import type {
 import { knowledgeGraphQuery } from "../api/queries";
 import { KnowledgeGraphCanvas } from "../components/KnowledgeGraphCanvas";
 import { StateNotice } from "../components/StateNotice";
+import { TopicLink } from "../components/TopicLink";
+import { useTopicSlug } from "../lib/topic";
 
 const entityTypes = [
   "PAPER",
@@ -52,6 +54,7 @@ function evidencePaperId(node: GraphNode | undefined): string | undefined {
 }
 
 export function KnowledgeGraphPage() {
+  const topicSlug = useTopicSlug();
   const [searchParams, setSearchParams] = useSearchParams();
   const scopedPaperId = searchParams.get("paper_id") || undefined;
   const requestedNodeId = searchParams.get("entity_id") || undefined;
@@ -60,7 +63,7 @@ export function KnowledgeGraphPage() {
   const [provenance, setProvenance] = useState<RelationProvenance | undefined>();
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
   const graph = useQuery(
-    knowledgeGraphQuery({
+    knowledgeGraphQuery(topicSlug, {
       entityType,
       relationType,
       provenance,
@@ -160,7 +163,7 @@ export function KnowledgeGraphPage() {
         <div className="bounded-data-banner" role="status">
           <strong>Paper-scoped graph</strong>
           <span>Showing the bounded published neighborhood for paper {scopedPaperId}.</span>
-          <Link to="/graph">Clear paper scope</Link>
+          <TopicLink to="/graph">Clear paper scope</TopicLink>
         </div>
       ) : null}
 
@@ -227,14 +230,14 @@ export function KnowledgeGraphPage() {
                 </dl>
                 <div className="graph-detail-actions">
                   {selectedNode.paper_id ? (
-                    <Link className="primary-button" to={`/papers/${selectedNode.paper_id}`}>
+                    <TopicLink className="primary-button" to={`/papers/${selectedNode.paper_id}`}>
                       Open paper
-                    </Link>
+                    </TopicLink>
                   ) : null}
                   {lineagePaperId ? (
-                    <Link className="section-link" to={`/lineages/${lineagePaperId}`}>
+                    <TopicLink className="section-link" to={`/lineages/${lineagePaperId}`}>
                       View related paper lineage
-                    </Link>
+                    </TopicLink>
                   ) : null}
                 </div>
 
@@ -270,12 +273,12 @@ export function KnowledgeGraphPage() {
                             {edge.evidence.length > 0 ? (
                               <div className="graph-evidence-links">
                                 {edge.evidence.map((reference, index) => (
-                                  <Link
+                                  <TopicLink
                                     key={`${reference.evidence_id}:${reference.role}`}
                                     to={`/papers/${reference.paper_id}#evidence-${reference.evidence_id}`}
                                   >
                                     Evidence {index + 1} ({readable(reference.role)})
-                                  </Link>
+                                  </TopicLink>
                                 ))}
                               </div>
                             ) : null}

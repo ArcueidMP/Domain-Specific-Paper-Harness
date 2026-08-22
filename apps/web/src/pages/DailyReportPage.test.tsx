@@ -32,18 +32,18 @@ describe("DailyReportPage", () => {
     expect(screen.getByText("Scope and limitations")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open evidence in paper" })).toHaveAttribute(
       "href",
-      `/papers/${paperId}#evidence-${evidenceId}`,
+      `/papers/${paperId}?topic=broad-llm-agents#evidence-${evidenceId}`,
     );
     expect(screen.getByRole("link", { name: "Memory verification lineage" })).toHaveAttribute(
       "href",
-      `/lineages/${paperId}`,
+      `/lineages/${paperId}?topic=broad-llm-agents`,
     );
     expect(screen.getByRole("link", { name: /Source-grounded memory verification/ }))
-      .toHaveAttribute("href", `/graph?entity_id=${methodNodeId}`);
+      .toHaveAttribute("href", `/graph?entity_id=${methodNodeId}&topic=broad-llm-agents`);
     expect(screen.getByText("2 distinct papers in the latest 7-day window")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /2026-08-08/ })).toHaveAttribute(
       "href",
-      "/reports/daily/2026-08-08",
+      "/reports/daily/2026-08-08?topic=broad-llm-agents",
     );
   });
 

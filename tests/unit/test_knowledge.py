@@ -762,10 +762,10 @@ def test_trends_use_occurrence_activity_without_reclassifying_paper_volume() -> 
     )
 
 
-def test_trend_occurrence_activity_requires_exact_identifier_coverage() -> None:
+def test_trend_occurrence_activity_requires_known_ids_and_ignores_extras() -> None:
     papers, entities, mentions, edges, _task = _trend_records()
 
-    with pytest.raises(DomainInvariantError, match="exactly cover"):
+    with pytest.raises(DomainInvariantError, match="missing mention activity"):
         aggregate_trend_snapshots(
             TOPIC_ID,
             as_of_date=AS_OF,
@@ -777,6 +777,25 @@ def test_trend_occurrence_activity_requires_exact_identifier_coverage() -> None:
             edge_activity_dates={item.id: AS_OF for item in edges},
             generated_at=NOW,
         )
+
+    snapshots = aggregate_trend_snapshots(
+        TOPIC_ID,
+        as_of_date=AS_OF,
+        papers=papers,
+        entities=entities,
+        mentions=mentions,
+        edges=edges,
+        mention_activity_dates={
+            **{item.id: AS_OF for item in mentions},
+            UUID(int=999): AS_OF,
+        },
+        edge_activity_dates={
+            **{item.id: AS_OF for item in edges},
+            UUID(int=1000): AS_OF,
+        },
+        generated_at=NOW,
+    )
+    assert len(snapshots) == 3
 
 
 def test_bundle_deduplicates_exact_records_but_rejects_conflicts() -> None:

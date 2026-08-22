@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+/All_web_services_oauth_credentials.json
 *.pem
 *.key
 *.p12
@@ -50,6 +51,7 @@ override.tf.json
 
 # Local data and large artifacts
 .cache/
+.tmp/
 data/
 downloads/
 models/

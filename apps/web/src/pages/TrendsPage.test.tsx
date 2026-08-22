@@ -30,10 +30,13 @@ describe("TrendsPage", () => {
     expect(new URL((firstRequest as Request).url).searchParams.get("max_entities")).toBe("50");
     expect(screen.getByRole("link", { name: "Planning with Verifiable Agent Memory" })).toHaveAttribute(
       "href",
-      "/papers/00511b3e-1303-4e03-b846-d29fd641942d",
+      "/papers/00511b3e-1303-4e03-b846-d29fd641942d?topic=broad-llm-agents",
     );
     expect(screen.getByRole("link", { name: "Source-grounded memory verification" }))
-      .toHaveAttribute("href", `/graph?entity_id=${sevenDayTrend.entity_counts[0]?.entity_id}`);
+      .toHaveAttribute(
+        "href",
+        `/graph?entity_id=${sevenDayTrend.entity_counts[0]?.entity_id}&topic=broad-llm-agents`,
+      );
 
     await userEvent.click(screen.getByRole("button", { name: "30 days" }));
 

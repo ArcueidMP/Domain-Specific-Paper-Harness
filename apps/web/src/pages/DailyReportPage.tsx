@@ -1,24 +1,29 @@
 import { useQuery } from "@tanstack/react-query";
 import type { FormEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
 import { dailyQuery, dailyReportsQuery, latestDailyQuery } from "../api/queries";
 import { LatestRunPanel } from "../components/LatestRunPanel";
 import { ReportDetail } from "../components/ReportDetail";
 import { StateNotice } from "../components/StateNotice";
+import { TopicLink } from "../components/TopicLink";
+import { useTopicSlug } from "../lib/topic";
 
 export function DailyReportPage() {
   const { logicalDate } = useParams();
   const navigate = useNavigate();
-  const publication = useQuery(logicalDate ? dailyQuery(logicalDate) : latestDailyQuery());
-  const history = useQuery(dailyReportsQuery());
+  const topicSlug = useTopicSlug();
+  const publication = useQuery(
+    logicalDate ? dailyQuery(topicSlug, logicalDate) : latestDailyQuery(topicSlug),
+  );
+  const history = useQuery(dailyReportsQuery(topicSlug));
 
   function selectDate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const date = data.get("logical-date");
     if (typeof date === "string" && date) {
-      void navigate(`/reports/daily/${date}`);
+      void navigate(`/reports/daily/${date}?topic=${encodeURIComponent(topicSlug)}`);
     }
   }
 
@@ -46,7 +51,9 @@ export function DailyReportPage() {
             />
             <button type="submit">Open</button>
           </div>
-          {logicalDate ? <Link to="/reports/daily">Return to latest</Link> : null}
+          {logicalDate ? (
+            <TopicLink to="/reports/daily">Return to latest</TopicLink>
+          ) : null}
         </form>
       </header>
 
@@ -111,14 +118,14 @@ export function DailyReportPage() {
           <ol className="report-history-list">
             {history.data.items.map((report) => (
               <li key={report.id}>
-                <Link
+                <TopicLink
                   className={report.logical_date === publication.data?.run.logical_date ? "active" : ""}
                   to={`/reports/daily/${report.logical_date}`}
                 >
                   <span>{report.logical_date}</span>
                   <strong>{report.title}</strong>
                   <small>{report.status}</small>
-                </Link>
+                </TopicLink>
               </li>
             ))}
           </ol>

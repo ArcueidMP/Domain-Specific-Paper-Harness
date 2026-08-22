@@ -73,6 +73,7 @@ function Remove-DisposableComposeProject {
 $Uv = Resolve-RequiredCommand -Name "uv" -FallbackPaths @("D:\Tools\uv\uv.exe")
 $Corepack = Resolve-RequiredCommand -Name "corepack"
 $Docker = Resolve-RequiredCommand -Name "docker"
+$Git = Resolve-RequiredCommand -Name "git"
 $Terraform = Resolve-RequiredCommand -Name "terraform" -FallbackPaths @("D:\Tools\terraform\terraform.exe")
 
 $env:UV_PYTHON = "3.13.13"
@@ -84,13 +85,25 @@ $env:DATABASE_URL = "postgresql+psycopg://paper_harness_verify:paper_harness_ver
 $env:TEST_DATABASE_URL = $env:DATABASE_URL
 
 Invoke-Checked "Frozen Python environment" {
-    & $Uv sync --frozen --python 3.13.13
+    & $Uv sync --frozen --all-extras --python 3.13.13
 }
 
 Write-Host "==> Exact Python runtime"
 $PythonVersion = (& $Uv run --frozen --python 3.13.13 python -c "import platform; print(platform.python_version())").Trim()
 if ($LASTEXITCODE -ne 0 -or $PythonVersion -ne "3.13.13") {
     throw "Expected CPython 3.13.13, resolved '$PythonVersion'."
+}
+
+Invoke-Checked "Python dependency license policy" {
+    & $Uv run --frozen --all-extras --python 3.13.13 python `
+        scripts/check_dependency_licenses.py --python-only
+}
+
+Invoke-Checked "Tracked secret and artifact hygiene" {
+    & $Uv run --frozen --python 3.13.13 python scripts/check_repository_hygiene.py --tracked
+}
+Invoke-Checked "Git patch whitespace" {
+    & $Git diff --check
 }
 
 Invoke-Checked "Ruff lint" {
@@ -103,19 +116,19 @@ Invoke-Checked "Pyright" {
     & $Uv run --frozen --python 3.13.13 pyright
 }
 
-$GeneratedOpenApi = New-TemporaryFile
+$GeneratedOpenApi = [System.IO.Path]::GetTempFileName()
 try {
     Invoke-Checked "FastAPI OpenAPI contract" {
         & $Uv run --frozen --python 3.13.13 python -c `
             "from pathlib import Path; from paper_harness.entrypoints.openapi import generate_openapi; import sys; generate_openapi(Path(sys.argv[1]))" `
-            $GeneratedOpenApi.FullName
+            $GeneratedOpenApi
     }
     $CheckedInOpenApi = Join-Path $RepositoryRoot "apps\api\openapi.json"
     if (-not (Test-Path -LiteralPath $CheckedInOpenApi)) {
         throw "The checked-in FastAPI OpenAPI contract is missing."
     }
-    if ((Get-FileHash -LiteralPath $GeneratedOpenApi.FullName -Algorithm SHA256).Hash -ne
-        (Get-FileHash -LiteralPath $CheckedInOpenApi -Algorithm SHA256).Hash) {
+    if ((Get-Content -LiteralPath $GeneratedOpenApi -Raw) -cne
+        (Get-Content -LiteralPath $CheckedInOpenApi -Raw)) {
         throw "apps/api/openapi.json is stale. Regenerate it from FastAPI before verification."
     }
 }
@@ -126,18 +139,22 @@ finally {
 Invoke-Checked "Frozen frontend environment" {
     & $Corepack pnpm install --frozen-lockfile
 }
-$GeneratedTypeContract = New-TemporaryFile
+Invoke-Checked "Frontend dependency license policy" {
+    & $Uv run --frozen --all-extras --python 3.13.13 python `
+        scripts/check_dependency_licenses.py --node-only
+}
+$GeneratedTypeContract = [System.IO.Path]::GetTempFileName()
 try {
     Invoke-Checked "Generated frontend API contract" {
         & $Corepack pnpm --filter "@paper-harness/web" exec openapi-typescript `
-            "../api/openapi.json" --output $GeneratedTypeContract.FullName
+            "../api/openapi.json" --output $GeneratedTypeContract
     }
     $CheckedInTypeContract = Join-Path $RepositoryRoot "apps\web\src\api\schema.d.ts"
     if (-not (Test-Path -LiteralPath $CheckedInTypeContract)) {
         throw "The checked-in frontend API contract is missing."
     }
-    if ((Get-FileHash -LiteralPath $GeneratedTypeContract.FullName -Algorithm SHA256).Hash -ne
-        (Get-FileHash -LiteralPath $CheckedInTypeContract -Algorithm SHA256).Hash) {
+    if ((Get-Content -LiteralPath $GeneratedTypeContract -Raw) -cne
+        (Get-Content -LiteralPath $CheckedInTypeContract -Raw)) {
         throw "apps/web/src/api/schema.d.ts is stale. Regenerate it from FastAPI OpenAPI before verification."
     }
 }
@@ -156,6 +173,11 @@ Invoke-Checked "Frontend unit tests" {
 Invoke-Checked "Frontend production build" {
     & $Corepack pnpm build
 }
+Invoke-Checked "Generated OpenAPI and frontend hygiene" {
+    & $Uv run --frozen --python 3.13.13 python scripts/check_repository_hygiene.py `
+        --generated apps/api/openapi.json `
+        --generated apps/web/dist
+}
 Invoke-Checked "Playwright Chromium runtime" {
     & $Corepack pnpm exec playwright install chromium
 }
@@ -167,6 +189,14 @@ Invoke-Checked "Docker Compose configuration" {
     & $Docker compose config --quiet
 }
 
+$PreviousTerraformDataDirectory = [Environment]::GetEnvironmentVariable(
+    "TF_DATA_DIR",
+    [EnvironmentVariableTarget]::Process
+)
+$TerraformValidationDataDirectory = Join-Path ([System.IO.Path]::GetTempPath()) `
+    ("paper-harness-terraform-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $TerraformValidationDataDirectory | Out-Null
+$env:TF_DATA_DIR = $TerraformValidationDataDirectory
 Push-Location (Join-Path $RepositoryRoot "infra\terraform")
 try {
     Invoke-Checked "Terraform format" {
@@ -181,6 +211,15 @@ try {
 }
 finally {
     Pop-Location
+    if ($null -eq $PreviousTerraformDataDirectory) {
+        Remove-Item Env:TF_DATA_DIR -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:TF_DATA_DIR = $PreviousTerraformDataDirectory
+    }
+    if (Test-Path -LiteralPath $TerraformValidationDataDirectory) {
+        Remove-Item -LiteralPath $TerraformValidationDataDirectory -Recurse -Force
+    }
 }
 
 $VerifyComposeProject = "paper-harness-verify"
@@ -225,7 +264,7 @@ if (-not $SkipImageBuild) {
     Invoke-Checked "Daily Job image" {
         & $Docker build --file infra/docker/Dockerfile.daily --tag paper-harness-daily:verify .
     }
-    Invoke-Checked "Pinned GROBID wrapper image" {
+    Invoke-Checked "Pinned GROBID service image" {
         & $Docker build --file infra/docker/Dockerfile.grobid --tag paper-harness-grobid:verify .
     }
 }

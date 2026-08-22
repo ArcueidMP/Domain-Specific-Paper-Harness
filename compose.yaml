@@ -2,13 +2,13 @@ name: paper-harness
 
 services:
   db:
-    image: pgvector/pgvector:0.8.5-pg17-bookworm
+    image: pgvector/pgvector:0.8.5-pg17-bookworm@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-paper_harness}
       POSTGRES_USER: ${POSTGRES_USER:-paper_harness}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paper_harness_local}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - paper-harness-postgres:/var/lib/postgresql/data
     healthcheck:
@@ -18,6 +18,17 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    cpus: 2.0
+    mem_limit: 2g
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+    stop_grace_period: 30s
     restart: unless-stopped
 
   api:
@@ -31,11 +42,26 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-paper_harness}:${POSTGRES_PASSWORD:-paper_harness_local}@db:5432/${POSTGRES_DB:-paper_harness}
       TOPIC_CONFIG_PATH: /app/configs/topics/broad-llm-agents.yaml
     ports:
-      - "${API_PORT:-8000}:8080"
+      - "127.0.0.1:${API_PORT:-8000}:8080"
     depends_on:
       db:
         condition: service_healthy
     init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    cpus: 1.0
+    mem_limit: 1g
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+    stop_grace_period: 30s
 
   daily:
     profiles: ["job"]
@@ -59,6 +85,21 @@ services:
       db:
         condition: service_healthy
     init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 1024
+    cpus: 4.0
+    mem_limit: 6g
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1g,mode=1777
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+    stop_grace_period: 60s
 
   grobid:
     profiles: ["analysis"]
@@ -66,6 +107,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.grobid
+    user: "10001:10001"
     ports:
       - "127.0.0.1:${GROBID_PORT:-8070}:8070"
     init: true
@@ -78,9 +120,9 @@ services:
     cpus: 4.0
     mem_limit: 8g
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
-      - /opt/grobid/grobid-home/tmp:rw,noexec,nosuid,size=512m,mode=1777
-      - /opt/grobid/logs:rw,noexec,nosuid,size=64m,mode=1777
+      - /tmp:rw,noexec,nosuid,size=256m,uid=10001,gid=10001,mode=0700
+      - /opt/grobid/grobid-home/tmp:rw,noexec,nosuid,size=512m,uid=10001,gid=10001,mode=0700
+      - /opt/grobid/logs:rw,noexec,nosuid,size=64m,uid=10001,gid=10001,mode=0700
     ulimits:
       core:
         soft: 0
@@ -97,6 +139,7 @@ services:
       timeout: 5s
       retries: 18
       start_period: 120s
+    stop_grace_period: 60s
     restart: unless-stopped
 
 volumes:

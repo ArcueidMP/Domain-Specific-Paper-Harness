@@ -38,11 +38,11 @@ describe("LineagePage", () => {
     expect(screen.getByText("No explicit predecessor is available", { exact: false })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Evidence 1 (source)" })).toHaveAttribute(
       "href",
-      `/papers/${paperId}#evidence-${evidenceId}`,
+      `/papers/${paperId}?topic=broad-llm-agents#evidence-${evidenceId}`,
     );
     expect(screen.getByRole("link", { name: "Evidence 2 (target)" })).toHaveAttribute(
       "href",
-      `/papers/${historicalPaperId}#evidence-${historicalEvidenceId}`,
+      `/papers/${historicalPaperId}?topic=broad-llm-agents#evidence-${historicalEvidenceId}`,
     );
 
     const historical = screen.getByRole("link", {

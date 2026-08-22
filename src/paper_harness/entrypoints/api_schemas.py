@@ -36,7 +36,13 @@ from paper_harness.domain.knowledge import (
     TrendGrowthStatus,
     TrendWindow,
 )
-from paper_harness.domain.models import PaperStage, RunItemStatus, RunOperation, RunStatus
+from paper_harness.domain.models import (
+    PaperStage,
+    PipelineExecutionMode,
+    RunItemStatus,
+    RunOperation,
+    RunStatus,
+)
 from paper_harness.domain.reports import (
     ReportNarrativeMode,
     ReportSectionKind,
@@ -162,9 +168,17 @@ class RunSummary(ApiModel):
     id: UUID
     topic_id: UUID
     source_run_id: UUID | None
+    pipeline_execution_id: UUID | None
     logical_date: date
     operation: RunOperation
     analysis_scope: AnalysisScope | None
+    pipeline_execution_mode: PipelineExecutionMode
+    pipeline_selection_limit: int | None = Field(default=None, ge=1, le=200)
+    pipeline_status: RunStatus | None = None
+    pipeline_deadline_at: datetime | None = None
+    pipeline_completed_at: datetime | None = None
+    pipeline_error_code: str | None = None
+    pipeline_error_detail: str | None = None
     status: RunStatus
     started_at: datetime
     completed_at: datetime | None
@@ -607,6 +621,7 @@ class SearchLimitsResponse(ApiModel):
 
 class SearchSessionResponse(ApiModel):
     id: UUID
+    pipeline_execution_id: UUID | None
     topic_id: UUID
     source_paper_id: UUID
     source_paper_version_id: UUID

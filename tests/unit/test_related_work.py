@@ -15,7 +15,11 @@ from paper_harness.application.read_models import (
     PaperDetail,
     SearchSessionDetail,
 )
-from paper_harness.application.related_work import RelatedWorkSearch, allowed_search_tools
+from paper_harness.application.related_work import (
+    RelatedWorkSearch,
+    allowed_search_tools,
+    build_related_work_objective,
+)
 from paper_harness.application.scholarly_mapping import external_stub_from_scholarly_paper
 from paper_harness.domain.analysis import (
     AnalysisScope,
@@ -48,7 +52,7 @@ from paper_harness.domain.historical import (
     SearchTool,
     SelectionDecision,
 )
-from paper_harness.domain.models import Paper, TopicConfig
+from paper_harness.domain.models import Paper, PaperVersion, TopicConfig
 from paper_harness.domain.reports import GeneratedReportNarrative, ReportNarrativeRequest
 from paper_harness.ports.llm import LLMOutputError, LLMPort
 from paper_harness.ports.repository import RepositoryPort
@@ -67,6 +71,20 @@ from paper_harness.ports.scientific_embedding import (
 NOW = datetime(2026, 8, 9, 5, tzinfo=UTC)
 SOURCE_PAPER_ID = UUID("a83014ac-d4b4-482a-8d80-a6fb019e3939")
 SOURCE_VERSION_ID = UUID("5f4cf773-ef83-48b0-b9a3-fb9df133b377")
+
+
+def test_related_work_objective_uses_the_configured_topic(topic_config: TopicConfig) -> None:
+    topic = replace(
+        topic_config,
+        name="World Models",
+        description="Learned predictive models of environments and latent dynamics.",
+    )
+
+    objective = build_related_work_objective(topic)
+
+    assert "World Models" in objective
+    assert topic.description in objective
+    assert "LLM-agent" not in objective
 
 
 class _Repository:
@@ -89,7 +107,25 @@ class _Repository:
         )
         self.paper_detail = PaperDetail(
             paper=paper,
-            versions=(),
+            versions=(
+                PaperVersion(
+                    id=SOURCE_VERSION_ID,
+                    paper_id=SOURCE_PAPER_ID,
+                    canonical_arxiv_id=paper.canonical_arxiv_id,
+                    version=1,
+                    title=paper.title,
+                    abstract=paper.abstract,
+                    submitted_at=paper.first_submitted_at,
+                    updated_at=paper.latest_updated_at,
+                    primary_category=paper.primary_category,
+                    categories=paper.categories,
+                    authors=paper.authors,
+                    pdf_url=paper.pdf_url,
+                    source_url="https://arxiv.org/abs/2608.01234v1",
+                    schema_version=1,
+                    created_at=NOW,
+                ),
+            ),
             source_identities=(),
             topic_slugs=("broad-llm-agents",),
         )
@@ -127,6 +163,7 @@ class _Repository:
         self.embeddings: tuple[ScientificEmbedding, ...] = ()
         self.lexical_matches: tuple[HistoricalRetrievalMatch, ...] = ()
         self.vector_matches: tuple[HistoricalRetrievalMatch, ...] = ()
+        self.restart_calls = 0
 
     def get_paper(self, paper_id: UUID) -> PaperDetail | None:
         return self.paper_detail if paper_id == SOURCE_PAPER_ID else None
@@ -307,6 +344,38 @@ class _Repository:
             discoveries=tuple(self.discoveries.values()),
         )
 
+    def restart_search_session(self, session_id: UUID, *, restarted_at: datetime) -> SearchSession:
+        assert self.session is not None and self.session.id == session_id
+        assert self.session.status in (
+            SearchSessionStatus.RUNNING,
+            SearchSessionStatus.FAILED,
+        )
+        self.restart_calls += 1
+        self.session = replace(
+            self.session,
+            status=SearchSessionStatus.RUNNING,
+            started_at=restarted_at,
+            completed_at=None,
+            stop_reason=None,
+            error_code=None,
+            error_detail=None,
+            provider=None,
+            configured_model=None,
+            model_version=None,
+            prompt_version=None,
+            usage=None,
+            crawler_queries=None,
+            crawler_use_recommendations=None,
+            crawler_expand_references=None,
+            crawler_expand_citations=None,
+            crawler_decision_reason=None,
+            crawler_generated_at=None,
+        )
+        self.actions.clear()
+        self.candidates.clear()
+        self.discoveries.clear()
+        return self.session
+
 
 class _ScholarlySearch:
     def __init__(
@@ -408,6 +477,28 @@ class _SourceReferenceSearch(_ScholarlySearch):
         return ()
 
 
+class _MultiPaperSearch(_ScholarlySearch):
+    def __init__(self, papers: tuple[ScholarlyPaper, ...]) -> None:
+        super().__init__(papers[0])
+        self.papers = papers
+
+    def search_papers(
+        self,
+        query: str,
+        year_from: int,
+        year_to: int,
+        limit: int,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> tuple[ScholarlyPaper, ...]:
+        del year_from, year_to
+        self.queries.append(query)
+        self.search_limits.append(limit)
+        self.calls.append(SearchTool.SEARCH_PAPERS)
+        self.timeouts.append(timeout_seconds)
+        return self.papers[:limit]
+
+
 class _Embeddings:
     model_identifier = "allenai/specter2_base"
     model_revision = "base-revision"
@@ -437,6 +528,17 @@ class _AdvancingEmbeddings(_Embeddings):
         result = super().encode(papers)
         self._elapsed[0] = self._elapsed_after
         return result
+
+
+class _CapturingEmbeddings(_Embeddings):
+    def __init__(self) -> None:
+        self.inputs: list[ScientificPaperText] = []
+
+    def encode(
+        self, papers: tuple[ScientificPaperText, ...]
+    ) -> tuple[GeneratedScientificEmbedding, ...]:
+        self.inputs.extend(papers)
+        return super().encode(papers)
 
 
 class _LLM:
@@ -469,7 +571,7 @@ class _LLM:
             provider="deepseek",
             configured_model="deepseek-v4-flash",
             model_version="DeepSeek-V4-Flash-2026-04-24",
-            prompt_version="m3-crawler-v1",
+            prompt_version="m3-crawler-v2",
             generated_at=NOW,
             queries=tuple(dict.fromkeys(queries)),
             use_recommendations=True,
@@ -517,6 +619,30 @@ class _LLM:
     def generate_report(self, request: ReportNarrativeRequest) -> GeneratedReportNarrative:
         del request
         raise AssertionError("report generation is a separate application use case")
+
+
+class _SelectionLLM(_LLM):
+    def __init__(self, decisions: tuple[GeneratedCandidateDecision, ...]) -> None:
+        super().__init__()
+        self.decisions = decisions
+
+    def select_prior_work(
+        self,
+        request: CandidateSelectionRequest,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> GeneratedCandidateSelection:
+        self.selection_timeouts.append(timeout_seconds)
+        self.requests.append(request)
+        return GeneratedCandidateSelection(
+            provider="deepseek",
+            configured_model="deepseek-v4-flash",
+            model_version="DeepSeek-V4-Flash-2026-04-24",
+            prompt_version="m3-selector-v1",
+            generated_at=NOW,
+            decisions=self.decisions,
+            usage=_usage(),
+        )
 
 
 def _usage() -> ModelUsage:
@@ -735,6 +861,77 @@ def test_selected_candidate_limit_is_visible_as_stop_reason(topic_config: TopicC
 
     assert detail.session.stop_reason is SearchStopReason.MAX_SELECTED_CANDIDATES
     assert detail.candidates[0].decision is SelectionDecision.SELECTED
+
+
+def test_missing_selector_decision_remains_candidate_level_pending(
+    topic_config: TopicConfig,
+) -> None:
+    first = _paper()
+    second = replace(
+        first,
+        semantic_scholar_id="b" * 40,
+        corpus_id=2,
+        url=f"https://www.semanticscholar.org/paper/{'b' * 40}",
+        title="Second Historical Planner",
+    )
+    llm = _SelectionLLM(
+        (
+            GeneratedCandidateDecision(
+                semantic_scholar_id=second.semantic_scholar_id,
+                decision=SelectionDecision.SELECTED,
+                reason="The method is relevant.",
+            ),
+        )
+    )
+
+    detail = _execute(
+        _service(_Repository(), _MultiPaperSearch((first, second)), llm),
+        topic_config,
+        limits=SearchLimits(max_steps=2, max_queries=1, max_selected_candidates=1),
+    )
+
+    decisions = {item.semantic_scholar_id: item for item in detail.candidates}
+    assert detail.session.status is SearchSessionStatus.COMPLETE
+    assert decisions[first.semantic_scholar_id].decision is SelectionDecision.PENDING
+    assert "no usable decision" in decisions[first.semantic_scholar_id].decision_reason
+    assert decisions[second.semantic_scholar_id].decision is SelectionDecision.SELECTED
+
+
+def test_over_selection_is_capped_by_stable_local_candidate_rank(
+    topic_config: TopicConfig,
+) -> None:
+    first = _paper()
+    second = replace(
+        first,
+        semantic_scholar_id="b" * 40,
+        corpus_id=2,
+        url=f"https://www.semanticscholar.org/paper/{'b' * 40}",
+        title="Second Historical Planner",
+    )
+    llm = _SelectionLLM(
+        tuple(
+            GeneratedCandidateDecision(
+                semantic_scholar_id=item.semantic_scholar_id,
+                decision=SelectionDecision.SELECTED,
+                reason="The method is relevant.",
+            )
+            for item in (second, first)
+        )
+    )
+
+    detail = _execute(
+        _service(_Repository(), _MultiPaperSearch((first, second)), llm),
+        topic_config,
+        limits=SearchLimits(max_steps=2, max_queries=1, max_selected_candidates=1),
+    )
+
+    assert tuple(item.semantic_scholar_id for item in detail.candidates) == (
+        first.semantic_scholar_id,
+        second.semantic_scholar_id,
+    )
+    assert detail.candidates[0].decision is SelectionDecision.SELECTED
+    assert detail.candidates[1].decision is SelectionDecision.PENDING
+    assert "local selection bound" in detail.candidates[1].decision_reason
 
 
 def test_duplicate_candidate_keeps_multi_action_provenance(topic_config: TopicConfig) -> None:
@@ -1144,7 +1341,7 @@ def test_search_session_aggregates_crawler_and_selector_usage(
         limits=SearchLimits(max_steps=2, max_queries=1, max_selected_candidates=1),
     )
 
-    assert detail.session.prompt_version == "m3-crawler-v1+m3-selector-v1"
+    assert detail.session.prompt_version == "m3-crawler-v2+m3-selector-v1"
     assert detail.session.usage is not None
     assert detail.session.usage.call_count == 2
     assert detail.session.usage.total_tokens == 30
@@ -1192,7 +1389,7 @@ def test_selector_failure_persists_failed_session(topic_config: TopicConfig) -> 
     assert repository.session.stop_reason is SearchStopReason.FAILED
     assert repository.session.error_code == "LLM_OUTPUT_INVALID"
     assert repository.session.provider == "deepseek"
-    assert repository.session.prompt_version == "m3-crawler-v1"
+    assert repository.session.prompt_version == "m3-crawler-v2"
     assert repository.session.usage is not None
     assert repository.session.usage.call_count == 1
     assert repository.session.crawler_queries is not None
@@ -1201,3 +1398,116 @@ def test_selector_failure_persists_failed_session(topic_config: TopicConfig) -> 
     assert (
         repository.session.crawler_decision_reason == "Use bounded search and citation expansion."
     )
+
+
+@pytest.mark.parametrize("crashed_running", [False, True])
+def test_pipeline_search_restarts_the_same_failed_or_crashed_session(
+    topic_config: TopicConfig,
+    crashed_running: bool,
+) -> None:
+    repository = _Repository()
+    execution_id = UUID("48d2a238-60ba-4de2-b10f-3d93af95ec83")
+    limits = SearchLimits(max_steps=2, max_queries=1, max_selected_candidates=1)
+
+    def run(service: RelatedWorkSearch) -> SearchSessionDetail:
+        return service.execute(
+            topic=topic_config,
+            source_paper_id=SOURCE_PAPER_ID,
+            source_paper_version_id=SOURCE_VERSION_ID,
+            source_analysis_id=repository.analysis_detail.analysis.id,
+            source_analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+            objective="Find methodologically relevant prior work.",
+            year_from=2025,
+            year_to=2026,
+            limits=limits,
+            pipeline_execution_id=execution_id,
+        )
+
+    with pytest.raises(LLMOutputError, match="invalid selector JSON"):
+        run(
+            _service(
+                repository,
+                _ScholarlySearch(_paper()),
+                _LLM(error=LLMOutputError("invalid selector JSON")),
+            )
+        )
+    assert repository.session is not None
+    session_id = repository.session.id
+    if crashed_running:
+        repository.session = replace(
+            repository.session,
+            status=SearchSessionStatus.RUNNING,
+            completed_at=None,
+            stop_reason=None,
+            error_code=None,
+            error_detail=None,
+        )
+
+    detail = run(_service(repository, _ScholarlySearch(_paper()), _LLM()))
+
+    assert repository.restart_calls == 1
+    assert detail.session.id == session_id
+    assert detail.session.status is SearchSessionStatus.COMPLETE
+    assert detail.actions
+    assert all(action.status is SearchActionStatus.COMPLETED for action in detail.actions)
+
+
+def test_exact_source_analysis_uses_its_version_text_when_global_paper_is_newer(
+    topic_config: TopicConfig,
+) -> None:
+    repository = _Repository()
+    source_v1 = repository.paper_detail.versions[0]
+    later = datetime(2027, 1, 2, 5, tzinfo=UTC)
+    source_v2 = replace(
+        source_v1,
+        id=UUID("5a19eb8e-d2b4-49ac-91b3-2efcc6cc8ef2"),
+        version=2,
+        title="Smoke-only Newer Title",
+        abstract="Smoke-only newer abstract text.",
+        submitted_at=later,
+        updated_at=later,
+        pdf_url="https://arxiv.org/pdf/2608.01234v2",
+        source_url="https://arxiv.org/abs/2608.01234v2",
+        created_at=later,
+    )
+    repository.paper_detail = replace(
+        repository.paper_detail,
+        paper=replace(
+            repository.paper_detail.paper,
+            title=source_v2.title,
+            abstract=source_v2.abstract,
+            current_version=2,
+            latest_updated_at=later,
+            pdf_url=source_v2.pdf_url,
+        ),
+        versions=(source_v1, source_v2),
+    )
+    embeddings = _CapturingEmbeddings()
+    llm = _LLM()
+
+    detail = _service(
+        repository,
+        _ScholarlySearch(_paper()),
+        llm,
+        embeddings=embeddings,
+    ).execute(
+        topic=topic_config,
+        source_paper_id=SOURCE_PAPER_ID,
+        source_paper_version_id=SOURCE_VERSION_ID,
+        source_analysis_id=repository.analysis_detail.analysis.id,
+        source_analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        objective="Find methodologically relevant prior work.",
+        year_from=2025,
+        year_to=2027,
+        limits=SearchLimits(max_steps=2, max_queries=1, max_selected_candidates=1),
+        pipeline_execution_id=UUID("48d2a238-60ba-4de2-b10f-3d93af95ec83"),
+    )
+
+    assert detail.session.source_paper_version_id == SOURCE_VERSION_ID
+    assert detail.session.effective_year_to == 2026
+    assert llm.plan_requests[0].source_title == source_v1.title
+    assert llm.plan_requests[0].topic_name == topic_config.name
+    assert llm.plan_requests[0].topic_description == topic_config.description
+    source_embedding = next(item for item in embeddings.inputs if item.title == source_v1.title)
+    assert source_embedding.abstract == source_v1.abstract
+    assert all(item.title != source_v2.title for item in embeddings.inputs)

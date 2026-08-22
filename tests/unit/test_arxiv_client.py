@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, cast
+from urllib.parse import parse_qs, urlsplit
 
 import arxiv
 import pytest
@@ -14,6 +15,7 @@ from urllib3.exceptions import ReadTimeoutError as Urllib3ReadTimeoutError
 
 from paper_harness.adapters.arxiv.client import ArxivClient, BoundedArxivSession
 from paper_harness.ports.arxiv import (
+    MAX_ARXIV_ID_LOOKUP,
     ArxivPdfError,
     ArxivResponseError,
     ArxivResultLimitError,
@@ -55,11 +57,31 @@ _VALID_ONE_RESULT_ATOM = b"""<?xml version="1.0" encoding="UTF-8"?>
   </entry>
 </feed>"""
 
+_VALID_SECOND_ENTRY = b"""
+  <entry>
+    <id>https://arxiv.org/abs/2601.05678v1</id>
+    <updated>2026-01-10T05:00:00Z</updated>
+    <published>2026-01-10T05:00:00Z</published>
+    <title>A second valid agent paper</title>
+    <summary>Valid metadata remains usable.</summary>
+    <author><name>Grace Hopper</name></author>
+    <arxiv:primary_category term="cs.AI" />
+    <category term="cs.AI" />
+    <link href="https://arxiv.org/pdf/2601.05678v1" title="pdf"
+          rel="related" type="application/pdf" />
+  </entry>
+"""
 
-def _result(arxiv_id: str, updated_at: datetime) -> SimpleNamespace:
+
+def _result(
+    arxiv_id: str,
+    updated_at: datetime,
+    *,
+    published_at: datetime | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
         updated=updated_at,
-        published=updated_at,
+        published=published_at or updated_at,
         get_short_id=lambda: arxiv_id,
         title=f"Paper {arxiv_id}",
         summary="A bounded agent paper.",
@@ -71,7 +93,113 @@ def _result(arxiv_id: str, updated_at: datetime) -> SimpleNamespace:
     )
 
 
-def test_timestamp_tie_at_result_cap_fails_without_partial_batch(
+def test_search_requests_last_updated_descending_with_a_bounded_candidate_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[Any, Any, int | None]] = []
+
+    def results(_self: Any, search: Any) -> Iterator[SimpleNamespace]:
+        captured.append((search.sort_by, search.sort_order, search.max_results))
+        return iter(())
+
+    monkeypatch.setattr(arxiv.Client, "results", results)
+    ArxivClient(max_retries=0, sleep=lambda _delay: None).search(
+        query="cat:cs.AI",
+        updated_from=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_until=datetime(2026, 1, 2, tzinfo=UTC),
+        max_results=2,
+    )
+
+    assert captured == [
+        (
+            arxiv.SortCriterion.LastUpdatedDate,
+            arxiv.SortOrder.Descending,
+            102,
+        )
+    ]
+
+
+def test_exact_id_lookup_returns_explicit_versions_in_requested_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _result("2601.00001v3", datetime(2026, 1, 12, tzinfo=UTC))
+    second = _result("2601.00002v2", datetime(2026, 1, 10, tzinfo=UTC))
+    captured: list[tuple[list[str], int | None]] = []
+
+    def results(_self: Any, search: Any) -> Iterator[SimpleNamespace]:
+        captured.append((search.id_list, search.max_results))
+        return iter((second, first))
+
+    monkeypatch.setattr(arxiv.Client, "results", results)
+    client = ArxivClient(max_retries=0, sleep=lambda _delay: None)
+
+    records = client.get_papers_by_ids(
+        canonical_arxiv_ids=("2601.00001", "2601.00002"),
+    )
+
+    assert [(record.canonical_arxiv_id, record.version) for record in records] == [
+        ("2601.00001", 3),
+        ("2601.00002", 2),
+    ]
+    assert captured == [(["2601.00001", "2601.00002"], 2)]
+
+
+@pytest.mark.parametrize(
+    ("canonical_arxiv_ids", "message"),
+    [
+        ((), "between 1"),
+        (("not-an-arxiv-id",), "invalid canonical"),
+        (
+            tuple(f"2601.{index:05d}" for index in range(MAX_ARXIV_ID_LOOKUP + 1)),
+            "between 1",
+        ),
+    ],
+)
+def test_exact_id_lookup_rejects_unbounded_or_invalid_requests_before_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    canonical_arxiv_ids: tuple[str, ...],
+    message: str,
+) -> None:
+    def unexpected_results(_self: Any, _search: Any) -> Iterator[SimpleNamespace]:
+        raise AssertionError("invalid ID lookup must not reach arXiv")
+        yield
+
+    monkeypatch.setattr(arxiv.Client, "results", unexpected_results)
+
+    with pytest.raises(ValueError, match=message):
+        ArxivClient(max_retries=0, sleep=lambda _delay: None).get_papers_by_ids(
+            canonical_arxiv_ids=canonical_arxiv_ids,
+        )
+
+
+@pytest.mark.parametrize(
+    ("returned_ids", "expected_ids"),
+    [
+        (("2601.00001v1",), ("2601.00001",)),
+        (("2601.00001v1", "2601.00003v1"), ("2601.00001",)),
+        (("2601.00001v1", "2601.00001v1"), ("2601.00001",)),
+    ],
+)
+def test_exact_id_lookup_returns_the_available_requested_subset(
+    monkeypatch: pytest.MonkeyPatch,
+    returned_ids: tuple[str, ...],
+    expected_ids: tuple[str, ...],
+) -> None:
+    def results(_self: Any, _search: Any) -> Iterator[SimpleNamespace]:
+        return iter(
+            _result(arxiv_id, datetime(2026, 1, 10, tzinfo=UTC)) for arxiv_id in returned_ids
+        )
+
+    monkeypatch.setattr(arxiv.Client, "results", results)
+
+    records = ArxivClient(max_retries=0, sleep=lambda _delay: None).get_papers_by_ids(
+        canonical_arxiv_ids=("2601.00001", "2601.00002"),
+    )
+
+    assert tuple(record.canonical_arxiv_id for record in records) == expected_ids
+
+
+def test_timestamp_tie_at_result_cap_is_locally_and_stably_bounded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     updated_at = datetime(2026, 1, 10, 4, tzinfo=UTC)
@@ -87,16 +215,130 @@ def test_timestamp_tie_at_result_cap_fails_without_partial_batch(
     monkeypatch.setattr(arxiv.Client, "results", results_for_tie)
     client = ArxivClient(max_retries=0, sleep=lambda _delay: None)
 
-    with pytest.raises(ArxivResultLimitError, match="cursor was not advanced"):
+    records = client.search(
+        query="cat:cs.AI",
+        updated_from=updated_at - timedelta(hours=1),
+        updated_until=updated_at + timedelta(hours=1),
+        max_results=2,
+    )
+
+    assert [record.canonical_arxiv_id for record in records] == [
+        "2601.00001",
+        "2601.00002",
+    ]
+
+
+def test_shuffled_results_are_deduplicated_and_stably_sorted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    newest = datetime(2026, 1, 11, 4, tzinfo=UTC)
+    tied = datetime(2026, 1, 10, 4, tzinfo=UTC)
+    older = datetime(2026, 1, 9, 4, tzinfo=UTC)
+    records = (
+        _result("2601.00004v1", older),
+        _result("2601.00001v2", tied, published_at=older),
+        _result("2601.00003v1", newest, published_at=tied),
+        _result("2601.00001v1", tied, published_at=older),
+        _result("2601.00002v1", newest, published_at=older),
+        _result("2601.00003v1", newest, published_at=tied),
+    )
+    upstream_orders = iter((records, tuple(reversed(records))))
+
+    def results(_self: Any, _search: Any) -> Iterator[SimpleNamespace]:
+        return iter(next(upstream_orders))
+
+    monkeypatch.setattr(arxiv.Client, "results", results)
+    client = ArxivClient(max_retries=0, sleep=lambda _delay: None)
+    outputs = tuple(
         client.search(
             query="cat:cs.AI",
-            updated_from=updated_at - timedelta(hours=1),
-            updated_until=updated_at + timedelta(hours=1),
-            max_results=2,
+            updated_from=older - timedelta(hours=1),
+            updated_until=newest + timedelta(hours=1),
+            max_results=10,
         )
+        for _ in range(2)
+    )
+
+    expected = (
+        ("2601.00003", 1),
+        ("2601.00002", 1),
+        ("2601.00001", 1),
+        ("2601.00001", 2),
+        ("2601.00004", 1),
+    )
+    assert tuple((record.canonical_arxiv_id, record.version) for record in outputs[0]) == expected
+    assert outputs[1] == outputs[0]
 
 
-def test_newer_row_does_not_consume_in_window_saturation_probe(
+def test_aware_timestamps_are_normalized_to_utc(monkeypatch: pytest.MonkeyPatch) -> None:
+    source_zone = timezone(timedelta(hours=8))
+    updated_at = datetime(2026, 1, 10, 12, tzinfo=source_zone)
+
+    def results(_self: Any, _search: Any) -> Iterator[SimpleNamespace]:
+        return iter((_result("2601.00001v1", updated_at),))
+
+    monkeypatch.setattr(arxiv.Client, "results", results)
+    records = ArxivClient(max_retries=0, sleep=lambda _delay: None).search(
+        query="cat:cs.AI",
+        updated_from=datetime(2026, 1, 10, 3, tzinfo=UTC),
+        updated_until=datetime(2026, 1, 10, 5, tzinfo=UTC),
+        max_results=2,
+    )
+
+    assert records[0].updated_at == datetime(2026, 1, 10, 4, tzinfo=UTC)
+    assert records[0].submitted_at == datetime(2026, 1, 10, 4, tzinfo=UTC)
+    assert records[0].updated_at.tzinfo is UTC
+    assert records[0].submitted_at.tzinfo is UTC
+
+
+def test_identical_duplicates_do_not_consume_the_unique_result_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updated_at = datetime(2026, 1, 10, 4, tzinfo=UTC)
+    first = _result("2601.00001v1", updated_at)
+    second = _result("2601.00002v1", updated_at)
+
+    def results(_self: Any, _search: Any) -> Iterator[SimpleNamespace]:
+        return iter((first, first, second, second))
+
+    monkeypatch.setattr(arxiv.Client, "results", results)
+    records = ArxivClient(max_retries=0, sleep=lambda _delay: None).search(
+        query="cat:cs.AI",
+        updated_from=updated_at - timedelta(hours=1),
+        updated_until=updated_at + timedelta(hours=1),
+        max_results=2,
+    )
+
+    assert [(record.canonical_arxiv_id, record.version) for record in records] == [
+        ("2601.00001", 1),
+        ("2601.00002", 1),
+    ]
+
+
+def test_conflicting_duplicate_canonical_version_is_resolved_deterministically(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updated_at = datetime(2026, 1, 10, 4, tzinfo=UTC)
+    first = _result("2601.00001v1", updated_at)
+    conflicting = _result("2601.00001v1", updated_at)
+    conflicting.title = "Conflicting metadata"
+
+    def results(_self: Any, _search: Any) -> Iterator[SimpleNamespace]:
+        return iter((first, conflicting))
+
+    monkeypatch.setattr(arxiv.Client, "results", results)
+    records = ArxivClient(max_retries=0, sleep=lambda _delay: None).search(
+        query="cat:cs.AI",
+        updated_from=updated_at - timedelta(hours=1),
+        updated_until=updated_at + timedelta(hours=1),
+        max_results=2,
+    )
+
+    assert len(records) == 1
+    assert records[0].title == "Paper 2601.00001v1"
+
+
+def test_newer_row_is_filtered_before_local_top_n(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     in_window = datetime(2026, 1, 10, 4, tzinfo=UTC)
@@ -117,14 +359,17 @@ def test_newer_row_does_not_consume_in_window_saturation_probe(
 
     monkeypatch.setattr(arxiv.Client, "results", upstream_results)
     client = ArxivClient(max_retries=0, sleep=lambda _delay: None)
-    with pytest.raises(ArxivResultLimitError, match="cursor was not advanced"):
-        client.search(
-            query="cat:cs.AI",
-            updated_from=in_window - timedelta(hours=1),
-            updated_until=updated_until,
-            max_results=2,
-        )
-    assert captured_max_results == [None]
+    records = client.search(
+        query="cat:cs.AI",
+        updated_from=in_window - timedelta(hours=1),
+        updated_until=updated_until,
+        max_results=2,
+    )
+    assert [record.canonical_arxiv_id for record in records] == [
+        "2601.00001",
+        "2601.00002",
+    ]
+    assert captured_max_results == [102]
 
 
 def test_exhausted_window_equal_to_cap_is_safe(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,7 +393,7 @@ def test_exhausted_window_equal_to_cap_is_safe(monkeypatch: pytest.MonkeyPatch) 
         max_results=2,
     )
     assert len(records) == 2
-    assert captured_max_results == [None]
+    assert captured_max_results == [102]
     assert client._client.num_retries == 0  # pyright: ignore[reportPrivateUsage]
 
 
@@ -173,7 +418,7 @@ def test_exhausted_window_equal_to_cap_is_safe(monkeypatch: pytest.MonkeyPatch) 
         ),
     ],
 )
-def test_mapped_result_urls_must_match_the_exact_arxiv_identity(
+def test_candidate_with_mismatched_urls_is_omitted_without_losing_valid_results(
     monkeypatch: pytest.MonkeyPatch,
     entry_id: str,
     pdf_url: str,
@@ -182,19 +427,76 @@ def test_mapped_result_urls_must_match_the_exact_arxiv_identity(
     result = _result("2601.01234v2", updated_at)
     result.entry_id = entry_id
     result.pdf_url = pdf_url
+    valid = _result("2601.05678v1", updated_at)
 
     def results(_self: Any, _search: Any) -> Iterator[SimpleNamespace]:
-        return iter((result,))
+        return iter((result, valid))
 
     monkeypatch.setattr(arxiv.Client, "results", results)
 
-    with pytest.raises(ArxivResponseError, match="canonical version"):
-        ArxivClient(max_retries=0, sleep=lambda _delay: None).search(
-            query="cat:cs.AI",
-            updated_from=updated_at - timedelta(hours=1),
-            updated_until=updated_at + timedelta(hours=1),
-            max_results=2,
-        )
+    records = ArxivClient(max_retries=0, sleep=lambda _delay: None).search(
+        query="cat:cs.AI",
+        updated_from=updated_at - timedelta(hours=1),
+        updated_until=updated_at + timedelta(hours=1),
+        max_results=2,
+    )
+
+    assert [record.canonical_arxiv_id for record in records] == ["2601.05678"]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("title", "   "),
+        ("title", 42),
+        ("primary_category", 42),
+        ("categories", "cs.AI"),
+        ("published", "2026-01-10T04:00:00Z"),
+        ("updated", "2026-01-10T04:00:00Z"),
+    ],
+)
+def test_candidate_required_metadata_remains_strict_without_failing_the_collection(
+    monkeypatch: pytest.MonkeyPatch,
+    field_name: str,
+    value: object,
+) -> None:
+    updated_at = datetime(2026, 1, 10, 4, tzinfo=UTC)
+    result = _result("2601.01234v2", updated_at)
+    setattr(result, field_name, value)
+    valid = _result("2601.05678v1", updated_at)
+
+    def results(_self: Any, _search: Any) -> Iterator[SimpleNamespace]:
+        return iter((result, valid))
+
+    monkeypatch.setattr(arxiv.Client, "results", results)
+    records = ArxivClient(max_retries=0, sleep=lambda _delay: None).search(
+        query="cat:cs.AI",
+        updated_from=updated_at - timedelta(hours=1),
+        updated_until=updated_at + timedelta(hours=1),
+        max_results=2,
+    )
+
+    assert [record.canonical_arxiv_id for record in records] == ["2601.05678"]
+
+
+def test_required_arxiv_identity_remains_strict(monkeypatch: pytest.MonkeyPatch) -> None:
+    updated_at = datetime(2026, 1, 10, 4, tzinfo=UTC)
+    result = _result("2601.01234v2", updated_at)
+    result.get_short_id = lambda: ""
+    valid = _result("2601.05678v1", updated_at)
+
+    def results(_self: Any, _search: Any) -> Iterator[SimpleNamespace]:
+        return iter((result, valid))
+
+    monkeypatch.setattr(arxiv.Client, "results", results)
+    records = ArxivClient(max_retries=0, sleep=lambda _delay: None).search(
+        query="cat:cs.AI",
+        updated_from=updated_at - timedelta(hours=1),
+        updated_until=updated_at + timedelta(hours=1),
+        max_results=2,
+    )
+
+    assert [record.canonical_arxiv_id for record in records] == ["2601.05678"]
 
 
 def test_arxiv_dependency_value_error_is_mapped_without_leaking_detail(
@@ -373,7 +675,57 @@ def test_page_bound_fails_instead_of_returning_partial_window(
         )
 
 
-def test_response_start_index_must_match_requested_page(
+def test_cross_page_disorder_does_not_stop_before_a_later_in_window_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updated_from = datetime(2026, 1, 10, 3, tzinfo=UTC)
+    stale = updated_from - timedelta(days=1)
+    older_in_window = updated_from + timedelta(minutes=30)
+    in_window = updated_from + timedelta(hours=1)
+    feeds = [
+        SimpleNamespace(
+            results=[_result("2601.00001v1", older_in_window)],
+            header=SimpleNamespace(total_results=3, start_index=0),
+            malformed=False,
+        ),
+        SimpleNamespace(
+            results=[_result("2601.00002v1", stale)],
+            header=SimpleNamespace(total_results=3, start_index=1),
+            malformed=False,
+        ),
+        SimpleNamespace(
+            results=[_result("2601.00003v1", in_window)],
+            header=SimpleNamespace(total_results=3, start_index=2),
+            malformed=False,
+        ),
+    ]
+
+    def parse_feed(_self: Any, _url: str, first_page: bool = True, _try_index: int = 0) -> Any:
+        del first_page, _try_index
+        return feeds.pop(0)
+
+    monkeypatch.setattr(arxiv.Client, "_parse_feed", parse_feed)
+    records = ArxivClient(
+        page_size=1,
+        max_pages=3,
+        delay_seconds=0,
+        max_retries=0,
+        sleep=lambda _delay: None,
+    ).search(
+        query="cat:cs.AI",
+        updated_from=updated_from,
+        updated_until=in_window + timedelta(hours=1),
+        max_results=3,
+    )
+
+    assert [(record.canonical_arxiv_id, record.version) for record in records] == [
+        ("2601.00003", 1),
+        ("2601.00001", 1),
+    ]
+    assert feeds == []
+
+
+def test_response_start_index_is_not_a_paper_validity_invariant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     updated_at = datetime(2026, 1, 10, 4, tzinfo=UTC)
@@ -402,16 +754,17 @@ def test_response_start_index_must_match_requested_page(
         max_retries=0,
         sleep=lambda _delay: None,
     )
-    with pytest.raises(ArxivResponseError, match="startIndex"):
-        client.search(
-            query="cat:cs.AI",
-            updated_from=updated_at - timedelta(hours=1),
-            updated_until=updated_at + timedelta(hours=1),
-            max_results=10,
-        )
+    records = client.search(
+        query="cat:cs.AI",
+        updated_from=updated_at - timedelta(hours=1),
+        updated_until=updated_at + timedelta(hours=1),
+        max_results=10,
+    )
+
+    assert [record.canonical_arxiv_id for record in records] == ["2601.00001"]
 
 
-def test_total_results_must_remain_stable_across_pages(
+def test_total_results_display_metadata_can_change_across_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     updated_at = datetime(2026, 1, 10, 4, tzinfo=UTC)
@@ -440,13 +793,17 @@ def test_total_results_must_remain_stable_across_pages(
         max_retries=0,
         sleep=lambda _delay: None,
     )
-    with pytest.raises(ArxivResponseError, match="totalResults changed"):
-        client.search(
-            query="cat:cs.AI",
-            updated_from=updated_at - timedelta(hours=1),
-            updated_until=updated_at + timedelta(hours=1),
-            max_results=10,
-        )
+    records = client.search(
+        query="cat:cs.AI",
+        updated_from=updated_at - timedelta(hours=1),
+        updated_until=updated_at + timedelta(hours=1),
+        max_results=10,
+    )
+
+    assert [record.canonical_arxiv_id for record in records] == [
+        "2601.00001",
+        "2601.00002",
+    ]
 
 
 def test_http_200_malformed_empty_atom_is_rejected(
@@ -493,10 +850,12 @@ def test_atom_entry_accepts_legacy_http_id_and_normalizes_source_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[dict[str, Any]] = []
+    urls: list[str] = []
 
     def response(
-        _self: requests.Session, _method: str, _url: str, **kwargs: Any
+        _self: requests.Session, _method: str, url: str, **kwargs: Any
     ) -> requests.Response:
+        urls.append(url)
         calls.append(kwargs)
         return _response(200, content=_VALID_ONE_RESULT_ATOM)
 
@@ -513,6 +872,9 @@ def test_atom_entry_accepts_legacy_http_id_and_normalizes_source_url(
     assert records[0].source_url == "https://arxiv.org/abs/2601.01234v2"
     assert records[0].pdf_url == "https://arxiv.org/pdf/2601.01234v2"
     assert client._session.headers["Accept-Encoding"] == "identity"
+    query = parse_qs(urlsplit(urls[0]).query)
+    assert query["sortBy"] == ["lastUpdatedDate"]
+    assert query["sortOrder"] == ["descending"]
     assert calls == [
         {
             "headers": {"user-agent": f"arxiv.py/{arxiv.__version__}"},
@@ -568,48 +930,53 @@ def test_atom_rejects_mismatched_xml_and_wrong_root_namespace(
         ),
     ],
 )
-def test_atom_rejects_entire_page_when_one_entry_lacks_required_metadata(
+def test_atom_omits_only_the_entry_that_lacks_required_metadata(
     monkeypatch: pytest.MonkeyPatch,
     needle: bytes,
     replacement: bytes,
 ) -> None:
-    invalid_entry = _VALID_ONE_RESULT_ATOM.replace(needle, replacement, 1)
+    invalid_entry = _VALID_ONE_RESULT_ATOM.replace(needle, replacement, 1).replace(
+        b"</feed>",
+        _VALID_SECOND_ENTRY + b"</feed>",
+    )
     monkeypatch.setattr(
         requests.Session,
         "request",
         _request_returning(_response(200, content=invalid_entry)),
     )
-    with pytest.raises(ArxivResponseError, match="entry is missing required metadata"):
-        ArxivClient(delay_seconds=0, max_retries=0, sleep=lambda _delay: None).search(
-            query="cat:cs.AI",
-            updated_from=datetime(2026, 1, 1, tzinfo=UTC),
-            updated_until=datetime(2026, 1, 11, tzinfo=UTC),
-            max_results=2,
-        )
+    records = ArxivClient(delay_seconds=0, max_retries=0, sleep=lambda _delay: None).search(
+        query="cat:cs.AI",
+        updated_from=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_until=datetime(2026, 1, 11, tzinfo=UTC),
+        max_results=2,
+    )
+
+    assert [record.canonical_arxiv_id for record in records] == ["2601.05678"]
 
 
-def test_atom_rejects_invalid_entry_rfc3339_timestamp(
+def test_atom_omits_only_the_entry_with_an_invalid_required_timestamp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     content = _VALID_ONE_RESULT_ATOM.replace(
         b"<published>2026-01-09T04:00:00Z</published>",
         b"<published>2026-13-99 04:00:00</published>",
-    )
+    ).replace(b"</feed>", _VALID_SECOND_ENTRY + b"</feed>")
     monkeypatch.setattr(
         requests.Session,
         "request",
         _request_returning(_response(200, content=content)),
     )
-    with pytest.raises(ArxivResponseError, match="RFC3339 timestamp"):
-        ArxivClient(delay_seconds=0, max_retries=0, sleep=lambda _delay: None).search(
-            query="cat:cs.AI",
-            updated_from=datetime(2026, 1, 1, tzinfo=UTC),
-            updated_until=datetime(2026, 1, 11, tzinfo=UTC),
-            max_results=2,
-        )
+    records = ArxivClient(delay_seconds=0, max_retries=0, sleep=lambda _delay: None).search(
+        query="cat:cs.AI",
+        updated_from=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_until=datetime(2026, 1, 11, tzinfo=UTC),
+        max_results=2,
+    )
+
+    assert [record.canonical_arxiv_id for record in records] == ["2601.05678"]
 
 
-def test_atom_rejects_out_of_order_entry_before_cursor_cutoff(
+def test_atom_accepts_out_of_order_entry_before_cursor_cutoff_and_sorts_locally(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     second_entry = b"""
@@ -647,13 +1014,20 @@ def test_atom_rejects_out_of_order_entry_before_cursor_cutoff(
         "request",
         _request_returning(_response(200, content=content)),
     )
-    with pytest.raises(ArxivResponseError, match="not sorted"):
-        ArxivClient(delay_seconds=0, max_retries=0, sleep=lambda _delay: None).search(
-            query="cat:cs.AI",
-            updated_from=datetime(2026, 1, 1, tzinfo=UTC),
-            updated_until=datetime(2026, 1, 11, tzinfo=UTC),
-            max_results=2,
-        )
+    records = ArxivClient(
+        delay_seconds=0,
+        max_retries=0,
+        sleep=lambda _delay: None,
+    ).search(
+        query="cat:cs.AI",
+        updated_from=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_until=datetime(2026, 1, 11, tzinfo=UTC),
+        max_results=2,
+    )
+
+    assert [(record.canonical_arxiv_id, record.version) for record in records] == [
+        ("2601.05678", 1)
+    ]
 
 
 @pytest.mark.parametrize(
@@ -681,7 +1055,7 @@ def test_atom_rejects_out_of_order_entry_before_cursor_cutoff(
         ),
     ],
 )
-def test_atom_rejects_missing_or_invalid_pagination_metadata(
+def test_atom_ignores_missing_or_invalid_pagination_display_metadata(
     monkeypatch: pytest.MonkeyPatch,
     content: bytes,
 ) -> None:
@@ -690,13 +1064,12 @@ def test_atom_rejects_missing_or_invalid_pagination_metadata(
         "request",
         _request_returning(_response(200, content=content)),
     )
-    with pytest.raises(ArxivResponseError, match="pagination|itemsPerPage"):
-        ArxivClient(delay_seconds=0, max_retries=0, sleep=lambda _delay: None).search(
-            query="cat:cs.AI",
-            updated_from=datetime(2026, 1, 1, tzinfo=UTC),
-            updated_until=datetime(2026, 1, 11, tzinfo=UTC),
-            max_results=2,
-        )
+    ArxivClient(delay_seconds=0, max_retries=0, sleep=lambda _delay: None).search(
+        query="cat:cs.AI",
+        updated_from=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_until=datetime(2026, 1, 11, tzinfo=UTC),
+        max_results=2,
+    )
 
 
 def test_atom_redirect_is_not_followed(
@@ -753,7 +1126,7 @@ def test_atom_request_url_is_restricted_before_transport(
 
 
 @pytest.mark.parametrize("content_encoding", ["gzip", "br", "identity, gzip"])
-def test_atom_rejects_encoded_response_before_body_iteration(
+def test_atom_relies_on_the_decoded_body_instead_of_encoding_headers(
     monkeypatch: pytest.MonkeyPatch,
     content_encoding: str,
 ) -> None:
@@ -773,14 +1146,37 @@ def test_atom_rejects_encoded_response_before_body_iteration(
         "request",
         _request_returning(response),
     )
-    with pytest.raises(ArxivResponseError, match="content encoding"):
-        ArxivClient(delay_seconds=0, max_retries=0, sleep=lambda _delay: None).search(
-            query="cat:cs.AI",
-            updated_from=datetime(2026, 1, 1, tzinfo=UTC),
-            updated_until=datetime(2026, 1, 11, tzinfo=UTC),
-            max_results=2,
-        )
-    assert iterations == 0
+    records = ArxivClient(delay_seconds=0, max_retries=0, sleep=lambda _delay: None).search(
+        query="cat:cs.AI",
+        updated_from=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_until=datetime(2026, 1, 11, tzinfo=UTC),
+        max_results=2,
+    )
+    assert records == ()
+    assert iterations == 1
+
+
+def test_atom_ignores_declared_length_and_enforces_the_actual_body_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _StreamingResponse(_VALID_EMPTY_ATOM)
+    response.headers["Content-Length"] = "999999999"
+    response.headers["Content-Type"] = "text/plain"
+    monkeypatch.setattr(requests.Session, "request", _request_returning(response))
+
+    records = ArxivClient(
+        atom_max_bytes=1024,
+        delay_seconds=0,
+        max_retries=0,
+        sleep=lambda _delay: None,
+    ).search(
+        query="cat:cs.AI",
+        updated_from=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_until=datetime(2026, 1, 11, tzinfo=UTC),
+        max_results=2,
+    )
+
+    assert records == ()
 
 
 @pytest.mark.parametrize("declared_length", ["1025", None])
@@ -975,7 +1371,7 @@ def test_download_pdf_retries_a_timeout_while_streaming_the_response_body(
     assert sleeps == [1]
 
 
-def test_download_pdf_rejects_encoded_response_before_body_iteration(
+def test_download_pdf_relies_on_signature_and_actual_body_not_encoding_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     response = _StreamingResponse(b"%PDF-1.7\ncompressed bytes")
@@ -995,13 +1391,13 @@ def test_download_pdf_rejects_encoded_response_before_body_iteration(
         _request_returning(response),
     )
 
-    with pytest.raises(ArxivPdfError, match="content encoding"):
-        ArxivClient(max_retries=0, sleep=lambda _delay: None).download_pdf(
-            canonical_arxiv_id="2601.01234",
-            version=2,
-            pdf_url="https://arxiv.org/pdf/2601.01234v2",
-        )
-    assert iterations == 0
+    pdf = ArxivClient(max_retries=0, sleep=lambda _delay: None).download_pdf(
+        canonical_arxiv_id="2601.01234",
+        version=2,
+        pdf_url="https://arxiv.org/pdf/2601.01234v2",
+    )
+    assert pdf.content.startswith(b"%PDF-")
+    assert iterations == 1
 
 
 def test_download_pdf_checks_the_total_deadline_during_streaming(
@@ -1042,13 +1438,10 @@ def test_download_pdf_checks_the_total_deadline_during_streaming(
     ("status_code", "content", "content_type", "content_length"),
     [
         (200, b"not a PDF", "application/pdf", None),
-        (200, b"%PDF-1.7", "text/html", None),
-        (200, b"%PDF-1.7", "application/pdf", "-1"),
-        (200, b"%PDF-1.7", "application/pdf", "1025"),
         (404, b"private response text", "text/plain", None),
     ],
 )
-def test_download_pdf_rejects_invalid_or_oversized_responses(
+def test_download_pdf_rejects_invalid_body_or_http_status(
     monkeypatch: pytest.MonkeyPatch,
     status_code: int,
     content: bytes,
@@ -1075,6 +1468,53 @@ def test_download_pdf_rejects_invalid_or_oversized_responses(
             pdf_url="https://arxiv.org/pdf/2601.01234v2",
         )
     assert "private response text" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("content_type", "content_length", "content_encoding"),
+    [
+        ("text/html", None, None),
+        ("application/pdf", "-1", None),
+        ("application/pdf", "999999999", "gzip"),
+    ],
+)
+def test_download_pdf_ignores_unreliable_transport_headers(
+    monkeypatch: pytest.MonkeyPatch,
+    content_type: str,
+    content_length: str | None,
+    content_encoding: str | None,
+) -> None:
+    response = _response(
+        200,
+        content=b"%PDF-1.7\nvalid bytes\n%%EOF",
+        content_type=content_type,
+        content_length=content_length,
+    )
+    if content_encoding is not None:
+        response.headers["Content-Encoding"] = content_encoding
+    monkeypatch.setattr(requests.Session, "request", _request_returning(response))
+
+    pdf = ArxivClient(pdf_max_bytes=1024, max_retries=0, sleep=lambda _delay: None).download_pdf(
+        canonical_arxiv_id="2601.01234",
+        version=2,
+        pdf_url="https://arxiv.org/pdf/2601.01234v2",
+    )
+
+    assert pdf.content.startswith(b"%PDF-")
+
+
+def test_download_pdf_enforces_the_actual_streamed_size_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _StreamingResponse(b"%PDF-1.7\n" + b"x" * 1024)
+    monkeypatch.setattr(requests.Session, "request", _request_returning(response))
+
+    with pytest.raises(ArxivPdfError, match="size bound"):
+        ArxivClient(pdf_max_bytes=1024, max_retries=0, sleep=lambda _delay: None).download_pdf(
+            canonical_arxiv_id="2601.01234",
+            version=2,
+            pdf_url="https://arxiv.org/pdf/2601.01234v2",
+        )
 
 
 def _response(

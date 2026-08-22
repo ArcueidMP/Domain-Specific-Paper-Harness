@@ -62,7 +62,14 @@ from paper_harness.domain.knowledge import (
     TrendChange,
     TrendWindow,
 )
-from paper_harness.domain.models import DailyRun, Paper, PaperSourceIdentity, PaperVersion, RunItem
+from paper_harness.domain.models import (
+    DailyRun,
+    Paper,
+    PaperSourceIdentity,
+    PaperVersion,
+    PipelineExecution,
+    RunItem,
+)
 from paper_harness.domain.reports import (
     Report,
     ReportEvidenceReference,
@@ -142,7 +149,7 @@ from paper_harness.ports.repository import (
 def create_app(repository: RepositoryPort | None = None) -> FastAPI:
     app = FastAPI(
         title="Domain-Specific Paper Harness API",
-        description="Private read-oriented API for broad LLM-agent research intelligence.",
+        description="Private read-oriented API for topic-scoped research intelligence.",
         version="0.1.0",
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
@@ -197,7 +204,11 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
         limit: Annotated[int, Query(ge=1, le=100)] = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
     ) -> PaperListResponse:
-        papers, total = repo.list_papers(topic_slug=topic, limit=limit, offset=offset)
+        papers, total = repo.list_published_papers(
+            topic_slug=topic,
+            limit=limit,
+            offset=offset,
+        )
         return PaperListResponse(
             items=[_paper_response(paper) for paper in papers],
             total=total,
@@ -213,7 +224,7 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
     def _get_paper(
         paper_id: UUID, repo: Annotated[RepositoryPort, Depends(get_repository)]
     ) -> PaperDetailResponse:
-        detail = repo.get_paper(paper_id)
+        detail = repo.get_published_paper(paper_id)
         if detail is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -236,7 +247,7 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
         paper_version_id: UUID | None = None,
         scope: AnalysisScope | None = None,
     ) -> PaperAnalysisResponse:
-        if repo.get_paper(paper_id) is None:
+        if repo.get_published_paper(paper_id) is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": "PAPER_NOT_FOUND", "message": f"paper {paper_id} was not found"},
@@ -245,6 +256,7 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
             paper_id,
             paper_version_id=paper_version_id,
             analysis_scope=scope,
+            canonical_only=True,
         )
         if detail is None:
             raise HTTPException(
@@ -272,7 +284,7 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
         paper_version_id: UUID | None = None,
         scope: AnalysisScope | None = None,
     ) -> EvidenceListResponse:
-        if repo.get_paper(paper_id) is None:
+        if repo.get_published_paper(paper_id) is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": "PAPER_NOT_FOUND", "message": f"paper {paper_id} was not found"},
@@ -282,6 +294,7 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
             analysis_id=analysis_id,
             paper_version_id=paper_version_id,
             analysis_scope=scope,
+            canonical_only=True,
         )
         if evidence is None:
             raise HTTPException(
@@ -310,7 +323,7 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
         repo: Annotated[RepositoryPort, Depends(get_repository)],
         paper_version_id: Annotated[UUID | None, Query()] = None,
     ) -> RelatedWorkResponse:
-        paper = repo.get_paper(paper_id)
+        paper = repo.get_published_paper(paper_id)
         if paper is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -354,7 +367,7 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
         comparison_id: UUID,
         repo: Annotated[RepositoryPort, Depends(get_repository)],
     ) -> ComparisonResponse:
-        detail = repo.get_comparison(comparison_id)
+        detail = repo.get_comparison(comparison_id, canonical_only=True)
         if detail is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -607,7 +620,7 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
     ) -> RunListResponse:
         runs, total = repo.list_runs(topic_slug=topic, limit=limit, offset=offset)
         return RunListResponse(
-            items=[_run_response(run) for run in runs],
+            items=[_run_response(run, _pipeline_execution(repo, run)) for run in runs],
             total=total,
             limit=limit,
             offset=offset,
@@ -628,7 +641,7 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": "RUN_NOT_FOUND", "message": "no matching daily run was found"},
             )
-        return _run_detail_response(detail)
+        return _run_detail_response(detail, _pipeline_execution(repo, detail.run))
 
     @app.get(
         "/api/v1/runs/{run_id}",
@@ -649,7 +662,7 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": "RUN_NOT_FOUND", "message": f"run {run_id} was not found"},
             )
-        return _run_detail_response(detail)
+        return _run_detail_response(detail, _pipeline_execution(repo, detail.run))
 
     static_directory = os.environ.get("PAPER_HARNESS_STATIC_DIR")
     if static_directory:
@@ -677,7 +690,10 @@ def _product_run_or_404(
                 "message": f"product publication run {qualifier} was not found",
             },
         )
-    return _product_run_response(detail)
+    return _product_run_response(
+        detail,
+        _pipeline_execution(repository, detail.run),
+    )
 
 
 def _report_or_404(
@@ -741,6 +757,14 @@ class SpaStaticFiles(StaticFiles):
     """Serve built assets and the React entry document for client-side routes."""
 
     async def get_response(self, path: str, scope: Scope) -> Response:
+        if _is_service_route(path):
+            # This mount is the final route in the application. Without an
+            # explicit boundary, an unknown API or health path would be
+            # rewritten to index.html and incorrectly reported as HTTP 200.
+            raise StarletteHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Not Found",
+            )
         try:
             response = await super().get_response(path, scope)
         except StarletteHTTPException as error:
@@ -750,6 +774,11 @@ class SpaStaticFiles(StaticFiles):
             if response.status_code != status.HTTP_404_NOT_FOUND:
                 return response
         return await super().get_response("index.html", scope)
+
+
+def _is_service_route(path: str) -> bool:
+    normalized = path.replace("\\", "/").lstrip("/").casefold()
+    return normalized in {"api", "health"} or normalized.startswith(("api/", "health/"))
 
 
 def _repository_dependency(
@@ -843,14 +872,34 @@ def _paper_detail_response(detail: PaperDetail) -> PaperDetailResponse:
     )
 
 
-def _run_response(run: DailyRun) -> RunSummary:
+def _pipeline_execution(
+    repository: RepositoryPort,
+    run: DailyRun,
+) -> PipelineExecution | None:
+    if run.pipeline_execution_id is None:
+        return None
+    return repository.get_pipeline_execution(run.pipeline_execution_id)
+
+
+def _run_response(
+    run: DailyRun,
+    execution: PipelineExecution | None = None,
+) -> RunSummary:
     return RunSummary(
         id=run.id,
         topic_id=run.topic_id,
         source_run_id=run.source_run_id,
+        pipeline_execution_id=run.pipeline_execution_id,
         logical_date=run.logical_date,
         operation=run.operation,
         analysis_scope=run.analysis_scope,
+        pipeline_execution_mode=run.pipeline_execution_mode,
+        pipeline_selection_limit=run.pipeline_selection_limit,
+        pipeline_status=None if execution is None else execution.status,
+        pipeline_deadline_at=None if execution is None else execution.deadline_at,
+        pipeline_completed_at=None if execution is None else execution.completed_at,
+        pipeline_error_code=None if execution is None else execution.error_code,
+        pipeline_error_detail=None if execution is None else execution.error_detail,
         status=run.status,
         started_at=run.started_at,
         completed_at=run.completed_at,
@@ -888,8 +937,11 @@ def _item_response(item: RunItem, *, canonical_arxiv_id: str, paper_title: str) 
     )
 
 
-def _run_detail_response(detail: RunDetail) -> RunDetailResponse:
-    summary = _run_response(detail.run)
+def _run_detail_response(
+    detail: RunDetail,
+    execution: PipelineExecution | None = None,
+) -> RunDetailResponse:
+    summary = _run_response(detail.run, execution)
     return RunDetailResponse(
         **summary.model_dump(),
         items=[
@@ -904,9 +956,12 @@ def _run_detail_response(detail: RunDetail) -> RunDetailResponse:
     )
 
 
-def _product_run_response(detail: ProductRunDetail) -> DailyRunEnvelopeResponse:
+def _product_run_response(
+    detail: ProductRunDetail,
+    execution: PipelineExecution | None = None,
+) -> DailyRunEnvelopeResponse:
     return DailyRunEnvelopeResponse(
-        run=_run_response(detail.run),
+        run=_run_response(detail.run, execution),
         items=[
             _item_response(
                 item.item,
@@ -1042,6 +1097,7 @@ def _search_limits_response(session: SearchSession) -> SearchLimitsResponse:
 def _search_session_response(session: SearchSession) -> SearchSessionResponse:
     return SearchSessionResponse(
         id=session.id,
+        pipeline_execution_id=session.pipeline_execution_id,
         topic_id=session.topic_id,
         source_paper_id=session.source_paper_id,
         source_paper_version_id=session.source_paper_version_id,

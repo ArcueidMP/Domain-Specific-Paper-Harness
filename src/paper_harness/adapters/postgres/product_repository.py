@@ -9,15 +9,16 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID, uuid4, uuid5
 
-from sqlalchemy import case, delete, func, or_, select, union, update
+from sqlalchemy import and_, case, delete, func, or_, select, union, update
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, aliased, sessionmaker
 
 from paper_harness.application.product_models import (
     ComparisonGraphInput,
     GraphCorpusInput,
     GraphWriteResult,
     PeriodicReportInput,
+    ProductFailureInput,
     ProductPaperInput,
     ProductPublicationInput,
 )
@@ -29,6 +30,8 @@ from paper_harness.application.read_models import (
     GraphView,
     LineageDetail,
     ProductRunDetail,
+    PublicationArtifactSummary,
+    PublicationTrendArtifact,
     ReportDetail,
     RunDetail,
     RunItemDetail,
@@ -47,9 +50,7 @@ from paper_harness.domain.analysis import (
     VerificationStatus,
 )
 from paper_harness.domain.errors import DomainInvariantError
-from paper_harness.domain.historical import (
-    RelationProvenance,
-)
+from paper_harness.domain.historical import RelationProvenance
 from paper_harness.domain.identity import stable_lineage_snapshot_id
 from paper_harness.domain.knowledge import (
     GraphEdge,
@@ -76,6 +77,7 @@ from paper_harness.domain.knowledge import (
 from paper_harness.domain.models import (
     DailyRun,
     PaperStage,
+    PipelineExecutionMode,
     RunItem,
     RunItemStatus,
     RunOperation,
@@ -168,9 +170,30 @@ def _sorted_ids(values: Iterable[UUID]) -> tuple[UUID, ...]:
 
 
 def _published_product_run_ids(*, topic_id: UUID | None = None, as_of: date | None = None) -> Any:
+    newer = aliased(DailyRunRow)
+    newer_published_revision = (
+        select(newer.id)
+        .where(
+            newer.topic_id == DailyRunRow.topic_id,
+            newer.logical_date == DailyRunRow.logical_date,
+            newer.operation == RunOperation.PRODUCT_PUBLICATION.value,
+            newer.status.in_(_PUBLISHED_PRODUCT_STATUSES),
+            newer.pipeline_execution_mode != PipelineExecutionMode.SMOKE.value,
+            or_(
+                newer.started_at > DailyRunRow.started_at,
+                and_(
+                    newer.started_at == DailyRunRow.started_at,
+                    newer.id > DailyRunRow.id,
+                ),
+            ),
+        )
+        .exists()
+    )
     statement = select(DailyRunRow.id).where(
         DailyRunRow.operation == RunOperation.PRODUCT_PUBLICATION.value,
         DailyRunRow.status.in_(_PUBLISHED_PRODUCT_STATUSES),
+        DailyRunRow.pipeline_execution_mode != PipelineExecutionMode.SMOKE.value,
+        ~newer_published_revision,
     )
     if topic_id is not None:
         statement = statement.where(DailyRunRow.topic_id == topic_id)
@@ -214,11 +237,18 @@ class ProductRepositoryMixin:
                 "stored run detail violates domain invariants"
             ) from error
 
-    def get_product_run_for_date(self, topic_id: UUID, logical_date: date) -> DailyRun | None:
+    def get_product_run_for_date(
+        self,
+        topic_id: UUID,
+        logical_date: date,
+        *,
+        pipeline_execution_id: UUID | None = None,
+    ) -> DailyRun | None:
         statement = select(DailyRunRow).where(
             DailyRunRow.topic_id == topic_id,
             DailyRunRow.logical_date == logical_date,
             DailyRunRow.operation == RunOperation.PRODUCT_PUBLICATION.value,
+            DailyRunRow.pipeline_execution_id == pipeline_execution_id,
         )
         try:
             with self._sessions() as session:
@@ -234,10 +264,17 @@ class ProductRepositoryMixin:
         *,
         logical_date: date | None,
         topic_slug: str | None,
+        pipeline_execution_id: UUID | None = None,
     ) -> ProductRunDetail | None:
         statement = select(DailyRunRow).where(
             DailyRunRow.operation == RunOperation.PRODUCT_PUBLICATION.value
         )
+        if pipeline_execution_id is None:
+            statement = statement.where(
+                DailyRunRow.pipeline_execution_mode != PipelineExecutionMode.SMOKE.value
+            )
+        else:
+            statement = statement.where(DailyRunRow.pipeline_execution_id == pipeline_execution_id)
         if topic_slug is not None:
             statement = statement.join(TopicRow).where(TopicRow.slug == topic_slug)
         if logical_date is not None:
@@ -264,6 +301,86 @@ class ProductRepositoryMixin:
         except DomainInvariantError as error:
             raise RepositoryIntegrityError(
                 "stored product run violates domain invariants"
+            ) from error
+
+    def get_publication_artifact_summary(
+        self,
+        *,
+        publication_run_id: UUID,
+        pipeline_execution_id: UUID,
+    ) -> PublicationArtifactSummary | None:
+        """Load only artifacts owned by one exact full-pipeline publication."""
+
+        try:
+            with self._sessions() as session:
+                run_row = session.scalars(
+                    select(DailyRunRow).where(
+                        DailyRunRow.id == publication_run_id,
+                        DailyRunRow.operation == RunOperation.PRODUCT_PUBLICATION.value,
+                        DailyRunRow.pipeline_execution_id == pipeline_execution_id,
+                    )
+                ).one_or_none()
+                if run_row is None:
+                    return None
+
+                mention_rows = tuple(
+                    session.scalars(
+                        select(GraphEntityMentionRow).where(
+                            GraphEntityMentionRow.publication_run_id == publication_run_id
+                        )
+                    )
+                )
+                edge_rows = tuple(
+                    session.scalars(
+                        select(GraphEdgeRow).where(
+                            GraphEdgeRow.publication_run_id == publication_run_id
+                        )
+                    )
+                )
+                trend_rows = tuple(
+                    session.scalars(
+                        select(TrendSnapshotRow)
+                        .where(TrendSnapshotRow.publication_run_id == publication_run_id)
+                        .order_by(TrendSnapshotRow.window_size_days, TrendSnapshotRow.id)
+                    )
+                )
+                lineage_rows = tuple(
+                    session.scalars(
+                        select(LineageSnapshotRow)
+                        .where(LineageSnapshotRow.publication_run_id == publication_run_id)
+                        .order_by(LineageSnapshotRow.root_paper_id, LineageSnapshotRow.id)
+                    )
+                )
+                artifacts = (*mention_rows, *edge_rows, *trend_rows, *lineage_rows)
+                if any(item.pipeline_execution_id != pipeline_execution_id for item in artifacts):
+                    raise RepositoryIntegrityError(
+                        "publication artifacts cross pipeline-execution boundaries"
+                    )
+                return PublicationArtifactSummary(
+                    publication_run_id=publication_run_id,
+                    pipeline_execution_id=pipeline_execution_id,
+                    graph_entity_count=len({item.entity_id for item in mention_rows}),
+                    graph_edge_count=len({item.id for item in edge_rows}),
+                    inferred_graph_edge_count=sum(
+                        item.provenance == RelationProvenance.LLM_INFERRED.value
+                        for item in edge_rows
+                    ),
+                    trend_snapshots=tuple(
+                        PublicationTrendArtifact(
+                            snapshot_id=item.id,
+                            window=TrendWindow(item.window),
+                        )
+                        for item in trend_rows
+                    ),
+                    lineage_snapshot_ids=tuple(item.id for item in lineage_rows),
+                )
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL publication artifact query is unavailable"
+            ) from error
+        except (DomainInvariantError, ValueError) as error:
+            raise RepositoryIntegrityError(
+                "stored publication artifacts violate domain invariants"
             ) from error
 
     def get_graph(
@@ -396,10 +513,29 @@ class ProductRepositoryMixin:
                 entity_order: list[Any] = []
                 if entity_id is not None:
                     entity_order.append(case((GraphEntityRow.id == entity_id, 0), else_=1))
+                latest_visible_label = (
+                    select(GraphEntityMentionRow.observed_label)
+                    .join(
+                        DailyRunRow,
+                        DailyRunRow.id == GraphEntityMentionRow.publication_run_id,
+                    )
+                    .where(
+                        GraphEntityMentionRow.entity_id == GraphEntityRow.id,
+                        GraphEntityMentionRow.publication_run_id.in_(published_runs),
+                    )
+                    .order_by(
+                        DailyRunRow.logical_date.desc(),
+                        GraphEntityMentionRow.generated_at.desc(),
+                        GraphEntityMentionRow.id,
+                    )
+                    .limit(1)
+                    .correlate(GraphEntityRow)
+                    .scalar_subquery()
+                )
                 entity_order.extend(
                     (
                         GraphEntityRow.entity_type,
-                        func.lower(GraphEntityRow.canonical_label),
+                        func.lower(latest_visible_label),
                         GraphEntityRow.id,
                     )
                 )
@@ -692,6 +828,12 @@ class ProductRepositoryMixin:
     ) -> tuple[tuple[ReportDetail, ...], int]:
         base = select(ReportRow).where(ReportRow.report_type == report_type.value)
         count = select(func.count(ReportRow.id)).where(ReportRow.report_type == report_type.value)
+        canonical = or_(
+            ReportRow.run_id.is_(None),
+            ReportRow.run_id.in_(_published_product_run_ids()),
+        )
+        base = base.where(canonical)
+        count = count.where(canonical)
         if topic_slug is not None:
             base = base.join(TopicRow).where(TopicRow.slug == topic_slug)
             count = count.join(TopicRow).where(TopicRow.slug == topic_slug)
@@ -722,6 +864,10 @@ class ProductRepositoryMixin:
             ReportRow.report_type == report_type.value,
             ReportRow.period_start == period_start,
             ReportRow.period_end == period_end,
+            or_(
+                ReportRow.run_id.is_(None),
+                ReportRow.run_id.in_(_published_product_run_ids()),
+            ),
         )
         if topic_slug is not None:
             statement = statement.join(TopicRow).where(TopicRow.slug == topic_slug)
@@ -736,13 +882,18 @@ class ProductRepositoryMixin:
             raise RepositoryIntegrityError("stored report violates domain invariants") from error
 
     def get_product_publication_input(
-        self, topic_id: UUID, logical_date: date
+        self,
+        topic_id: UUID,
+        logical_date: date,
+        *,
+        pipeline_execution_id: UUID | None = None,
     ) -> ProductPublicationInput | None:
         statement = select(DailyRunRow).where(
             DailyRunRow.topic_id == topic_id,
             DailyRunRow.logical_date == logical_date,
             DailyRunRow.operation == RunOperation.STRUCTURED_ANALYSIS.value,
             DailyRunRow.status.in_((RunStatus.COMPLETE.value, RunStatus.PARTIAL.value)),
+            DailyRunRow.pipeline_execution_id == pipeline_execution_id,
         )
         try:
             with self._sessions() as session:
@@ -760,11 +911,15 @@ class ProductRepositoryMixin:
                         DailyRunRow.topic_id == topic_id,
                         DailyRunRow.logical_date == logical_date,
                         DailyRunRow.operation == RunOperation.PRODUCT_PUBLICATION.value,
+                        DailyRunRow.pipeline_execution_id == pipeline_execution_id,
                     )
                 ).one_or_none()
                 snapshot_by_version: dict[UUID, ProductRunPaperInputRow] | None = None
                 snapshot_comparison_ids: dict[UUID, set[UUID]] = {}
-                if product_run_row is not None:
+                if product_run_row is not None and product_run_row.status in (
+                    RunStatus.COMPLETE.value,
+                    RunStatus.PARTIAL.value,
+                ):
                     snapshot_by_version = {
                         row.paper_version_id: row
                         for row in session.scalars(
@@ -938,9 +1093,12 @@ class ProductRepositoryMixin:
         topic_id: UUID,
         logical_date: date,
         source: ProductPublicationInput,
+        upstream_failures: tuple[ProductFailureInput, ...] = (),
         started_at: datetime,
+        pipeline_execution_id: UUID | None = None,
     ) -> DailyRun:
         run_id = uuid4()
+        failures_by_version = _product_failures_by_version(upstream_failures)
         try:
             with self._sessions.begin() as session:
                 source_row = session.scalars(
@@ -954,6 +1112,7 @@ class ProductRepositoryMixin:
                     or source_row.logical_date != logical_date
                     or source_row.operation != RunOperation.STRUCTURED_ANALYSIS.value
                     or source_row.status not in (RunStatus.COMPLETE.value, RunStatus.PARTIAL.value)
+                    or source_row.pipeline_execution_id != pipeline_execution_id
                 ):
                     raise RepositoryError(
                         "product publication source run is missing or not publishable"
@@ -971,15 +1130,21 @@ class ProductRepositoryMixin:
                     item.item.paper_version_id for item in source.source_run.items
                 }:
                     raise RepositoryError("product publication source items changed before start")
+                source_versions = {row.paper_version_id for row in source_item_rows}
                 failed_count = sum(
-                    row.status == RunItemStatus.FAILED.value for row in source_item_rows
-                )
+                    row.status == RunItemStatus.FAILED.value
+                    or row.paper_version_id in failures_by_version
+                    for row in source_item_rows
+                ) + len(set(failures_by_version) - source_versions)
                 run_row = DailyRunRow(
                     id=run_id,
                     topic_id=topic_id,
                     logical_date=logical_date,
                     operation=RunOperation.PRODUCT_PUBLICATION.value,
                     source_run_id=source_row.id,
+                    pipeline_execution_id=pipeline_execution_id,
+                    pipeline_execution_mode=source_row.pipeline_execution_mode,
+                    pipeline_selection_limit=source_row.pipeline_selection_limit,
                     analysis_scope=None,
                     status=RunStatus.RUNNING.value,
                     started_at=started_at,
@@ -988,7 +1153,7 @@ class ProductRepositoryMixin:
                     cursor_to=None,
                     discovered_count=0,
                     normalized_count=0,
-                    selected_count=len(source_item_rows),
+                    selected_count=len(source_versions | set(failures_by_version)),
                     completed_count=0,
                     failed_count=failed_count,
                     error_code=None,
@@ -1000,6 +1165,10 @@ class ProductRepositoryMixin:
                 session.flush()
                 for source_item in source_item_rows:
                     completed = source_item.status == RunItemStatus.COMPLETED.value
+                    upstream_failure = failures_by_version.get(source_item.paper_version_id)
+                    if not completed and upstream_failure is not None:
+                        _require_matching_product_failure(source_item, upstream_failure)
+                    failed = not completed or upstream_failure is not None
                     session.add(
                         RunItemRow(
                             id=uuid5(run_id, f"product:{source_item.paper_version_id}"),
@@ -1007,19 +1176,59 @@ class ProductRepositoryMixin:
                             paper_id=source_item.paper_id,
                             paper_version_id=source_item.paper_version_id,
                             stage=(
-                                PaperStage.EVIDENCE_EXTRACTED.value
-                                if completed
-                                else source_item.stage
+                                upstream_failure.stage.value
+                                if upstream_failure is not None
+                                else (
+                                    PaperStage.EVIDENCE_EXTRACTED.value
+                                    if completed
+                                    else source_item.stage
+                                )
                             ),
                             status=(
-                                RunItemStatus.IN_PROGRESS.value
-                                if completed
-                                else RunItemStatus.FAILED.value
+                                RunItemStatus.FAILED.value
+                                if failed
+                                else RunItemStatus.IN_PROGRESS.value
                             ),
-                            failed_stage=None if completed else source_item.failed_stage,
-                            error_code=None if completed else source_item.error_code,
-                            retryable=None if completed else source_item.retryable,
-                            error_detail=None if completed else source_item.error_detail,
+                            failed_stage=(
+                                upstream_failure.failed_stage.value
+                                if upstream_failure is not None
+                                else source_item.failed_stage
+                            ),
+                            error_code=(
+                                upstream_failure.error_code
+                                if upstream_failure is not None
+                                else source_item.error_code
+                            ),
+                            retryable=(
+                                upstream_failure.retryable
+                                if upstream_failure is not None
+                                else source_item.retryable
+                            ),
+                            error_detail=(
+                                upstream_failure.error_detail
+                                if upstream_failure is not None
+                                else source_item.error_detail
+                            ),
+                            schema_version=1,
+                            created_at=started_at,
+                            updated_at=started_at,
+                        )
+                    )
+                for failure in failures_by_version.values():
+                    if failure.paper_version_id in source_versions:
+                        continue
+                    session.add(
+                        RunItemRow(
+                            id=uuid5(run_id, f"product:{failure.paper_version_id}"),
+                            run_id=run_id,
+                            paper_id=failure.paper_id,
+                            paper_version_id=failure.paper_version_id,
+                            stage=failure.stage.value,
+                            status=RunItemStatus.FAILED.value,
+                            failed_stage=failure.failed_stage.value,
+                            error_code=failure.error_code,
+                            retryable=failure.retryable,
+                            error_detail=failure.error_detail,
                             schema_version=1,
                             created_at=started_at,
                             updated_at=started_at,
@@ -1098,8 +1307,10 @@ class ProductRepositoryMixin:
         run_id: UUID,
         *,
         source: ProductPublicationInput,
+        upstream_failures: tuple[ProductFailureInput, ...] = (),
         started_at: datetime,
     ) -> DailyRun:
+        failures_by_version = _product_failures_by_version(upstream_failures)
         try:
             with self._sessions.begin() as session:
                 run_row = session.scalars(
@@ -1127,9 +1338,9 @@ class ProductRepositoryMixin:
                     or source_row.logical_date != run_row.logical_date
                     or source_row.operation != RunOperation.STRUCTURED_ANALYSIS.value
                     or source_row.status not in (RunStatus.COMPLETE.value, RunStatus.PARTIAL.value)
-                    or _run_from_row(source_row) != source.source_run.run
+                    or source_row.pipeline_execution_id != run_row.pipeline_execution_id
                 ):
-                    raise RepositoryError("product publication source is no longer restartable")
+                    raise RepositoryError("product publication source ownership is invalid")
                 source_items = {
                     row.paper_version_id: row
                     for row in session.scalars(
@@ -1142,59 +1353,161 @@ class ProductRepositoryMixin:
                         select(RunItemRow).where(RunItemRow.run_id == run_id).with_for_update()
                     )
                 }
-                expected_versions = {item.item.paper_version_id for item in source.source_run.items}
-                if (
-                    set(source_items) != expected_versions
-                    or set(product_items) != expected_versions
-                ):
-                    raise RepositoryError("product publication items changed before restart")
-                snapshot_analysis_ids = {
-                    row.paper_version_id: row.analysis_id
+                paper_inputs = {
+                    row.paper_version_id: row
                     for row in session.scalars(
-                        select(ProductRunPaperInputRow).where(
-                            ProductRunPaperInputRow.run_id == run_id
-                        )
+                        select(ProductRunPaperInputRow)
+                        .where(ProductRunPaperInputRow.run_id == run_id)
+                        .with_for_update()
                     )
                 }
-                payload_analysis_ids = {
-                    paper.paper_version_id: paper.analysis.analysis.id for paper in source.papers
-                }
-                if snapshot_analysis_ids != payload_analysis_ids:
-                    raise RepositoryError("product analysis input changed before restart")
-                snapshot_comparison_ids: dict[UUID, set[UUID]] = {
-                    version_id: set() for version_id in snapshot_analysis_ids
-                }
-                for row in session.scalars(
-                    select(ProductRunComparisonInputRow).where(
-                        ProductRunComparisonInputRow.run_id == run_id
+                comparison_inputs = {
+                    (row.paper_version_id, row.comparison_id): row
+                    for row in session.scalars(
+                        select(ProductRunComparisonInputRow)
+                        .where(ProductRunComparisonInputRow.run_id == run_id)
+                        .with_for_update()
                     )
-                ):
-                    snapshot_comparison_ids[row.paper_version_id].add(row.comparison_id)
-                payload_comparison_ids = {
-                    paper.paper_version_id: {
-                        comparison.bundle.comparison.id for comparison in paper.comparisons
-                    }
-                    for paper in source.papers
                 }
-                if snapshot_comparison_ids != payload_comparison_ids:
-                    raise RepositoryError("product comparison input changed before restart")
                 _delete_product_artifacts(session, run_row)
+
+                source_papers = {paper.paper_version_id: paper for paper in source.papers}
+                completed_source_versions = {
+                    version_id
+                    for version_id, item in source_items.items()
+                    if item.status == RunItemStatus.COMPLETED.value
+                }
+                if set(source_papers) != completed_source_versions:
+                    raise RepositoryError(
+                        "product input papers do not match completed analysis items"
+                    )
+                if set(paper_inputs) != completed_source_versions:
+                    raise RepositoryError(
+                        "product paper input snapshot does not match completed analysis items"
+                    )
+                desired_comparison_inputs: dict[
+                    tuple[UUID, UUID], ProductRunComparisonInputRow
+                ] = {}
+                for paper in source_papers.values():
+                    analysis = paper.analysis.analysis
+                    if (
+                        analysis.paper_id != paper.paper_id
+                        or analysis.paper_version_id != paper.paper_version_id
+                    ):
+                        raise RepositoryError("product analysis input has the wrong owner")
+                    paper_input = paper_inputs[paper.paper_version_id]
+                    if (
+                        paper_input.topic_id != run_row.topic_id
+                        or paper_input.source_run_id != source_row.id
+                        or paper_input.paper_id != paper.paper_id
+                        or paper_input.analysis_id != analysis.id
+                        or paper_input.analysis_scope != analysis.analysis_scope.value
+                    ):
+                        raise RepositoryError(
+                            "product paper input snapshot conflicts with its source analysis"
+                        )
+                    for comparison in paper.comparisons:
+                        comparison_row = comparison.bundle.comparison
+                        if (
+                            comparison_row.source_paper_id != paper.paper_id
+                            or comparison_row.source_paper_version_id != paper.paper_version_id
+                            or comparison_row.source_analysis_id != analysis.id
+                        ):
+                            raise RepositoryError(
+                                "product comparison input has the wrong source owner"
+                            )
+                        desired_comparison_inputs[(paper.paper_version_id, comparison_row.id)] = (
+                            ProductRunComparisonInputRow(
+                                run_id=run_id,
+                                topic_id=run_row.topic_id,
+                                source_run_id=source_row.id,
+                                paper_id=paper.paper_id,
+                                paper_version_id=paper.paper_version_id,
+                                analysis_id=analysis.id,
+                                comparison_id=comparison_row.id,
+                                schema_version=1,
+                                created_at=started_at,
+                            )
+                        )
+                for key, row in comparison_inputs.items():
+                    if key not in desired_comparison_inputs:
+                        session.delete(row)
+                session.add_all(
+                    row
+                    for key, row in desired_comparison_inputs.items()
+                    if key not in comparison_inputs
+                )
+
+                desired_versions = set(source_items) | set(failures_by_version)
+                for version_id, product_item in tuple(product_items.items()):
+                    if version_id not in desired_versions:
+                        session.delete(product_item)
+                        product_items.pop(version_id)
+                for version_id in desired_versions:
+                    if version_id in product_items:
+                        continue
+                    source_item = source_items.get(version_id)
+                    failure = failures_by_version.get(version_id)
+                    if source_item is None and failure is None:
+                        continue
+                    if source_item is not None:
+                        paper_id = source_item.paper_id
+                    else:
+                        assert failure is not None
+                        paper_id = failure.paper_id
+                    product_item = RunItemRow(
+                        id=uuid5(run_id, f"product:{version_id}"),
+                        run_id=run_id,
+                        paper_id=paper_id,
+                        paper_version_id=version_id,
+                        stage=PaperStage.EVIDENCE_EXTRACTED.value,
+                        status=RunItemStatus.IN_PROGRESS.value,
+                        failed_stage=None,
+                        error_code=None,
+                        retryable=None,
+                        error_detail=None,
+                        schema_version=1,
+                        created_at=started_at,
+                        updated_at=started_at,
+                    )
+                    session.add(product_item)
+                    product_items[version_id] = product_item
                 failed_count = 0
                 for version_id, product_item in product_items.items():
-                    source_item = source_items[version_id]
-                    completed = source_item.status == RunItemStatus.COMPLETED.value
-                    if not completed:
+                    source_item = source_items.get(version_id)
+                    upstream_failure = failures_by_version.get(version_id)
+                    if (
+                        source_item is not None
+                        and source_item.status != RunItemStatus.COMPLETED.value
+                    ):
+                        if upstream_failure is not None:
+                            _require_matching_product_failure(source_item, upstream_failure)
+                        product_item.stage = source_item.stage
+                        product_item.status = RunItemStatus.FAILED.value
+                        product_item.failed_stage = source_item.failed_stage
+                        product_item.error_code = source_item.error_code
+                        product_item.retryable = source_item.retryable
+                        product_item.error_detail = source_item.error_detail
                         failed_count += 1
-                    product_item.stage = (
-                        PaperStage.EVIDENCE_EXTRACTED.value if completed else source_item.stage
-                    )
-                    product_item.status = (
-                        RunItemStatus.IN_PROGRESS.value if completed else RunItemStatus.FAILED.value
-                    )
-                    product_item.failed_stage = None if completed else source_item.failed_stage
-                    product_item.error_code = None if completed else source_item.error_code
-                    product_item.retryable = None if completed else source_item.retryable
-                    product_item.error_detail = None if completed else source_item.error_detail
+                    elif upstream_failure is not None:
+                        product_item.stage = upstream_failure.stage.value
+                        product_item.status = RunItemStatus.FAILED.value
+                        product_item.failed_stage = upstream_failure.failed_stage.value
+                        product_item.error_code = upstream_failure.error_code
+                        product_item.retryable = upstream_failure.retryable
+                        product_item.error_detail = upstream_failure.error_detail
+                        failed_count += 1
+                    elif source_item is not None:
+                        product_item.stage = PaperStage.EVIDENCE_EXTRACTED.value
+                        product_item.status = RunItemStatus.IN_PROGRESS.value
+                        product_item.failed_stage = None
+                        product_item.error_code = None
+                        product_item.retryable = None
+                        product_item.error_detail = None
+                    else:
+                        raise RepositoryError(
+                            "product publication upstream failure snapshot changed before restart"
+                        )
                     product_item.updated_at = started_at
                 run_row.status = RunStatus.RUNNING.value
                 run_row.started_at = started_at
@@ -1270,6 +1583,13 @@ class ProductRepositoryMixin:
                 run_row = session.get(DailyRunRow, run_id)
                 if run_row is None or bundle.topic_id != run_row.topic_id:
                     raise RepositoryError("graph bundle has the wrong product run topic")
+                if any(
+                    value.pipeline_execution_id != run_row.pipeline_execution_id
+                    for value in (*bundle.mentions, *bundle.edges)
+                ):
+                    raise RepositoryError(
+                        "graph occurrence namespace does not match the product execution"
+                    )
                 if (
                     item.status == RunItemStatus.IN_PROGRESS.value
                     and item.stage == PaperStage.GRAPH_UPDATED.value
@@ -1395,7 +1715,13 @@ class ProductRepositoryMixin:
                 "PostgreSQL rejected product item failure constraints"
             ) from error
 
-    def get_graph_corpus(self, topic_id: UUID, *, as_of_date: date) -> GraphCorpusInput:
+    def get_graph_corpus(
+        self,
+        topic_id: UUID,
+        *,
+        as_of_date: date,
+        current_publication_run_id: UUID | None = None,
+    ) -> GraphCorpusInput:
         try:
             with self._sessions() as session:
                 visible_run_ids = select(DailyRunRow.id).where(
@@ -1405,11 +1731,12 @@ class ProductRepositoryMixin:
                         (
                             DailyRunRow.status.in_(_PUBLISHED_PRODUCT_STATUSES)
                             & (DailyRunRow.logical_date <= as_of_date)
+                            & (
+                                DailyRunRow.pipeline_execution_mode
+                                != PipelineExecutionMode.SMOKE.value
+                            )
                         ),
-                        (
-                            (DailyRunRow.status == RunStatus.RUNNING.value)
-                            & (DailyRunRow.logical_date == as_of_date)
-                        ),
+                        DailyRunRow.id == current_publication_run_id,
                     ),
                 )
                 run_rows = tuple(
@@ -1634,6 +1961,12 @@ class ProductRepositoryMixin:
                     )
                 ):
                     raise RepositoryError("product trend snapshots have the wrong scope")
+                if any(
+                    item.pipeline_execution_id != run_row.pipeline_execution_id for item in trends
+                ):
+                    raise RepositoryError(
+                        "product trend namespace does not match the product execution"
+                    )
                 successful_paper_ids = {row.paper_id for row in (*graph_items, *already_advanced)}
                 if len({item.root_paper_id for item in lineages}) != len(lineages) or any(
                     item.topic_id != run_row.topic_id
@@ -1642,6 +1975,12 @@ class ProductRepositoryMixin:
                     for item in lineages
                 ):
                     raise RepositoryError("product lineage snapshots have the wrong scope")
+                if any(
+                    item.pipeline_execution_id != run_row.pipeline_execution_id for item in lineages
+                ):
+                    raise RepositoryError(
+                        "product lineage namespace does not match the product execution"
+                    )
                 for trend in trends:
                     _upsert_trend_snapshot(
                         session,
@@ -1837,6 +2176,7 @@ class ProductRepositoryMixin:
                             ReportRow.report_type == ReportType.DAILY.value,
                             ReportRow.logical_date >= period_start,
                             ReportRow.logical_date <= period_end,
+                            ReportRow.run_id.in_(_published_product_run_ids(topic_id=topic_id)),
                         )
                         .order_by(ReportRow.logical_date, ReportRow.id)
                     )
@@ -1998,6 +2338,9 @@ def _run_from_row(row: DailyRunRow) -> DailyRun:
         schema_version=row.schema_version,
         created_at=row.created_at,
         source_run_id=row.source_run_id,
+        pipeline_execution_mode=PipelineExecutionMode(row.pipeline_execution_mode),
+        pipeline_selection_limit=row.pipeline_selection_limit,
+        pipeline_execution_id=row.pipeline_execution_id,
     )
 
 
@@ -2351,6 +2694,7 @@ def _analysis_from_row(row: PaperAnalysisRow) -> PaperAnalysis:
         ),
         schema_version=row.schema_version,
         created_at=row.created_at,
+        revision_id=row.revision_id,
     )
 
 
@@ -2687,6 +3031,7 @@ def _upsert_graph_bundle(
         row = session.get(GraphEntityMentionRow, mention.id)
         values = {
             "publication_run_id": publication_run_id,
+            "pipeline_execution_id": mention.pipeline_execution_id,
             "topic_id": bundle.topic_id,
             "entity_id": mention.entity_id,
             "paper_id": mention.paper_id,
@@ -2741,6 +3086,7 @@ def _upsert_graph_bundle(
         row = session.get(GraphEdgeRow, edge.id)
         values = {
             "publication_run_id": publication_run_id,
+            "pipeline_execution_id": edge.pipeline_execution_id,
             "topic_id": bundle.topic_id,
             "source_entity_id": edge.source_entity_id,
             "target_entity_id": edge.target_entity_id,
@@ -3147,20 +3493,25 @@ def _entity_from_row_with_mentions(
     for alias in (item.observed_label for item in ordered):
         if alias not in aliases:
             aliases.append(alias)
+    entity_type = GraphEntityType(row.entity_type)
+    created_at = min(item.created_at for item in ordered)
+    updated_at = max(item.created_at for item in ordered)
     return GraphEntity(
         id=row.id,
         topic_id=row.topic_id,
-        entity_type=GraphEntityType(row.entity_type),
+        entity_type=entity_type,
         paper_id=row.paper_id,
-        canonical_label=row.canonical_label,
+        canonical_label=latest.observed_label,
         normalized_key=row.normalized_key,
         display_label=latest.observed_label,
         aliases=tuple(aliases),
-        provenance=RelationProvenance(row.provenance),
-        source=row.source,
+        provenance=RelationProvenance(latest.provenance),
+        source=(
+            "paper_metadata" if entity_type is GraphEntityType.PAPER else "canonical_entity_key_v1"
+        ),
         schema_version=row.schema_version,
-        created_at=row.created_at,
-        updated_at=max(row.updated_at, *(item.created_at for item in ordered)),
+        created_at=created_at,
+        updated_at=updated_at,
     )
 
 
@@ -3188,6 +3539,7 @@ def _mention_from_row(
         generated_at=row.generated_at,
         schema_version=row.schema_version,
         created_at=row.created_at,
+        pipeline_execution_id=row.pipeline_execution_id,
     )
 
 
@@ -3216,6 +3568,7 @@ def _edge_from_row(row: GraphEdgeRow, evidence_ids: tuple[UUID, ...]) -> GraphEd
         generated_at=row.generated_at,
         schema_version=row.schema_version,
         created_at=row.created_at,
+        pipeline_execution_id=row.pipeline_execution_id,
     )
 
 
@@ -3331,6 +3684,7 @@ def _trend_from_session(
         aggregation_version=row.aggregation_version,
         generated_at=row.generated_at,
         schema_version=row.schema_version,
+        pipeline_execution_id=row.pipeline_execution_id,
     )
 
 
@@ -3455,6 +3809,7 @@ def _upsert_trend_snapshot(
     row = session.get(TrendSnapshotRow, snapshot.id)
     values = {
         "publication_run_id": publication_run_id,
+        "pipeline_execution_id": snapshot.pipeline_execution_id,
         "topic_id": snapshot.topic_id,
         "as_of_date": snapshot.as_of_date,
         "window": snapshot.window.value,
@@ -3494,6 +3849,7 @@ def _upsert_trend_snapshot(
             or row.window != snapshot.window.value
             or row.aggregation_version != snapshot.aggregation_version
             or row.publication_run_id != publication_run_id
+            or row.pipeline_execution_id != snapshot.pipeline_execution_id
         ):
             raise RepositoryError("trend stable ID has conflicting ownership")
         for key, value in values.items():
@@ -3645,6 +4001,7 @@ def _lineage_from_session(session: Session, row: LineageSnapshotRow) -> LineageS
         lineage_version=row.lineage_version,
         generated_at=row.generated_at,
         schema_version=row.schema_version,
+        pipeline_execution_id=row.pipeline_execution_id,
     )
 
 
@@ -3793,6 +4150,7 @@ def _bounded_lineage(
             max_nodes=effective_nodes,
             max_edges=effective_edges,
             lineage_version=snapshot.lineage_version,
+            pipeline_execution_id=snapshot.pipeline_execution_id,
         ),
         topic_id=snapshot.topic_id,
         root_paper_id=snapshot.root_paper_id,
@@ -3811,6 +4169,7 @@ def _bounded_lineage(
         lineage_version=snapshot.lineage_version,
         generated_at=snapshot.generated_at,
         schema_version=snapshot.schema_version,
+        pipeline_execution_id=snapshot.pipeline_execution_id,
     )
 
 
@@ -3826,7 +4185,10 @@ def _upsert_lineage_snapshot(
         DailyRunRow.logical_date <= snapshot.as_of_date,
         or_(
             DailyRunRow.id == publication_run_id,
-            DailyRunRow.status.in_(_PUBLISHED_PRODUCT_STATUSES),
+            (
+                DailyRunRow.status.in_(_PUBLISHED_PRODUCT_STATUSES)
+                & (DailyRunRow.pipeline_execution_mode != PipelineExecutionMode.SMOKE.value)
+            ),
         ),
     )
     node_entity_ids = {item.graph_entity_id for item in snapshot.nodes}
@@ -3869,6 +4231,7 @@ def _upsert_lineage_snapshot(
     row = session.get(LineageSnapshotRow, snapshot.id)
     values = {
         "publication_run_id": publication_run_id,
+        "pipeline_execution_id": snapshot.pipeline_execution_id,
         "topic_id": snapshot.topic_id,
         "root_paper_id": snapshot.root_paper_id,
         "as_of_date": snapshot.as_of_date,
@@ -3897,6 +4260,7 @@ def _upsert_lineage_snapshot(
             or row.root_paper_id != snapshot.root_paper_id
             or row.as_of_date != snapshot.as_of_date
             or row.publication_run_id != publication_run_id
+            or row.pipeline_execution_id != snapshot.pipeline_execution_id
         ):
             raise RepositoryError("lineage stable ID has conflicting ownership")
         for key, value in values.items():
@@ -3940,6 +4304,31 @@ def _upsert_lineage_snapshot(
                 created_at=snapshot.generated_at,
             )
         )
+
+
+def _product_failures_by_version(
+    failures: tuple[ProductFailureInput, ...],
+) -> dict[UUID, ProductFailureInput]:
+    by_version = {failure.paper_version_id: failure for failure in failures}
+    if len(by_version) != len(failures):
+        raise RepositoryError("product upstream failures must identify unique paper versions")
+    return by_version
+
+
+def _require_matching_product_failure(
+    row: RunItemRow,
+    failure: ProductFailureInput,
+) -> None:
+    if (
+        row.paper_id != failure.paper_id
+        or row.paper_version_id != failure.paper_version_id
+        or row.stage != failure.stage.value
+        or row.failed_stage != failure.failed_stage.value
+        or row.error_code != failure.error_code
+        or row.retryable != failure.retryable
+        or row.error_detail != failure.error_detail
+    ):
+        raise RepositoryError("product upstream failure conflicts with its source run item")
 
 
 def _delete_product_artifacts(session: Session, run_row: DailyRunRow) -> None:

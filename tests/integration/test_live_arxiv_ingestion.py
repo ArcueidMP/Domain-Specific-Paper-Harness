@@ -39,6 +39,13 @@ class KnownArxivPaper:
             max_results=min(max_results, 2),
         )
 
+    def get_papers_by_ids(
+        self,
+        *,
+        canonical_arxiv_ids: tuple[str, ...],
+    ) -> tuple[ArxivPaperRecord, ...]:
+        return self._client.get_papers_by_ids(canonical_arxiv_ids=canonical_arxiv_ids)
+
     def download_pdf(
         self,
         *,

@@ -76,7 +76,10 @@ describe("DashboardPage", () => {
     expect(screen.getByText("PRODUCT PUBLICATION")).toBeInTheDocument();
     expect(screen.getByText("Adds evidence-linked memory checks to planning.")).toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: paper.title }).length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: /7D/ })).toHaveAttribute("href", "/trends?window=7D");
+    expect(screen.getByRole("link", { name: /7D/ })).toHaveAttribute(
+      "href",
+      "/trends?window=7D&topic=broad-llm-agents",
+    );
   });
 
   it("renders honest empty states when no product run, papers, or trends exist", async () => {

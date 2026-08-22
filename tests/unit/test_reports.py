@@ -321,7 +321,7 @@ def test_report_narrative_input_rejects_comparison_evidence_from_a_third_paper()
         )
 
 
-def test_generated_narrative_requires_the_complete_ordered_outline() -> None:
+def test_generated_narrative_accepts_partial_outline_but_requires_canonical_order() -> None:
     sections = tuple(
         GeneratedReportSection(
             kind=kind, narrative=f"Grounded {kind.value} section.", evidence_ids=()
@@ -347,7 +347,13 @@ def test_generated_narrative_requires_the_complete_ordered_outline() -> None:
     )
     assert tuple(section.kind for section in narrative.sections) == tuple(ReportSectionKind)
 
-    with pytest.raises(DomainInvariantError, match="complete and ordered"):
+    partial = replace(narrative, sections=(sections[0], sections[-1]))
+    assert tuple(section.kind for section in partial.sections) == (
+        ReportSectionKind.OVERVIEW,
+        ReportSectionKind.LIMITATIONS,
+    )
+
+    with pytest.raises(DomainInvariantError, match="unique and canonically ordered"):
         GeneratedReportNarrative(
             provider=narrative.provider,
             configured_model=narrative.configured_model,

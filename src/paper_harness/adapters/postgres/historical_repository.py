@@ -8,7 +8,7 @@ from datetime import date, datetime
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import String, case, delete, func, literal_column, or_, select
+from sqlalchemy import String, and_, case, delete, exists, func, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
@@ -40,6 +40,7 @@ from paper_harness.domain.historical import (
     ComparisonDimensionName,
     ComparisonEvidenceInput,
     ComparisonPaperInput,
+    ComparisonTargetDecision,
     ExternalPaperStub,
     GeneratedCrawlerPlan,
     HistoricalBackfillRun,
@@ -66,6 +67,13 @@ from paper_harness.domain.identity import (
     stable_historical_corpus_entry_id,
     stable_search_candidate_id,
 )
+from paper_harness.domain.models import (
+    PaperStage,
+    PipelineExecutionMode,
+    RunItemStatus,
+    RunOperation,
+    RunStatus,
+)
 from paper_harness.ports.repository import (
     RepositoryIntegrityError,
     RepositoryUnavailableError,
@@ -75,6 +83,7 @@ from .models import (
     ComparisonDimensionRow,
     ComparisonEvidenceLinkRow,
     ComparisonRow,
+    DailyRunRow,
     EvidenceRow,
     ExternalPaperIdentifierRow,
     ExternalPaperStubRow,
@@ -84,7 +93,10 @@ from .models import (
     PaperRelationRow,
     PaperRow,
     PaperVersionRow,
+    ParsedPaperRow,
+    ProductRunComparisonInputRow,
     RelationEvidenceLinkRow,
+    RunItemRow,
     ScientificEmbeddingRow,
     SearchActionRow,
     SearchCandidateDiscoveryRow,
@@ -127,26 +139,9 @@ class HistoricalRepositoryMixin:
                 ).one()
                 stored = _backfill_from_row(row)
                 if stored.status is BackfillStatus.FAILED:
-                    expected_resume = replace(
-                        stored,
-                        status=BackfillStatus.RUNNING,
-                        completed_at=None,
-                        error_code=None,
-                        error_detail=None,
-                    )
-                    if run != expected_resume:
-                        raise RepositoryIntegrityError(
-                            "failed historical backfill resume conflicts with stored progress"
-                        )
-                    row.status = BackfillStatus.RUNNING.value
-                    row.completed_at = None
-                    row.error_code = None
-                    row.error_detail = None
+                    for key, value in _backfill_values(run).items():
+                        setattr(row, key, value)
                     session.flush()
-                elif stored != run:
-                    raise RepositoryIntegrityError(
-                        "historical backfill window conflicts with stored state"
-                    )
                 return _backfill_from_row(row)
         except OperationalError as error:
             raise RepositoryUnavailableError(
@@ -198,19 +193,13 @@ class HistoricalRepositoryMixin:
             raise RepositoryIntegrityError(
                 "a historical page must pair each paper with one corpus entry"
             )
-        expected_embedding_owners = {paper.id for paper in papers if paper.abstract is not None}
         actual_embedding_owners = {embedding.external_paper_id for embedding in embeddings}
-        if (
-            actual_embedding_owners != expected_embedding_owners
-            or len(actual_embedding_owners) != len(embeddings)
-            or any(
-                embedding.external_paper_id not in paper_ids
-                or embedding.paper_version_id is not None
-                for embedding in embeddings
-            )
+        if len(actual_embedding_owners) != len(embeddings) or any(
+            embedding.external_paper_id not in paper_ids or embedding.paper_version_id is not None
+            for embedding in embeddings
         ):
             raise RepositoryIntegrityError(
-                "historical page must include exactly one embedding for every abstract"
+                "historical page embeddings must uniquely belong to papers in the page"
             )
         try:
             with self._sessions.begin() as session:
@@ -516,6 +505,66 @@ class HistoricalRepositoryMixin:
                 "PostgreSQL search session read is unavailable"
             ) from error
 
+    def restart_search_session(self, session_id: UUID, *, restarted_at: datetime) -> SearchSession:
+        try:
+            with self._sessions.begin() as session:
+                row = session.scalars(
+                    select(SearchSessionRow)
+                    .where(SearchSessionRow.id == session_id)
+                    .with_for_update()
+                ).one_or_none()
+                if row is None or row.status not in (
+                    SearchSessionStatus.RUNNING.value,
+                    SearchSessionStatus.FAILED.value,
+                ):
+                    raise RepositoryIntegrityError("only an incomplete search session may restart")
+                comparison_exists = session.scalar(
+                    select(exists().where(ComparisonRow.search_session_id == session_id))
+                )
+                if comparison_exists:
+                    raise RepositoryIntegrityError("a referenced search session cannot restart")
+                session.execute(
+                    delete(SearchCandidateDiscoveryRow).where(
+                        SearchCandidateDiscoveryRow.session_id == session_id
+                    )
+                )
+                session.execute(
+                    delete(SearchCandidateRow).where(SearchCandidateRow.session_id == session_id)
+                )
+                session.execute(
+                    delete(SearchActionRow).where(SearchActionRow.session_id == session_id)
+                )
+                row.status = SearchSessionStatus.RUNNING.value
+                row.started_at = restarted_at
+                row.completed_at = None
+                row.stop_reason = None
+                row.error_code = None
+                row.error_detail = None
+                row.provider = None
+                row.configured_model = None
+                row.model_version = None
+                row.prompt_version = None
+                row.prompt_tokens = None
+                row.completion_tokens = None
+                row.total_tokens = None
+                row.call_count = None
+                row.model_duration_ms = None
+                row.estimated_cost_usd = None
+                row.crawler_queries = None
+                row.crawler_use_recommendations = None
+                row.crawler_expand_references = None
+                row.crawler_expand_citations = None
+                row.crawler_decision_reason = None
+                row.crawler_generated_at = None
+                session.flush()
+                return _search_session_from_row(row)
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL search-session restart is unavailable"
+            ) from error
+        except IntegrityError as error:
+            raise RepositoryIntegrityError("PostgreSQL rejected search-session restart") from error
+
     def start_search_action(self, action: SearchAction) -> SearchAction:
         if action.status is not SearchActionStatus.RUNNING:
             raise RepositoryIntegrityError("a search action must start in RUNNING state")
@@ -726,6 +775,84 @@ class HistoricalRepositoryMixin:
             ) from error
         except IntegrityError as error:
             raise RepositoryIntegrityError("PostgreSQL rejected candidate decisions") from error
+
+    def update_search_comparison_targets(
+        self,
+        session_id: UUID,
+        candidates: tuple[SearchCandidate, ...],
+    ) -> None:
+        try:
+            with self._sessions.begin() as session:
+                session_row = session.scalars(
+                    select(SearchSessionRow)
+                    .where(SearchSessionRow.id == session_id)
+                    .with_for_update()
+                ).one_or_none()
+                if session_row is None or session_row.status != SearchSessionStatus.COMPLETE.value:
+                    raise RepositoryIntegrityError(
+                        "comparison targets require a completed search session"
+                    )
+                rows = tuple(
+                    session.scalars(
+                        select(SearchCandidateRow)
+                        .where(SearchCandidateRow.session_id == session_id)
+                        .order_by(SearchCandidateRow.rank, SearchCandidateRow.id)
+                        .with_for_update()
+                    )
+                )
+                updates = {candidate.id: candidate for candidate in candidates}
+                if len(updates) != len(candidates) or set(updates) != {row.id for row in rows}:
+                    raise RepositoryIntegrityError(
+                        "comparison-target decisions must cover the exact candidate set"
+                    )
+                for row in rows:
+                    candidate = updates[row.id]
+                    current = _candidate_from_row(row)
+                    if candidate.session_id != session_id or replace(
+                        candidate,
+                        comparison_target_decision=current.comparison_target_decision,
+                        comparison_target_reason=current.comparison_target_reason,
+                    ) != replace(
+                        current,
+                        comparison_target_decision=current.comparison_target_decision,
+                        comparison_target_reason=current.comparison_target_reason,
+                    ):
+                        raise RepositoryIntegrityError(
+                            "comparison-target update changed candidate provenance"
+                        )
+                    if (
+                        candidate.comparison_target_decision is None
+                        or candidate.comparison_target_reason is None
+                    ):
+                        raise RepositoryIntegrityError(
+                            "comparison-target decision cannot remain pending"
+                        )
+                target_count = sum(
+                    candidate.comparison_target_decision is ComparisonTargetDecision.TARGET
+                    for candidate in candidates
+                )
+                if target_count > session_row.max_selected_candidates:
+                    raise RepositoryIntegrityError(
+                        "comparison targets exceed the persisted session limit"
+                    )
+                for row in rows:
+                    candidate = updates[row.id]
+                    target_decision = candidate.comparison_target_decision
+                    if target_decision is None:
+                        raise RepositoryIntegrityError(
+                            "comparison-target decision cannot remain pending"
+                        )
+                    row.comparison_target_decision = target_decision.value
+                    row.comparison_target_reason = candidate.comparison_target_reason
+                session.flush()
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL comparison-target persistence is unavailable"
+            ) from error
+        except IntegrityError as error:
+            raise RepositoryIntegrityError(
+                "PostgreSQL rejected comparison-target decisions"
+            ) from error
 
     def complete_search_session(
         self,
@@ -966,20 +1093,58 @@ class HistoricalRepositoryMixin:
         paper_version_id: UUID,
         *,
         analysis_id: UUID | None = None,
+        analysis_scope: AnalysisScope | None = None,
+        provider: str | None = None,
+        configured_model: str | None = None,
+        prompt_version: str | None = None,
+        parser_name: str | None = None,
+        parser_version: str | None = None,
     ) -> ComparisonPaperInput | None:
         statement = (
             select(PaperAnalysisRow, PaperVersionRow)
             .join(PaperVersionRow, PaperVersionRow.id == PaperAnalysisRow.paper_version_id)
             .where(PaperAnalysisRow.paper_version_id == paper_version_id)
         )
-        if analysis_id is None:
+        if analysis_id is not None:
+            statement = statement.where(PaperAnalysisRow.id == analysis_id)
+        if analysis_scope is not None:
+            statement = statement.where(PaperAnalysisRow.analysis_scope == analysis_scope.value)
+        model_contract = (provider, configured_model, prompt_version)
+        if any(value is not None for value in model_contract):
+            if any(value is None for value in model_contract):
+                raise RepositoryIntegrityError(
+                    "comparison analysis model provenance must be supplied together"
+                )
+            statement = statement.where(
+                PaperAnalysisRow.provider == provider,
+                PaperAnalysisRow.configured_model == configured_model,
+                PaperAnalysisRow.prompt_version == prompt_version,
+            )
+        if (parser_name is None) != (parser_version is None):
+            raise RepositoryIntegrityError(
+                "comparison analysis parser provenance must be supplied together"
+            )
+        if parser_name is not None:
+            statement = statement.where(
+                exists(
+                    select(ParsedPaperRow.id).where(
+                        ParsedPaperRow.id == PaperAnalysisRow.parsed_paper_id,
+                        ParsedPaperRow.parser_name == parser_name,
+                        ParsedPaperRow.parser_version == parser_version,
+                    )
+                )
+            )
+        if analysis_id is None and analysis_scope is None:
             statement = statement.order_by(
                 case((PaperAnalysisRow.analysis_scope == "FULL_TEXT", 1), else_=0).desc(),
                 PaperAnalysisRow.generated_at.desc(),
                 PaperAnalysisRow.id,
             )
         else:
-            statement = statement.where(PaperAnalysisRow.id == analysis_id)
+            statement = statement.order_by(
+                PaperAnalysisRow.generated_at.desc(),
+                PaperAnalysisRow.id,
+            )
         statement = statement.limit(1)
         try:
             with self._sessions() as session:
@@ -1054,18 +1219,30 @@ class HistoricalRepositoryMixin:
                     raise RepositoryIntegrityError(
                         "comparison source requires its completed search session"
                     )
+                target_predicate = (
+                    SearchCandidateRow.comparison_target_decision
+                    == ComparisonTargetDecision.TARGET.value
+                )
+                if search_row.pipeline_execution_id is None:
+                    target_predicate = or_(
+                        target_predicate,
+                        and_(
+                            SearchCandidateRow.comparison_target_decision.is_(None),
+                            SearchCandidateRow.decision == SelectionDecision.SELECTED.value,
+                        ),
+                    )
                 selected_candidate_exists = session.execute(
                     select(SearchCandidateRow.id).where(
                         SearchCandidateRow.session_id == comparison.search_session_id,
                         SearchCandidateRow.local_paper_id == comparison.target_paper_id,
                         SearchCandidateRow.local_paper_version_id
                         == comparison.target_paper_version_id,
-                        SearchCandidateRow.decision == SelectionDecision.SELECTED.value,
+                        target_predicate,
                     )
                 ).scalar_one_or_none()
                 if selected_candidate_exists is None:
                     raise RepositoryIntegrityError(
-                        "comparison target is not a selected local search candidate"
+                        "comparison target is not a bounded local search candidate"
                     )
                 _require_paper_version_owner(
                     session,
@@ -1160,9 +1337,43 @@ class HistoricalRepositoryMixin:
         except IntegrityError as error:
             raise RepositoryIntegrityError("PostgreSQL rejected the comparison bundle") from error
 
-    def get_comparison(self, comparison_id: UUID) -> ComparisonDetail | None:
+    def get_comparison(
+        self,
+        comparison_id: UUID,
+        *,
+        canonical_only: bool = False,
+    ) -> ComparisonDetail | None:
         try:
             with self._sessions() as session:
+                if canonical_only and not session.scalar(
+                    exists(
+                        select(ProductRunComparisonInputRow.comparison_id)
+                        .join(
+                            DailyRunRow,
+                            DailyRunRow.id == ProductRunComparisonInputRow.run_id,
+                        )
+                        .join(
+                            RunItemRow,
+                            and_(
+                                RunItemRow.run_id == DailyRunRow.id,
+                                RunItemRow.paper_version_id
+                                == ProductRunComparisonInputRow.paper_version_id,
+                            ),
+                        )
+                        .where(
+                            ProductRunComparisonInputRow.comparison_id == comparison_id,
+                            DailyRunRow.operation == RunOperation.PRODUCT_PUBLICATION.value,
+                            DailyRunRow.status.in_(
+                                (RunStatus.COMPLETE.value, RunStatus.PARTIAL.value)
+                            ),
+                            DailyRunRow.pipeline_execution_mode
+                            != PipelineExecutionMode.SMOKE.value,
+                            RunItemRow.status == RunItemStatus.COMPLETED.value,
+                            RunItemRow.stage == PaperStage.PUBLISHED.value,
+                        )
+                    ).select()
+                ):
+                    return None
                 row = session.get(ComparisonRow, comparison_id)
                 return None if row is None else _comparison_detail_from_session(session, row)
         except OperationalError as error:
@@ -1173,6 +1384,7 @@ class HistoricalRepositoryMixin:
         paper_id: UUID,
         *,
         paper_version_id: UUID | None = None,
+        search_session_id: UUID | None = None,
     ) -> RelatedWorkDetail | None:
         try:
             with self._sessions() as session:
@@ -1182,6 +1394,50 @@ class HistoricalRepositoryMixin:
                 if paper_version_id is not None:
                     statement = statement.where(
                         SearchSessionRow.source_paper_version_id == paper_version_id
+                    )
+                if search_session_id is not None:
+                    statement = statement.where(SearchSessionRow.id == search_session_id)
+                else:
+                    canonical_publication = exists(
+                        select(ProductRunComparisonInputRow.comparison_id)
+                        .join(
+                            ComparisonRow,
+                            ComparisonRow.id == ProductRunComparisonInputRow.comparison_id,
+                        )
+                        .join(
+                            DailyRunRow,
+                            DailyRunRow.id == ProductRunComparisonInputRow.run_id,
+                        )
+                        .join(
+                            RunItemRow,
+                            and_(
+                                RunItemRow.run_id == DailyRunRow.id,
+                                RunItemRow.paper_id == ProductRunComparisonInputRow.paper_id,
+                                RunItemRow.paper_version_id
+                                == ProductRunComparisonInputRow.paper_version_id,
+                            ),
+                        )
+                        .where(
+                            ComparisonRow.search_session_id == SearchSessionRow.id,
+                            ProductRunComparisonInputRow.paper_id
+                            == SearchSessionRow.source_paper_id,
+                            ProductRunComparisonInputRow.paper_version_id
+                            == SearchSessionRow.source_paper_version_id,
+                            ProductRunComparisonInputRow.analysis_id
+                            == SearchSessionRow.source_analysis_id,
+                            RunItemRow.status == RunItemStatus.COMPLETED.value,
+                            RunItemRow.stage == PaperStage.PUBLISHED.value,
+                            DailyRunRow.operation == RunOperation.PRODUCT_PUBLICATION.value,
+                            DailyRunRow.status.in_(
+                                (RunStatus.COMPLETE.value, RunStatus.PARTIAL.value)
+                            ),
+                            DailyRunRow.pipeline_execution_mode
+                            != PipelineExecutionMode.SMOKE.value,
+                        )
+                    )
+                    statement = statement.where(
+                        SearchSessionRow.status == SearchSessionStatus.COMPLETE.value,
+                        canonical_publication,
                     )
                 session_row = session.scalars(
                     statement.order_by(
@@ -1359,6 +1615,7 @@ def _backfill_from_row(row: HistoricalBackfillRunRow) -> HistoricalBackfillRun:
 def _search_session_values(value: SearchSession) -> dict[str, object]:
     return {
         "id": value.id,
+        "pipeline_execution_id": value.pipeline_execution_id,
         "topic_id": value.topic_id,
         "source_paper_id": value.source_paper_id,
         "source_paper_version_id": value.source_paper_version_id,
@@ -1405,6 +1662,7 @@ def _search_session_values(value: SearchSession) -> dict[str, object]:
 def _search_session_from_row(row: SearchSessionRow) -> SearchSession:
     return SearchSession(
         id=row.id,
+        pipeline_execution_id=row.pipeline_execution_id,
         topic_id=row.topic_id,
         source_paper_id=row.source_paper_id,
         source_paper_version_id=row.source_paper_version_id,
@@ -1531,6 +1789,12 @@ def _candidate_values(value: SearchCandidate) -> dict[str, object]:
         "rank": value.rank,
         "decision": value.decision.value,
         "decision_reason": value.decision_reason,
+        "comparison_target_decision": (
+            None
+            if value.comparison_target_decision is None
+            else value.comparison_target_decision.value
+        ),
+        "comparison_target_reason": value.comparison_target_reason,
         "provider": value.provider,
         "configured_model": value.configured_model,
         "model_version": value.model_version,
@@ -1573,6 +1837,12 @@ def _candidate_from_row(row: SearchCandidateRow) -> SearchCandidate:
         verification_status=VerificationStatus(row.verification_status),
         schema_version=row.schema_version,
         created_at=row.created_at,
+        comparison_target_decision=(
+            None
+            if row.comparison_target_decision is None
+            else ComparisonTargetDecision(row.comparison_target_decision)
+        ),
+        comparison_target_reason=row.comparison_target_reason,
     )
 
 

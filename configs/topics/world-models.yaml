@@ -1,0 +1,30 @@
+schema_version: 1
+topic_id: cb788698-8641-58c1-8a94-7c00c36cb554
+slug: world-models
+name: World Models
+description: >-
+  Research on learned predictive models of environments, latent dynamics,
+  model-based decision making, generative environment simulation, embodied world
+  models, and evaluation of learned representations for prediction and control.
+arxiv:
+  categories:
+    - cs.AI
+    - cs.LG
+    - cs.CV
+    - cs.RO
+    - stat.ML
+  include_terms:
+    - world model
+    - learned dynamics model
+    - latent dynamics
+    - predictive world model
+    - video world model
+    - generative environment model
+    - model-based reinforcement learning
+    - neural simulator
+  exclude_terms: []
+discovery:
+  overlap_hours: 48
+  initial_lookback_days: 7
+  max_results: 500
+representative_full_text_count: 100

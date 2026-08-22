@@ -91,8 +91,6 @@ def build_daily_report_plan(
         raise DomainInvariantError("daily report input contains nonterminal product stages")
     if not ready_items:
         raise DomainInvariantError("failed product run cannot assemble a report")
-    if len(graph_results) != len(ready_items):
-        raise DomainInvariantError("daily report graph results do not match completed items")
     status = RunStatus.PARTIAL if failed_items else RunStatus.COMPLETE
     failures = tuple(
         _report_failure(report_id, detail.item)
@@ -155,10 +153,8 @@ def build_daily_report_plan(
         )[:MAX_REPORT_COMPARISONS]
     )
     notable_comparisons = tuple(item for item in notable_comparisons if item.evidence_ids)
-    ordered_trends = tuple(sorted(trends, key=lambda item: item.window.days))
-    if tuple(item.window for item in ordered_trends) != tuple(TrendWindow):
-        raise DomainInvariantError("daily report requires exact 7/30/90-day snapshots")
-    primary_trend = ordered_trends[0]
+    ordered_trends = normalize_daily_trends(trends)
+    primary_trend = ordered_trends[0] if ordered_trends else None
     major_entities = tuple(
         ReportEntityHighlight(
             graph_entity_id=item.entity_id,
@@ -166,7 +162,7 @@ def build_daily_report_plan(
             label=item.label,
             distinct_paper_count=item.change.current_count,
         )
-        for item in primary_trend.entity_counts
+        for item in (() if primary_trend is None else primary_trend.entity_counts)
         if item.change.current_count > 0
     )[:MAX_REPORT_ENTITY_HIGHLIGHTS]
     lineages_by_root = {item.root_paper_id: item for item in lineages}
@@ -186,6 +182,16 @@ def build_daily_report_plan(
         lineages_by_root=lineages_by_root,
         omitted_entity_types=omitted_entity_types,
     )
+    missing_trend_windows = tuple(
+        window for window in TrendWindow if window not in {item.window for item in ordered_trends}
+    )
+    if missing_trend_windows:
+        missing_sections = (
+            *missing_sections,
+            "Trend snapshots are unavailable for: "
+            + ", ".join(f"{window.days}-day" for window in missing_trend_windows)
+            + ".",
+        )
     referenced_evidence_ids = tuple(
         dict.fromkeys(
             evidence_id
@@ -247,6 +253,16 @@ def build_daily_report_plan(
         request=request,
         trend_snapshot_ids=tuple(item.id for item in ordered_trends),
     )
+
+
+def normalize_daily_trends(trends: tuple[TrendSnapshot, ...]) -> tuple[TrendSnapshot, ...]:
+    by_window: dict[TrendWindow, TrendSnapshot] = {}
+    for snapshot in sorted(
+        trends,
+        key=lambda item: (item.window.days, item.generated_at, str(item.id)),
+    ):
+        by_window.setdefault(snapshot.window, snapshot)
+    return tuple(by_window[window] for window in TrendWindow if window in by_window)
 
 
 def _report_failure(report_id: UUID, item: RunItem) -> ReportFailure:

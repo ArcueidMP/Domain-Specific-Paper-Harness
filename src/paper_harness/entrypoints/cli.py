@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
+from time import monotonic
 from typing import Annotated
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from paper_harness.application.generate_periodic_report import (
     PeriodicReportInsufficientDataError,
 )
 from paper_harness.application.historical_backfill import HistoricalBackfillTimeoutError
+from paper_harness.application.pipeline_budget import DEFAULT_PIPELINE_TIMEOUT_SECONDS
 from paper_harness.application.publish_product import (
     ProductGraphError,
     ProductInputMissingError,
@@ -28,10 +30,15 @@ from paper_harness.application.reporting import ReportNarrativeModeConflictError
 from paper_harness.domain.analysis import AnalysisScope
 from paper_harness.domain.errors import DomainInvariantError, DuplicateDailyRunError
 from paper_harness.domain.historical import SearchLimits, SelectionDecision
-from paper_harness.domain.models import RunStatus
+from paper_harness.domain.models import PipelineExecutionMode, RunStatus
 from paper_harness.domain.reports import ReportNarrativeMode, ReportType
 from paper_harness.entrypoints.runtime import (
+    DailyPipelineDeadlineExceededError,
+    DailyPipelineFailure,
+    DailyPipelineRunFailedError,
+    DailyPipelineSelectionError,
     execute_arxiv_ingestion,
+    execute_daily_pipeline,
     execute_historical_backfill,
     execute_paper_comparison,
     execute_periodic_report,
@@ -48,10 +55,360 @@ from paper_harness.ports.scientific_embedding import ScientificEmbeddingPortErro
 
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_enable=False)
 
+_EXHAUSTED_DEPENDENCY_BY_ERROR_CODE = {
+    "ARXIV_UNAVAILABLE": "arxiv",
+    "LLM_UNAVAILABLE": "deepseek",
+    "PDF_PARSER_UNAVAILABLE": "grobid",
+    "SCHOLARLY_SEARCH_UNAVAILABLE": "semantic_scholar",
+    "SCIENTIFIC_EMBEDDING_UNAVAILABLE": "specter2",
+}
+
+
+def _exhausted_external_dependency(error: BaseException) -> str | None:
+    if not bool(getattr(error, "retryable", False)):
+        return None
+    for error_type, dependency in (
+        (ArxivPortError, "arxiv"),
+        (LLMPortError, "deepseek"),
+        (PdfParserPortError, "grobid"),
+        (ScholarlySearchError, "semantic_scholar"),
+        (ScientificEmbeddingPortError, "specter2"),
+    ):
+        if isinstance(error, error_type):
+            return dependency
+    return None
+
+
+def _emit_external_dependency_exhaustion_events(
+    *,
+    failures: tuple[DailyPipelineFailure, ...] = (),
+    error: BaseException | None = None,
+) -> None:
+    affected_item_counts: dict[tuple[str, str], int] = {}
+    affected_stages: dict[tuple[str, str], set[str]] = {}
+    for failure in failures:
+        dependency = (
+            _EXHAUSTED_DEPENDENCY_BY_ERROR_CODE.get(failure.error_code)
+            if failure.retryable
+            else None
+        )
+        if dependency is None:
+            continue
+        key = (dependency, failure.error_code)
+        affected_item_counts[key] = affected_item_counts.get(key, 0) + 1
+        affected_stages.setdefault(key, set()).add(failure.stage)
+
+    if error is not None:
+        dependency = _exhausted_external_dependency(error)
+        if dependency is not None:
+            error_code = str(getattr(error, "error_code", "DEPENDENCY_UNAVAILABLE"))
+            affected_item_counts.setdefault((dependency, error_code), 0)
+            affected_stages.setdefault((dependency, error_code), set())
+
+    for dependency, error_code in sorted(affected_item_counts):
+        payload: dict[str, object] = {
+            "level": "WARNING",
+            "event": "external_dependency_exhausted",
+            "dependency": dependency,
+            "error_code": error_code,
+            "retryable": True,
+        }
+        affected_item_count = affected_item_counts[(dependency, error_code)]
+        if affected_item_count:
+            payload["affected_item_count"] = affected_item_count
+            payload["stages"] = sorted(affected_stages[(dependency, error_code)])
+        typer.echo(json.dumps(payload, separators=(",", ":")), err=True)
+
 
 @app.callback()
 def _root() -> None:
     """Operate Domain-Specific Paper Harness outside the read-only API."""
+
+
+@app.command("run-pipeline")
+def run_pipeline(
+    topic_config: Annotated[
+        Path,
+        typer.Option(
+            "--topic-config",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            envvar="TOPIC_CONFIG_PATH",
+        ),
+    ] = Path("configs/topics/broad-llm-agents.yaml"),
+    logical_date: Annotated[
+        str | None,
+        typer.Option(
+            "--logical-date",
+            help="Logical run date in YYYY-MM-DD format.",
+            envvar="PIPELINE_LOGICAL_DATE",
+        ),
+    ] = None,
+    reprocess: Annotated[
+        bool,
+        typer.Option(
+            "--reprocess",
+            help="Run a fresh publishable revision for an already processed logical date.",
+            envvar="PIPELINE_REPROCESS",
+        ),
+    ] = False,
+    analysis_scope: Annotated[
+        str,
+        typer.Option(
+            "--analysis-scope",
+            help="Explicitly select full_text or abstract_only before execution.",
+            envvar="ANALYSIS_MODE",
+        ),
+    ] = "full_text",
+    narrative_mode: Annotated[
+        str,
+        typer.Option("--narrative-mode", help="Select deepseek or structured_only."),
+    ] = "deepseek",
+    max_selected_papers: Annotated[
+        int,
+        typer.Option("--max-selected-papers", min=1, max=200),
+    ] = 10,
+    backfill_max_queries: Annotated[
+        int,
+        typer.Option("--backfill-max-queries", min=1, max=40),
+    ] = 8,
+    backfill_per_query_limit: Annotated[
+        int,
+        typer.Option("--backfill-per-query-limit", min=1, max=500),
+    ] = 100,
+    backfill_timeout_seconds: Annotated[
+        float,
+        typer.Option("--backfill-timeout-seconds", min=1, max=7200),
+    ] = 1800,
+    max_search_steps: Annotated[
+        int,
+        typer.Option("--max-search-steps", min=1, max=100),
+    ] = 12,
+    max_search_queries: Annotated[
+        int,
+        typer.Option("--max-search-queries", min=1, max=40),
+    ] = 4,
+    max_search_queue_size: Annotated[
+        int,
+        typer.Option("--max-search-queue-size", min=1, max=2000),
+    ] = 100,
+    max_citation_depth: Annotated[
+        int,
+        typer.Option("--max-citation-depth", min=0, max=5),
+    ] = 2,
+    max_search_candidates: Annotated[
+        int,
+        typer.Option("--max-search-candidates", min=1, max=5000),
+    ] = 100,
+    max_selected_candidates: Annotated[
+        int,
+        typer.Option("--max-selected-candidates", min=1, max=100),
+    ] = 5,
+    search_operation_timeout_seconds: Annotated[
+        float,
+        typer.Option("--search-operation-timeout-seconds", min=1, max=600),
+    ] = 60,
+    search_overall_timeout_seconds: Annotated[
+        float,
+        typer.Option("--search-overall-timeout-seconds", min=1, max=3600),
+    ] = 300,
+    max_comparisons_per_paper: Annotated[
+        int,
+        typer.Option("--max-comparisons-per-paper", min=1, max=10),
+    ] = 3,
+    pipeline_timeout_seconds: Annotated[
+        int,
+        typer.Option("--pipeline-timeout-seconds", min=1, max=86_400),
+    ] = DEFAULT_PIPELINE_TIMEOUT_SECONDS,
+) -> None:
+    """Run ingestion through atomic product publication as one bounded Daily Job."""
+
+    command_started = monotonic()
+    try:
+        parsed_date = None if logical_date is None else date.fromisoformat(logical_date)
+        parsed_scope = AnalysisScope(analysis_scope.strip().upper())
+        parsed_narrative_mode = ReportNarrativeMode(narrative_mode.strip().upper())
+        execution_mode = (
+            PipelineExecutionMode.REPROCESS if reprocess else PipelineExecutionMode.NORMAL
+        )
+        limits = SearchLimits(
+            max_steps=max_search_steps,
+            max_queries=max_search_queries,
+            max_queue_size=max_search_queue_size,
+            max_citation_depth=max_citation_depth,
+            max_candidates=max_search_candidates,
+            max_selected_candidates=max_selected_candidates,
+            per_operation_timeout_seconds=search_operation_timeout_seconds,
+            overall_timeout_seconds=search_overall_timeout_seconds,
+        )
+        typer.echo(
+            json.dumps(
+                {
+                    "level": "INFO",
+                    "event": "daily_job_started",
+                    "logical_date": None if parsed_date is None else parsed_date.isoformat(),
+                    "execution_mode": execution_mode.value,
+                    "analysis_scope": parsed_scope.value,
+                    "narrative_mode": parsed_narrative_mode.value,
+                    "max_selected_papers": max_selected_papers,
+                    "max_search_steps": limits.max_steps,
+                    "max_search_candidates": limits.max_candidates,
+                },
+                separators=(",", ":"),
+            )
+        )
+        result = execute_daily_pipeline(
+            topic_config=topic_config,
+            logical_date=parsed_date,
+            analysis_scope=parsed_scope,
+            narrative_mode=parsed_narrative_mode,
+            max_selected_papers=max_selected_papers,
+            reprocess=reprocess,
+            backfill_max_queries=backfill_max_queries,
+            backfill_per_query_limit=backfill_per_query_limit,
+            backfill_timeout_seconds=backfill_timeout_seconds,
+            search_limits=limits,
+            max_comparisons_per_paper=max_comparisons_per_paper,
+            pipeline_timeout_seconds=pipeline_timeout_seconds,
+        )
+    except (
+        ValueError,
+        OSError,
+        DomainInvariantError,
+        DailyPipelineSelectionError,
+        DailyPipelineRunFailedError,
+        DailyPipelineDeadlineExceededError,
+        HistoricalBackfillTimeoutError,
+        RelatedWorkInputError,
+        ComparisonInputMissingError,
+        ProductInputMissingError,
+        ProductGraphError,
+        ProductTrendError,
+        ProductReportError,
+        ReportNarrativeModeConflictError,
+        ArxivPortError,
+        LLMPortError,
+        PdfParserPortError,
+        ScholarlySearchError,
+        ScientificEmbeddingPortError,
+        RepositoryError,
+        DuplicateDailyRunError,
+    ) as error:
+        _emit_external_dependency_exhaustion_events(
+            failures=(error.failures if isinstance(error, DailyPipelineRunFailedError) else ()),
+            error=error,
+        )
+        typer.echo(
+            json.dumps(
+                {
+                    "level": "ERROR",
+                    "event": "daily_job_failed",
+                    "error_code": getattr(error, "error_code", "DAILY_PIPELINE_FAILED"),
+                    "retryable": bool(getattr(error, "retryable", False)),
+                    "detail": str(error)[:1000],
+                    "duration_ms": max(0, round((monotonic() - command_started) * 1000)),
+                },
+                separators=(",", ":"),
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from error
+
+    _emit_external_dependency_exhaustion_events(failures=result.failures)
+    level = (
+        "ERROR"
+        if result.status is RunStatus.FAILED
+        else "WARNING"
+        if result.status is RunStatus.PARTIAL
+        else "INFO"
+    )
+    typer.echo(
+        json.dumps(
+            {
+                "pipeline_execution_id": (
+                    None
+                    if result.product_run.pipeline_execution_id is None
+                    else str(result.product_run.pipeline_execution_id)
+                ),
+                "publication_run_id": str(result.product_run.id),
+                "logical_date": result.product_run.logical_date.isoformat(),
+                "execution_mode": result.product_run.pipeline_execution_mode.value,
+                "status": result.status.value,
+                "publication_status": result.product_run.status.value,
+                "level": level,
+                "event": "daily_job_finished",
+                "ingestion_run_id": str(result.ingestion_run.id),
+                "analysis_run_id": str(result.analysis_run.id),
+                "historical_analysis_run_id": (
+                    None
+                    if result.historical_analysis_run is None
+                    else str(result.historical_analysis_run.id)
+                ),
+                "historical_backfill_id": str(result.historical_backfill.id),
+                "evaluated_count": result.evaluated_count,
+                "relevant_count": result.relevant_count,
+                "selected_count": result.selected_count,
+                "completed_count": result.product_run.completed_count,
+                "failed_count": result.product_run.failed_count,
+                "search_session_count": result.search_session_count,
+                "comparison_count": result.comparison_count,
+                "historical_materialized_count": result.historical_materialized_count,
+                "external_call_count_lower_bound": (
+                    0
+                    if result.accounting is None
+                    else result.accounting.external_call_count_lower_bound
+                ),
+                "arxiv_operation_count": (
+                    0 if result.accounting is None else result.accounting.arxiv_operation_count
+                ),
+                "semantic_scholar_operation_count": (
+                    0
+                    if result.accounting is None
+                    else result.accounting.semantic_scholar_operation_count
+                ),
+                "grobid_api_call_count": (
+                    0 if result.accounting is None else result.accounting.grobid_api_call_count
+                ),
+                "model_api_call_count": (
+                    0 if result.accounting is None else result.accounting.model_api_call_count
+                ),
+                "model_prompt_tokens": (
+                    0 if result.accounting is None else result.accounting.prompt_tokens
+                ),
+                "model_completion_tokens": (
+                    0 if result.accounting is None else result.accounting.completion_tokens
+                ),
+                "model_total_tokens": (
+                    0 if result.accounting is None else result.accounting.total_tokens
+                ),
+                "model_duration_ms": (
+                    0 if result.accounting is None else result.accounting.model_duration_ms
+                ),
+                "estimated_cost_usd": (
+                    None
+                    if result.accounting is None or result.accounting.estimated_cost_usd is None
+                    else str(result.accounting.estimated_cost_usd)
+                ),
+                "duration_ms": result.duration_ms,
+                "item_failures": [
+                    {
+                        "paper_id": str(failure.paper_id),
+                        "stage": failure.stage,
+                        "error_code": failure.error_code,
+                        "retryable": failure.retryable,
+                    }
+                    for failure in result.failures
+                ],
+            },
+            separators=(",", ":"),
+        ),
+        err=level in {"WARNING", "ERROR"},
+    )
+    if result.status is RunStatus.FAILED:
+        raise typer.Exit(code=1)
 
 
 @app.command("ingest-arxiv")

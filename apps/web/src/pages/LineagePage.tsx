@@ -1,19 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 
 import { lineageQuery } from "../api/queries";
 import { StateNotice } from "../components/StateNotice";
+import { TopicLink } from "../components/TopicLink";
+import { useTopicSlug } from "../lib/topic";
 
 function readable(value: string): string {
   return value.replaceAll("_", " ").toLocaleLowerCase();
 }
 
 export function LineagePage() {
+  const topicSlug = useTopicSlug();
   const { entityOrPaperId } = useParams();
   const [maxDepth, setMaxDepth] = useState(5);
   const lineage = useQuery({
-    ...lineageQuery(entityOrPaperId ?? "", maxDepth),
+    ...lineageQuery(topicSlug, entityOrPaperId ?? "", maxDepth),
     enabled: entityOrPaperId !== undefined,
   });
   const lineageData = lineage.data;
@@ -136,10 +139,12 @@ export function LineagePage() {
                           <span>Depth {node.depth}</span>
                           {node.paper_id === lineageData.root_paper_id ? <strong>Root paper</strong> : null}
                         </div>
-                        <h3><Link to={`/papers/${node.paper_id}`}>{node.title}</Link></h3>
-                        <Link className="section-link" to={`/lineages/${node.paper_id}`}>
+                        <h3>
+                          <TopicLink to={`/papers/${node.paper_id}`}>{node.title}</TopicLink>
+                        </h3>
+                        <TopicLink className="section-link" to={`/lineages/${node.paper_id}`}>
                           Re-root lineage here
-                        </Link>
+                        </TopicLink>
                       </article>
                     </li>
                   ))}
@@ -201,12 +206,12 @@ export function LineagePage() {
                         {edge.evidence.length > 0 ? (
                           <div className="lineage-evidence-links">
                             {edge.evidence.map((reference, index) => (
-                              <Link
+                              <TopicLink
                                 key={`${reference.evidence_id}:${reference.role}`}
                                 to={`/papers/${reference.paper_id}#evidence-${reference.evidence_id}`}
                               >
                                 Evidence {index + 1} ({readable(reference.role)})
-                              </Link>
+                              </TopicLink>
                             ))}
                           </div>
                         ) : null}

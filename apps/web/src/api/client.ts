@@ -320,6 +320,9 @@ export async function getLineage(entityOrPaperId: string, query: LineageQuery = 
 export type Lineage = Exclude<Awaited<ReturnType<typeof getLineage>>, null>;
 
 type RunsQuery = NonNullable<paths["/api/v1/runs"]["get"]["parameters"]["query"]>;
+type LatestRunQuery = NonNullable<
+  paths["/api/v1/runs/latest"]["get"]["parameters"]["query"]
+>;
 
 export async function getRuns(query: RunsQuery = {}) {
   const { data, error, response } = await api.GET("/api/v1/runs", {
@@ -354,8 +357,10 @@ export async function getRun(runId: string) {
 
 export type RunDetail = Exclude<Awaited<ReturnType<typeof getRun>>, null>;
 
-export async function getLatestRun() {
-  const { data, error, response } = await api.GET("/api/v1/runs/latest");
+export async function getLatestRun(query: LatestRunQuery = {}) {
+  const { data, error, response } = await api.GET("/api/v1/runs/latest", {
+    params: { query },
+  });
 
   if (response.status === 404) {
     return null;

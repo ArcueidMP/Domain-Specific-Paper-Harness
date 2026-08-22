@@ -1372,6 +1372,12 @@ export interface components {
             /** Version */
             version: number;
         };
+        /**
+         * PipelineExecutionMode
+         * @description Preselected execution policy for an operator command or full Daily pipeline.
+         * @enum {string}
+         */
+        PipelineExecutionMode: "STANDALONE" | "NORMAL" | "REPROCESS" | "SMOKE";
         /** ReadyResponse */
         ReadyResponse: {
             /**
@@ -1796,6 +1802,20 @@ export interface components {
             /** Normalized Count */
             normalized_count: number;
             operation: components["schemas"]["RunOperation"];
+            /** Pipeline Completed At */
+            pipeline_completed_at?: string | null;
+            /** Pipeline Deadline At */
+            pipeline_deadline_at?: string | null;
+            /** Pipeline Error Code */
+            pipeline_error_code?: string | null;
+            /** Pipeline Error Detail */
+            pipeline_error_detail?: string | null;
+            /** Pipeline Execution Id */
+            pipeline_execution_id: string | null;
+            pipeline_execution_mode: components["schemas"]["PipelineExecutionMode"];
+            /** Pipeline Selection Limit */
+            pipeline_selection_limit?: number | null;
+            pipeline_status?: components["schemas"]["RunStatus"] | null;
             report: components["schemas"]["ReportResponse"] | null;
             /** Schema Version */
             schema_version: number;
@@ -1883,7 +1903,7 @@ export interface components {
          * RunOperation
          * @enum {string}
          */
-        RunOperation: "ARXIV_INGESTION" | "STRUCTURED_ANALYSIS" | "PRODUCT_PUBLICATION";
+        RunOperation: "ARXIV_INGESTION" | "STRUCTURED_ANALYSIS" | "HISTORICAL_ANALYSIS" | "PRODUCT_PUBLICATION";
         /**
          * RunStatus
          * @enum {string}
@@ -1926,6 +1946,20 @@ export interface components {
             /** Normalized Count */
             normalized_count: number;
             operation: components["schemas"]["RunOperation"];
+            /** Pipeline Completed At */
+            pipeline_completed_at?: string | null;
+            /** Pipeline Deadline At */
+            pipeline_deadline_at?: string | null;
+            /** Pipeline Error Code */
+            pipeline_error_code?: string | null;
+            /** Pipeline Error Detail */
+            pipeline_error_detail?: string | null;
+            /** Pipeline Execution Id */
+            pipeline_execution_id: string | null;
+            pipeline_execution_mode: components["schemas"]["PipelineExecutionMode"];
+            /** Pipeline Selection Limit */
+            pipeline_selection_limit?: number | null;
+            pipeline_status?: components["schemas"]["RunStatus"] | null;
             /** Schema Version */
             schema_version: number;
             /** Selected Count */
@@ -2115,6 +2149,8 @@ export interface components {
             model_version: string | null;
             /** Objective */
             objective: string;
+            /** Pipeline Execution Id */
+            pipeline_execution_id: string | null;
             /** Prompt Version */
             prompt_version: string | null;
             /** Provider */

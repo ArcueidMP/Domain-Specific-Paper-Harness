@@ -143,7 +143,6 @@ class GrobidClient:
                 response.close()
             return httpx.Response(
                 status_code=200,
-                headers=response.headers,
                 content=content,
                 request=outbound,
             )
@@ -177,29 +176,6 @@ class GrobidClient:
         *,
         deadline: float,
     ) -> bytes:
-        content_encoding = response.headers.get("Content-Encoding")
-        if content_encoding is not None and content_encoding.strip().lower() not in {
-            "",
-            "identity",
-        }:
-            raise PdfParserOutputError("GROBID returned an unsupported encoded response")
-        content_length = response.headers.get("Content-Length")
-        if content_length is not None:
-            try:
-                declared_length = int(content_length)
-            except ValueError:
-                raise PdfParserOutputError("GROBID returned an invalid Content-Length") from None
-            if declared_length < 0:
-                raise PdfParserOutputError("GROBID returned an invalid Content-Length")
-            if declared_length > self._max_tei_bytes:
-                raise PdfParserOutputError(
-                    "GROBID declared a TEI document above the configured limit"
-                )
-        content_type = response.headers.get("Content-Type")
-        if content_type is not None:
-            media_type = content_type.split(";", maxsplit=1)[0].strip().lower()
-            if media_type not in {"application/xml", "text/xml"}:
-                raise PdfParserOutputError("GROBID returned a non-XML content type")
         content = bytearray()
         for chunk in response.iter_bytes():
             if self._monotonic() >= deadline:
@@ -244,25 +220,6 @@ class GrobidClient:
             raise PdfParserOutputError("GROBID returned no extractable TEI content")
         if status_code != 200:
             raise PdfParserRequestError(f"GROBID returned unsupported HTTP {status_code}")
-
-        content_length = response.headers.get("Content-Length")
-        if content_length is not None:
-            try:
-                declared_length = int(content_length)
-            except ValueError:
-                raise PdfParserOutputError("GROBID returned an invalid Content-Length") from None
-            if declared_length < 0:
-                raise PdfParserOutputError("GROBID returned an invalid Content-Length")
-            if declared_length > self._max_tei_bytes:
-                raise PdfParserOutputError(
-                    "GROBID declared a TEI document above the configured limit"
-                )
-
-        content_type = response.headers.get("Content-Type")
-        if content_type is not None:
-            media_type = content_type.split(";", maxsplit=1)[0].strip().lower()
-            if media_type not in {"application/xml", "text/xml"}:
-                raise PdfParserOutputError("GROBID returned a non-XML content type")
 
         content = response.content
         if len(content) > self._max_tei_bytes:

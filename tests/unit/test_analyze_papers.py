@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 import pytest
 from tests.fakes import FakeArxiv, FakeRepository
 
-from paper_harness.application.analyze_papers import AnalyzePapers
+from paper_harness.application.analyze_papers import (
+    AnalysisResumeError,
+    AnalysisReuseContract,
+    AnalyzePapers,
+    EvidenceGroundingError,
+    build_analysis_bundle,
+)
 from paper_harness.application.read_models import AnalysisTarget
 from paper_harness.domain.analysis import (
+    AnalysisPassage,
     AnalysisRequest,
     AnalysisScope,
     ClaimType,
@@ -43,6 +50,9 @@ from paper_harness.domain.models import (
     Paper,
     PaperStage,
     PaperVersion,
+    PipelineExecutionMode,
+    RunItemStatus,
+    RunOperation,
     RunStatus,
     TopicConfig,
 )
@@ -60,6 +70,8 @@ from paper_harness.ports.repository import (
     RepositoryIntegrityError,
     RepositoryUnavailableError,
 )
+
+PIPELINE_EXECUTION_ID = UUID("a5f52f0e-2d5d-5be6-94aa-a6c48087724d")
 
 
 class FakeParser:
@@ -107,10 +119,12 @@ class FakeLLM:
         failing_paper_id: UUID | None = None,
         authentication_failure: bool = False,
         ungrounded: bool = False,
+        ungrounded_paper_id: UUID | None = None,
     ) -> None:
         self.failing_paper_id = failing_paper_id
         self.authentication_failure = authentication_failure
         self.ungrounded = ungrounded
+        self.ungrounded_paper_id = ungrounded_paper_id
         self.calls: list[AnalysisRequest] = []
 
     def analyze(self, request: AnalysisRequest) -> GeneratedAnalysis:
@@ -119,18 +133,17 @@ class FakeLLM:
             raise LLMAuthenticationError("DeepSeek authentication failed with HTTP 401")
         if request.paper_id == self.failing_paper_id:
             raise LLMOutputError("DeepSeek JSON output failed schema validation")
-        excerpt = "not present in the source" if self.ungrounded else request.passages[0].text[:30]
+        passage_id = (
+            "missing-passage"
+            if self.ungrounded or request.paper_id == self.ungrounded_paper_id
+            else request.passages[0].id
+        )
         return GeneratedAnalysis(
             provider="deepseek",
             configured_model="deepseek-v4-flash",
             model_version="DeepSeek-V4-Flash-2026-04-24",
             prompt_version="m2-analysis-v1",
             generated_at=datetime(2026, 1, 10, 5, 2, tzinfo=UTC),
-            summary="The paper evaluates agent reliability.",
-            research_problem="Tool-using agents require reliable operation.",
-            method_summary="The authors evaluate a tool-using agent.",
-            key_contributions=("A reliability evaluation.",),
-            limitations=("Evaluation scope is bounded.",),
             claims=(
                 GeneratedClaim(
                     key="claim_1",
@@ -142,8 +155,7 @@ class FakeLLM:
                 GeneratedEvidence(
                     key="evidence_1",
                     claim_keys=("claim_1",),
-                    passage_id=request.passages[0].id,
-                    excerpt=excerpt,
+                    passage_ids=(passage_id,),
                     evidence_type=EvidenceType.SUPPORTS,
                 ),
             ),
@@ -183,6 +195,42 @@ class FakeLLM:
     def generate_report(self, request: ReportNarrativeRequest) -> GeneratedReportNarrative:
         del request
         raise AssertionError("report generation is outside the M2 analysis test")
+
+
+def _grounding_request(*passages: AnalysisPassage) -> AnalysisRequest:
+    return AnalysisRequest(
+        paper_id=UUID("9a75db1f-afc6-45bb-a506-93c802ebd0ae"),
+        paper_version_id=UUID("1d939b7e-853d-49b0-a5f0-e977c167cbf1"),
+        canonical_arxiv_id="2601.01234",
+        arxiv_version=1,
+        title="Grounded Agent Evidence",
+        scope=AnalysisScope.ABSTRACT_ONLY,
+        passages=passages,
+    )
+
+
+def _generated_analysis(
+    *,
+    claims: tuple[GeneratedClaim, ...],
+    evidence: tuple[GeneratedEvidence, ...],
+) -> GeneratedAnalysis:
+    return GeneratedAnalysis(
+        provider="deepseek",
+        configured_model="deepseek-v4-flash",
+        model_version="DeepSeek-V4-Flash-2026-04-24",
+        prompt_version="m2-analysis-v1",
+        generated_at=datetime(2026, 1, 10, 5, 2, tzinfo=UTC),
+        claims=claims,
+        evidence=evidence,
+        usage=ModelUsage(
+            prompt_tokens=100,
+            completion_tokens=20,
+            total_tokens=120,
+            call_count=1,
+            duration_ms=500,
+            estimated_cost_usd=None,
+        ),
+    )
 
 
 class FailingFailureWriteRepository(FakeRepository):
@@ -280,6 +328,22 @@ def _target(record: ArxivPaperRecord) -> AnalysisTarget:
     return AnalysisTarget(paper=paper, version=version)
 
 
+def _versioned_targets(
+    record: ArxivPaperRecord,
+) -> tuple[AnalysisTarget, AnalysisTarget]:
+    first = _target(record)
+    revised_record = replace(
+        record,
+        version=2,
+        title=f"{record.title}, Revised",
+        updated_at=record.updated_at + timedelta(days=1),
+        pdf_url=f"https://arxiv.org/pdf/{record.canonical_arxiv_id}v2",
+        source_url=f"https://arxiv.org/abs/{record.canonical_arxiv_id}v2",
+    )
+    current = _target(revised_record)
+    return replace(first, paper=current.paper), current
+
+
 def test_abstract_only_scope_is_explicit_and_never_calls_pdf_or_parser(
     topic_config: TopicConfig, arxiv_record_v1: ArxivPaperRecord
 ) -> None:
@@ -310,6 +374,402 @@ def test_abstract_only_scope_is_explicit_and_never_calls_pdf_or_parser(
     assert repository.analysis_detail.analysis.parsed_paper_id is None
     assert repository.analysis_detail.parser_name is None
     assert repository.analysis_detail.parser_version is None
+
+
+def test_exact_analysis_reuse_skips_a_new_model_call_only_for_matching_provenance(
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    repository = FakeRepository()
+    target = _target(arxiv_record_v1)
+    repository.analysis_targets = (target,)
+    AnalyzePapers(
+        arxiv=FakeArxiv(),
+        parser=None,
+        llm=FakeLLM(),
+        repository=repository,
+        clock=lambda: datetime(2026, 1, 9, 5, tzinfo=UTC),
+    ).execute(
+        topic_config,
+        paper_version_ids=(target.version.id,),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        logical_date=date(2026, 1, 9),
+    )
+    repository.run = None
+    repository.items = ()
+    replay_llm = FakeLLM()
+
+    run = AnalyzePapers(
+        arxiv=FakeArxiv(),
+        parser=None,
+        llm=replay_llm,
+        repository=repository,
+        clock=lambda: datetime(2026, 1, 10, 5, tzinfo=UTC),
+    ).execute(
+        topic_config,
+        paper_version_ids=(target.version.id,),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        logical_date=date(2026, 1, 10),
+        reuse_contract=AnalysisReuseContract(
+            provider="deepseek",
+            configured_model="deepseek-v4-flash",
+            prompt_version="m2-analysis-v1",
+        ),
+    )
+
+    assert run.status is RunStatus.COMPLETE
+    assert replay_llm.calls == []
+
+
+@pytest.mark.parametrize(
+    ("configured_model", "prompt_version"),
+    [
+        ("deepseek-v4-flash-next", "m2-analysis-v1"),
+        ("deepseek-v4-flash", "m2-analysis-v2"),
+    ],
+)
+def test_analysis_reuse_mismatch_forces_a_fresh_model_call(
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+    configured_model: str,
+    prompt_version: str,
+) -> None:
+    repository = FakeRepository()
+    target = _target(arxiv_record_v1)
+    repository.analysis_targets = (target,)
+    AnalyzePapers(
+        arxiv=FakeArxiv(),
+        parser=None,
+        llm=FakeLLM(),
+        repository=repository,
+        clock=lambda: datetime(2026, 1, 9, 5, tzinfo=UTC),
+    ).execute(
+        topic_config,
+        paper_version_ids=(target.version.id,),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        logical_date=date(2026, 1, 9),
+    )
+    repository.run = None
+    repository.items = ()
+    fresh_llm = FakeLLM()
+
+    AnalyzePapers(
+        arxiv=FakeArxiv(),
+        parser=None,
+        llm=fresh_llm,
+        repository=repository,
+        clock=lambda: datetime(2026, 1, 10, 5, tzinfo=UTC),
+    ).execute(
+        topic_config,
+        paper_version_ids=(target.version.id,),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        logical_date=date(2026, 1, 10),
+        reuse_contract=AnalysisReuseContract(
+            provider="deepseek",
+            configured_model=configured_model,
+            prompt_version=prompt_version,
+        ),
+    )
+
+    assert len(fresh_llm.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("existing_status", "retry_item_status"),
+    [
+        (RunStatus.RUNNING, RunItemStatus.IN_PROGRESS),
+        (RunStatus.FAILED, RunItemStatus.FAILED),
+    ],
+)
+def test_analysis_resume_preserves_completed_versions_and_retries_nonterminal_versions(
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+    existing_status: RunStatus,
+    retry_item_status: RunItemStatus,
+) -> None:
+    second_record = replace(
+        arxiv_record_v1,
+        canonical_arxiv_id="2601.05678",
+        title="Another LLM Agent",
+        pdf_url="https://arxiv.org/pdf/2601.05678v1",
+        source_url="https://arxiv.org/abs/2601.05678v1",
+    )
+    targets = (_target(arxiv_record_v1), _target(second_record))
+    started_at = datetime(2026, 1, 10, 5, tzinfo=UTC)
+    retry_at = started_at + timedelta(days=2)
+    repository = FakeRepository()
+    repository.analysis_targets = targets
+    original = repository.start_analysis_run(
+        topic_id=topic_config.id,
+        logical_date=started_at.date(),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        started_at=started_at,
+        targets=targets,
+        pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+        pipeline_selection_limit=2,
+        pipeline_execution_id=PIPELINE_EXECUTION_ID,
+    )
+    completed_item = replace(
+        repository.items[0],
+        stage=PaperStage.EVIDENCE_EXTRACTED,
+        status=RunItemStatus.COMPLETED,
+    )
+    retry_item = repository.items[1]
+    if retry_item_status is RunItemStatus.FAILED:
+        retry_item = replace(
+            retry_item,
+            status=RunItemStatus.FAILED,
+            failed_stage=PaperStage.ANALYZED,
+            error_code="LLM_OUTPUT_INVALID",
+            retryable=False,
+            error_detail="schema validation failed",
+        )
+    repository.items = (completed_item, retry_item)
+    repository.run = replace(
+        original,
+        status=existing_status,
+        completed_at=(
+            started_at + timedelta(minutes=1) if existing_status is RunStatus.FAILED else None
+        ),
+        completed_count=1 if existing_status is RunStatus.FAILED else 0,
+        failed_count=1 if existing_status is RunStatus.FAILED else 0,
+        error_code="LLM_AUTHENTICATION_FAILED" if existing_status is RunStatus.FAILED else None,
+        error_detail="authentication failed" if existing_status is RunStatus.FAILED else None,
+    )
+    llm = FakeLLM()
+
+    resumed = AnalyzePapers(
+        arxiv=FakeArxiv(),
+        parser=None,
+        llm=llm,
+        repository=repository,
+        clock=lambda: retry_at,
+    ).execute(
+        topic_config,
+        paper_version_ids=tuple(target.version.id for target in targets),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        logical_date=started_at.date(),
+        pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+        pipeline_selection_limit=2,
+        pipeline_execution_id=PIPELINE_EXECUTION_ID,
+        resume_existing=True,
+    )
+
+    assert resumed.id == original.id
+    assert resumed.status is RunStatus.COMPLETE
+    assert resumed.completed_count == 2
+    assert [request.paper_version_id for request in llm.calls] == [targets[1].version.id]
+    assert all(item.status is RunItemStatus.COMPLETED for item in repository.items)
+
+
+@pytest.mark.parametrize("existing_status", [RunStatus.COMPLETE, RunStatus.PARTIAL])
+def test_analysis_resume_reuses_terminal_complete_or_partial_report_owner(
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+    existing_status: RunStatus,
+) -> None:
+    second_record = replace(
+        arxiv_record_v1,
+        canonical_arxiv_id="2601.05678",
+        title="Another LLM Agent",
+        pdf_url="https://arxiv.org/pdf/2601.05678v1",
+        source_url="https://arxiv.org/abs/2601.05678v1",
+    )
+    targets = (_target(arxiv_record_v1), _target(second_record))
+    now = datetime(2026, 1, 10, 5, tzinfo=UTC)
+    repository = FakeRepository()
+    repository.analysis_targets = targets
+    original = repository.start_analysis_run(
+        topic_id=topic_config.id,
+        logical_date=now.date(),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        started_at=now,
+        targets=targets,
+        pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+        pipeline_selection_limit=2,
+        pipeline_execution_id=PIPELINE_EXECUTION_ID,
+    )
+    completed = replace(
+        repository.items[0],
+        stage=PaperStage.EVIDENCE_EXTRACTED,
+        status=RunItemStatus.COMPLETED,
+    )
+    second = replace(
+        repository.items[1],
+        stage=PaperStage.EVIDENCE_EXTRACTED,
+        status=RunItemStatus.COMPLETED,
+    )
+    if existing_status is RunStatus.PARTIAL:
+        second = replace(
+            repository.items[1],
+            status=RunItemStatus.FAILED,
+            failed_stage=PaperStage.ANALYZED,
+            error_code="LLM_OUTPUT_INVALID",
+            retryable=False,
+            error_detail="schema validation failed",
+        )
+    repository.items = (completed, second)
+    repository.run = replace(
+        original,
+        status=existing_status,
+        completed_at=now + timedelta(minutes=1),
+        completed_count=2 if existing_status is RunStatus.COMPLETE else 1,
+        failed_count=0 if existing_status is RunStatus.COMPLETE else 1,
+    )
+    llm = FakeLLM()
+
+    reused = AnalyzePapers(
+        arxiv=FakeArxiv(),
+        parser=None,
+        llm=llm,
+        repository=repository,
+        clock=lambda: now + timedelta(hours=1),
+    ).execute(
+        topic_config,
+        paper_version_ids=tuple(target.version.id for target in targets),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        logical_date=now.date(),
+        pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+        pipeline_selection_limit=2,
+        pipeline_execution_id=PIPELINE_EXECUTION_ID,
+        resume_existing=True,
+    )
+
+    assert reused == repository.run
+    assert reused.id == original.id
+    assert reused.status is existing_status
+    assert llm.calls == []
+    if existing_status is RunStatus.PARTIAL:
+        assert repository.items[1].status is RunItemStatus.FAILED
+        assert repository.items[1].error_code == "LLM_OUTPUT_INVALID"
+
+
+@pytest.mark.parametrize(
+    ("analysis_scope", "pipeline_execution_mode"),
+    [
+        (AnalysisScope.FULL_TEXT, PipelineExecutionMode.NORMAL),
+        (AnalysisScope.ABSTRACT_ONLY, PipelineExecutionMode.SMOKE),
+    ],
+)
+def test_analysis_resume_rejects_scope_or_mode_mismatch(
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+    analysis_scope: AnalysisScope,
+    pipeline_execution_mode: PipelineExecutionMode,
+) -> None:
+    target = _target(arxiv_record_v1)
+    now = datetime(2026, 1, 10, 5, tzinfo=UTC)
+    repository = FakeRepository()
+    repository.analysis_targets = (target,)
+    repository.start_analysis_run(
+        topic_id=topic_config.id,
+        logical_date=now.date(),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        started_at=now,
+        targets=(target,),
+        pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+        pipeline_selection_limit=2,
+        pipeline_execution_id=PIPELINE_EXECUTION_ID,
+    )
+
+    with pytest.raises(AnalysisResumeError, match="provenance"):
+        AnalyzePapers(
+            arxiv=FakeArxiv(),
+            parser=FakeParser(),
+            llm=FakeLLM(),
+            repository=repository,
+            clock=lambda: now + timedelta(hours=1),
+        ).execute(
+            topic_config,
+            paper_version_ids=(target.version.id,),
+            analysis_scope=analysis_scope,
+            logical_date=now.date(),
+            pipeline_execution_mode=pipeline_execution_mode,
+            pipeline_selection_limit=2,
+            pipeline_execution_id=PIPELINE_EXECUTION_ID,
+            resume_existing=True,
+        )
+
+
+def test_analysis_resume_rebuilds_current_unpublished_version_set(
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    non_current, current = _versioned_targets(arxiv_record_v1)
+    now = datetime(2026, 1, 10, 5, tzinfo=UTC)
+    repository = FakeRepository()
+    repository.analysis_targets = (non_current, current)
+    repository.start_analysis_run(
+        topic_id=topic_config.id,
+        logical_date=now.date(),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        started_at=now,
+        targets=(non_current,),
+        pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+        pipeline_selection_limit=1,
+        pipeline_execution_id=PIPELINE_EXECUTION_ID,
+    )
+
+    llm = FakeLLM()
+    resumed = AnalyzePapers(
+        arxiv=FakeArxiv(),
+        parser=None,
+        llm=llm,
+        repository=repository,
+        clock=lambda: now + timedelta(hours=1),
+    ).execute(
+        topic_config,
+        paper_version_ids=(current.version.id,),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        logical_date=now.date(),
+        pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+        pipeline_selection_limit=2,
+        pipeline_execution_id=PIPELINE_EXECUTION_ID,
+        resume_existing=True,
+    )
+
+    assert resumed.status is RunStatus.COMPLETE
+    assert resumed.pipeline_selection_limit == 2
+    assert [request.paper_version_id for request in llm.calls] == [current.version.id]
+
+
+def test_exact_non_current_paper_version_is_honored_end_to_end(
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    non_current, current = _versioned_targets(arxiv_record_v1)
+    repository = FakeRepository()
+    repository.analysis_targets = (non_current, current)
+    arxiv = FakeArxiv()
+    llm = FakeLLM()
+
+    run = AnalyzePapers(
+        arxiv=arxiv,
+        parser=FakeParser(),
+        llm=llm,
+        repository=repository,
+        clock=lambda: datetime(2026, 1, 10, 5, tzinfo=UTC),
+    ).execute(
+        topic_config,
+        paper_version_ids=(non_current.version.id,),
+        analysis_scope=AnalysisScope.FULL_TEXT,
+        logical_date=date(2026, 1, 10),
+        run_operation=RunOperation.HISTORICAL_ANALYSIS,
+    )
+
+    assert run.operation is RunOperation.HISTORICAL_ANALYSIS
+    assert non_current.paper.current_version == current.version.version == 2
+    assert arxiv.pdf_calls == [
+        (
+            non_current.version.canonical_arxiv_id,
+            non_current.version.version,
+            non_current.version.pdf_url,
+        )
+    ]
+    assert llm.calls[0].paper_version_id == non_current.version.id
+    assert llm.calls[0].arxiv_version == 1
+    assert repository.analysis_detail is not None
+    assert repository.analysis_detail.analysis.paper_version_id == non_current.version.id
 
 
 def test_full_text_retry_uses_the_canonical_stored_parse_and_exposes_parser_provenance(
@@ -489,6 +949,171 @@ def test_failed_run_transition_is_raised_from_the_item_failure_write_error(
     assert repository.run.status is RunStatus.RUNNING
 
 
+def test_valid_passage_id_copies_unicode_whitespace_and_newlines_from_source() -> None:
+    source = "  Agent Ω uses tools.\nThe result is stable across runs.  "
+    request = _grounding_request(AnalysisPassage(id="abstract", section="Abstract", text=source))
+    generated = _generated_analysis(
+        claims=(
+            GeneratedClaim(
+                key="result",
+                claim_type=ClaimType.RESULT,
+                text="The result is stable.",
+            ),
+        ),
+        evidence=(
+            GeneratedEvidence(
+                key="result_evidence",
+                claim_keys=("result",),
+                passage_ids=("abstract",),
+                evidence_type=EvidenceType.SUPPORTS,
+                rationale="This rationale need not match any source wording.",
+            ),
+        ),
+    )
+
+    bundle = build_analysis_bundle(request, generated, created_at=generated.generated_at)
+
+    assert bundle.evidence[0].excerpt == source
+    assert bundle.evidence[0].passage_id == "abstract"
+    assert bundle.analysis.summary == "The result is stable."
+    assert "rationale" not in bundle.evidence[0].excerpt
+
+
+def test_multiple_passage_ids_expand_to_stably_ordered_source_evidence() -> None:
+    first = AnalysisPassage(id="method", section="Method", text="The agent plans locally.")
+    second = AnalysisPassage(id="result", section="Results", text="It succeeds on 12 tasks.")
+    request = _grounding_request(first, second)
+    generated = _generated_analysis(
+        claims=(
+            GeneratedClaim(
+                key="method_claim",
+                claim_type=ClaimType.METHOD,
+                text="The agent uses local planning.",
+            ),
+        ),
+        evidence=(
+            GeneratedEvidence(
+                key="method_evidence",
+                claim_keys=("method_claim",),
+                passage_ids=(second.id, first.id),
+                evidence_type=EvidenceType.SUPPORTS,
+            ),
+        ),
+    )
+
+    first_bundle = build_analysis_bundle(request, generated, created_at=generated.generated_at)
+    second_bundle = build_analysis_bundle(request, generated, created_at=generated.generated_at)
+
+    assert tuple(item.passage_id for item in first_bundle.evidence) == (second.id, first.id)
+    assert tuple(item.excerpt for item in first_bundle.evidence) == (second.text, first.text)
+    assert first_bundle == second_bundle
+    assert all(
+        item.supported_claim_ids == (first_bundle.claims[0].id,) for item in first_bundle.evidence
+    )
+
+
+def test_reprocess_revision_gets_fresh_analysis_identity_without_changing_legacy_identity() -> None:
+    passage = AnalysisPassage(id="abstract", section="Abstract", text="A grounded method.")
+    request = _grounding_request(passage)
+    generated = _generated_analysis(
+        claims=(
+            GeneratedClaim(
+                key="method_claim",
+                claim_type=ClaimType.METHOD,
+                text="The paper presents a grounded method.",
+            ),
+        ),
+        evidence=(
+            GeneratedEvidence(
+                key="method_evidence",
+                claim_keys=("method_claim",),
+                passage_ids=(passage.id,),
+                evidence_type=EvidenceType.SUPPORTS,
+            ),
+        ),
+    )
+    revision_id = UUID("3b301c07-9aa3-4a3d-b13a-e7b3ba4db146")
+
+    legacy = build_analysis_bundle(request, generated, created_at=generated.generated_at)
+    revised = build_analysis_bundle(
+        request,
+        generated,
+        created_at=generated.generated_at,
+        revision_id=revision_id,
+    )
+
+    assert revised.analysis.revision_id == revision_id
+    assert revised.analysis.id != legacy.analysis.id
+    assert legacy.analysis.revision_id is None
+
+
+def test_missing_passage_invalidates_its_whole_evidence_and_unsupported_claim() -> None:
+    passage = AnalysisPassage(id="abstract", section="Abstract", text="A grounded method.")
+    request = _grounding_request(passage)
+    unsupported_text = "This unsupported result must never reach a report."
+    generated = _generated_analysis(
+        claims=(
+            GeneratedClaim(
+                key="method",
+                claim_type=ClaimType.METHOD,
+                text="The paper presents a grounded method.",
+            ),
+            GeneratedClaim(
+                key="unsupported",
+                claim_type=ClaimType.RESULT,
+                text=unsupported_text,
+            ),
+        ),
+        evidence=(
+            GeneratedEvidence(
+                key="valid",
+                claim_keys=("method",),
+                passage_ids=(passage.id,),
+                evidence_type=EvidenceType.SUPPORTS,
+            ),
+            GeneratedEvidence(
+                key="mixed_invalid",
+                claim_keys=("unsupported",),
+                passage_ids=(passage.id, "missing"),
+                evidence_type=EvidenceType.SUPPORTS,
+            ),
+        ),
+    )
+
+    bundle = build_analysis_bundle(request, generated, created_at=generated.generated_at)
+
+    assert tuple(claim.key for claim in bundle.claims) == ("method",)
+    assert tuple(item.passage_id for item in bundle.evidence) == (passage.id,)
+    assert unsupported_text not in bundle.analysis.summary
+    assert unsupported_text not in bundle.analysis.method_summary
+    assert unsupported_text not in bundle.analysis.key_contributions
+
+
+def test_no_grounded_major_claim_is_an_explicit_grounding_failure() -> None:
+    passage = AnalysisPassage(id="abstract", section="Abstract", text="A source passage.")
+    request = _grounding_request(passage)
+    generated = _generated_analysis(
+        claims=(
+            GeneratedClaim(
+                key="limitation",
+                claim_type=ClaimType.LIMITATION,
+                text="Only one task is evaluated.",
+            ),
+        ),
+        evidence=(
+            GeneratedEvidence(
+                key="limitation_evidence",
+                claim_keys=("limitation",),
+                passage_ids=(passage.id,),
+                evidence_type=EvidenceType.QUALIFIES,
+            ),
+        ),
+    )
+
+    with pytest.raises(EvidenceGroundingError, match="no claim grounded"):
+        build_analysis_bundle(request, generated, created_at=generated.generated_at)
+
+
 def test_ungrounded_model_evidence_is_an_explicit_item_failure(
     topic_config: TopicConfig, arxiv_record_v1: ArxivPaperRecord
 ) -> None:
@@ -509,6 +1134,41 @@ def test_ungrounded_model_evidence_is_an_explicit_item_failure(
     assert run.status is RunStatus.FAILED
     assert repository.items[0].failed_stage is PaperStage.EVIDENCE_EXTRACTED
     assert repository.items[0].error_code == "EVIDENCE_GROUNDING_INVALID"
+
+
+def test_grounding_failure_is_item_level_and_another_paper_completes(
+    topic_config: TopicConfig, arxiv_record_v1: ArxivPaperRecord
+) -> None:
+    second_record = replace(
+        arxiv_record_v1,
+        canonical_arxiv_id="2601.05678",
+        title="Another Grounded LLM Agent",
+        pdf_url="https://arxiv.org/pdf/2601.05678v1",
+        source_url="https://arxiv.org/abs/2601.05678v1",
+    )
+    targets = (_target(arxiv_record_v1), _target(second_record))
+    repository = FakeRepository()
+    repository.analysis_targets = targets
+    llm = FakeLLM(ungrounded_paper_id=targets[0].paper.id)
+
+    run = AnalyzePapers(
+        arxiv=FakeArxiv(),
+        parser=None,
+        llm=llm,
+        repository=repository,
+        clock=lambda: datetime(2026, 1, 10, 5, tzinfo=UTC),
+    ).execute(
+        topic_config,
+        paper_ids=tuple(target.paper.id for target in targets),
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        logical_date=date(2026, 1, 10),
+    )
+
+    assert run.status is RunStatus.PARTIAL
+    assert (run.completed_count, run.failed_count) == (1, 1)
+    assert len(llm.calls) == 2
+    assert repository.items[0].error_code == "EVIDENCE_GROUNDING_INVALID"
+    assert repository.items[1].status is RunItemStatus.COMPLETED
 
 
 def test_authentication_failure_aborts_the_run_immediately(
@@ -662,8 +1322,7 @@ def test_duplicate_model_claim_references_are_rejected_before_persistence() -> N
         GeneratedEvidence(
             key="evidence_1",
             claim_keys=("claim_1", "claim_1"),
-            passage_id="abstract",
-            excerpt="grounded excerpt",
+            passage_ids=("abstract",),
             evidence_type=EvidenceType.SUPPORTS,
         )
 

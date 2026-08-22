@@ -6,10 +6,9 @@ import sys
 
 from paper_harness.entrypoints.cli import app
 
-
-def main() -> None:
-    arguments = sys.argv[1:]
-    explicit_operations = {
+_EXPLICIT_OPERATIONS = frozenset(
+    {
+        "run-pipeline",
         "ingest-arxiv",
         "analyze-papers",
         "historical-backfill",
@@ -18,10 +17,15 @@ def main() -> None:
         "publish-product",
         "generate-periodic-report",
     }
-    if arguments and arguments[0] in explicit_operations:
+)
+
+
+def main() -> None:
+    arguments = sys.argv[1:]
+    if arguments and arguments[0] in _EXPLICIT_OPERATIONS:
         app(prog_name="paper-harness-daily", args=arguments)
     else:
-        app(prog_name="paper-harness-daily", args=["ingest-arxiv", *arguments])
+        app(prog_name="paper-harness-daily", args=["run-pipeline", *arguments])
 
 
 if __name__ == "__main__":

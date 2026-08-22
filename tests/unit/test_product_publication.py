@@ -9,6 +9,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 import pytest
 from tests.fakes import FakeRepository
 
+from paper_harness.application.analyze_papers import build_analysis_bundle
 from paper_harness.application.generate_periodic_report import (
     GeneratePeriodicReport,
     PeriodicReportInsufficientDataError,
@@ -17,11 +18,13 @@ from paper_harness.application.product_models import (
     ComparisonGraphInput,
     GraphCorpusInput,
     PeriodicReportInput,
+    ProductFailureInput,
     ProductPaperInput,
     ProductPublicationInput,
 )
 from paper_harness.application.publish_product import PublishProduct
 from paper_harness.application.read_models import ReportDetail, RunDetail, RunItemDetail
+from paper_harness.application.report_inputs import normalize_daily_trends
 from paper_harness.application.reporting import (
     ReportNarrativeModeConflictError,
     assemble_product_report,
@@ -29,10 +32,15 @@ from paper_harness.application.reporting import (
 from paper_harness.domain.analysis import (
     AnalysisBundle,
     AnalysisClaim,
+    AnalysisPassage,
+    AnalysisRequest,
     AnalysisScope,
     ClaimType,
     Evidence,
     EvidenceType,
+    GeneratedAnalysis,
+    GeneratedClaim,
+    GeneratedEvidence,
     ModelUsage,
     PaperAnalysis,
     VerificationStatus,
@@ -55,6 +63,7 @@ from paper_harness.domain.knowledge import (
     LineagePaper,
     TrendPaperRecord,
     TrendWindow,
+    aggregate_trend_snapshots,
     extract_analysis_graph,
     extract_comparison_graph,
     merge_knowledge_graph_bundles,
@@ -106,6 +115,27 @@ def _topic() -> TopicConfig:
         initial_lookback_days=2,
         max_results=100,
         representative_full_text_count=10,
+    )
+
+
+def test_daily_trend_input_normalizes_order_duplicates_and_missing_windows() -> None:
+    snapshots = aggregate_trend_snapshots(
+        TOPIC_ID,
+        as_of_date=AS_OF,
+        papers=(),
+        entities=(),
+        mentions=(),
+        edges=(),
+        mention_activity_dates={},
+        edge_activity_dates={},
+        generated_at=NOW,
+    )
+
+    normalized = normalize_daily_trends((snapshots[-1], snapshots[0], snapshots[0]))
+
+    assert tuple(item.window for item in normalized) == (
+        TrendWindow.SEVEN_DAYS,
+        TrendWindow.NINETY_DAYS,
     )
 
 
@@ -606,6 +636,133 @@ def test_missing_comparison_produces_partial_report_with_visible_item_failure() 
     assert "missing from product publication" in report.missing_sections[0]
 
 
+def test_historical_analysis_failure_is_frozen_into_partial_publication() -> None:
+    completed = _product_paper(1)
+    historical = _product_paper(2)
+    repository = _repository((completed,))
+    failure = ProductFailureInput(
+        paper_id=historical.paper_id,
+        paper_version_id=historical.paper_version_id,
+        stage=PaperStage.PARSED,
+        failed_stage=PaperStage.ANALYZED,
+        error_code="ANALYSIS_MODEL_OUTPUT_INVALID",
+        retryable=False,
+        error_detail="Historical analysis output failed schema validation.",
+    )
+    publisher = PublishProduct(repository=repository, llm=None, clock=lambda: NOW)
+
+    run = publisher.execute(
+        _topic(),
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=AS_OF,
+        upstream_failures=(failure,),
+    )
+
+    assert run.status is RunStatus.PARTIAL
+    assert (run.selected_count, run.completed_count, run.failed_count) == (2, 1, 1)
+    assert repository.product_run is not None
+    assert repository.product_run.report is not None
+    report = repository.product_run.report.report
+    assert report.status is RunStatus.PARTIAL
+    assert report.failures[0].paper_id == historical.paper_id
+    assert report.failures[0].paper_version_id == historical.paper_version_id
+    assert report.failures[0].failed_stage is PaperStage.ANALYZED
+    assert report.failures[0].error_code == "ANALYSIS_MODEL_OUTPUT_INVALID"
+    assert report.failures[0].error_detail == failure.error_detail
+
+    replay = publisher.execute(
+        _topic(),
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=AS_OF,
+    )
+    assert replay == run
+    assert repository.product_run.report.report == report
+
+
+def test_stale_persisted_comparison_cannot_satisfy_current_pipeline_publication() -> None:
+    paper_with_only_stale_comparison = _product_paper(1)
+    repository = _repository((paper_with_only_stale_comparison,))
+
+    run = PublishProduct(repository=repository, llm=None, clock=lambda: NOW).execute(
+        _topic(),
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=AS_OF,
+        comparison_ids=frozenset(),
+    )
+
+    assert run.status is RunStatus.FAILED
+    assert run.error_code == "NO_SELECTED_PAPER_COMPLETED"
+    assert repository.items[0].failed_stage is PaperStage.COMPARED
+    assert repository.items[0].error_code == "COMPARISON_MISSING"
+    assert repository.product_graphs == {}
+    assert repository.product_run is not None
+    assert repository.product_run.report is None
+
+
+def test_failed_product_restart_uses_current_comparison_and_preserves_upstream_failure() -> None:
+    completed = _product_paper(1)
+    upstream_failed = _product_paper(2)
+    comparison_id = completed.comparisons[0].bundle.comparison.id
+    repository = _repository((completed,))
+    source = repository.product_input
+    assert source is not None
+    failed_source_item = RunItemDetail(
+        item=RunItem(
+            id=_id("source-upstream-failure"),
+            run_id=source.source_run.run.id,
+            paper_id=upstream_failed.paper_id,
+            paper_version_id=upstream_failed.paper_version_id,
+            stage=PaperStage.SELECTED,
+            status=RunItemStatus.FAILED,
+            failed_stage=PaperStage.ANALYZED,
+            error_code="ANALYSIS_MODEL_OUTPUT_INVALID",
+            retryable=False,
+            error_detail="Persisted upstream analysis failure.",
+            schema_version=1,
+            created_at=NOW - timedelta(minutes=5),
+            updated_at=NOW - timedelta(minutes=1),
+        ),
+        canonical_arxiv_id="2608.00002",
+        paper_title=upstream_failed.paper_title,
+    )
+    publisher = PublishProduct(repository=repository, llm=None, clock=lambda: NOW)
+
+    failed = publisher.execute(
+        _topic(),
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=AS_OF,
+        comparison_ids=frozenset(),
+    )
+    assert failed.status is RunStatus.FAILED
+    repository.product_input = replace(
+        source,
+        source_run=replace(
+            source.source_run,
+            run=replace(
+                source.source_run.run,
+                status=RunStatus.PARTIAL,
+                selected_count=2,
+                completed_count=1,
+                failed_count=1,
+            ),
+            items=source.source_run.items + (failed_source_item,),
+        ),
+    )
+    retried = publisher.execute(
+        _topic(),
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=AS_OF,
+        comparison_ids=frozenset((comparison_id,)),
+    )
+
+    assert retried.id == failed.id
+    assert retried.status is RunStatus.PARTIAL
+    assert (retried.completed_count, retried.failed_count) == (1, 1)
+    preserved = next(item for item in repository.items if item.paper_id == upstream_failed.paper_id)
+    assert preserved.failed_stage is PaperStage.ANALYZED
+    assert preserved.error_code == "ANALYSIS_MODEL_OUTPUT_INVALID"
+
+
 def test_no_paper_completing_graph_construction_fails_without_a_report() -> None:
     missing_comparison = _product_paper(1, with_comparison=False)
     repository = _repository((missing_comparison,))
@@ -645,6 +802,92 @@ def test_deepseek_publication_uses_only_generated_sections_and_provenance() -> N
     assert report.provider == "deepseek"
     assert report.prompt_version == "m4-report-v1"
     assert report.sections[0].narrative == "Grounded overview narrative."
+
+
+def test_unsupported_generated_claim_never_enters_daily_report_input() -> None:
+    source_text = "The paper introduces a bounded planning controller."
+    request = AnalysisRequest(
+        paper_id=_id("grounded-report-paper"),
+        paper_version_id=_id("grounded-report-version"),
+        canonical_arxiv_id="2608.09999",
+        arxiv_version=1,
+        title="Grounded Report Paper",
+        scope=AnalysisScope.ABSTRACT_ONLY,
+        passages=(AnalysisPassage(id="abstract", section="Abstract", text=source_text),),
+    )
+    unsupported_text = "The model invents an unsupported state-of-the-art result."
+    generated = GeneratedAnalysis(
+        provider="deepseek",
+        configured_model="deepseek-v4-flash",
+        model_version="DeepSeek-V4-Flash-2026-08-01",
+        prompt_version="m2-analysis-v1",
+        generated_at=NOW,
+        claims=(
+            GeneratedClaim(
+                key="method",
+                claim_type=ClaimType.METHOD,
+                text="The paper introduces a bounded planning controller.",
+            ),
+            GeneratedClaim(
+                key="unsupported",
+                claim_type=ClaimType.RESULT,
+                text=unsupported_text,
+            ),
+        ),
+        evidence=(
+            GeneratedEvidence(
+                key="method_evidence",
+                claim_keys=("method",),
+                passage_ids=("abstract",),
+                evidence_type=EvidenceType.SUPPORTS,
+            ),
+            GeneratedEvidence(
+                key="unsupported_evidence",
+                claim_keys=("unsupported",),
+                passage_ids=("missing",),
+                evidence_type=EvidenceType.SUPPORTS,
+            ),
+        ),
+        usage=ModelUsage(100, 40, 140, 1, 300, Decimal("0.001")),
+    )
+    bundle = build_analysis_bundle(request, generated, created_at=NOW)
+    comparison, target_evidence = _comparison_input(99, bundle)
+    source_evidence = tuple(
+        ReportEvidenceReference(
+            id=item.id,
+            paper_id=item.paper_id,
+            paper_version_id=item.paper_version_id,
+            section=item.section,
+            excerpt=item.excerpt,
+            evidence_type=item.evidence_type.value,
+            verification_status=item.verification_status,
+        )
+        for item in bundle.evidence
+    )
+    paper = ProductPaperInput(
+        paper_id=request.paper_id,
+        paper_version_id=request.paper_version_id,
+        paper_title=request.title,
+        analysis=bundle,
+        comparisons=(comparison,),
+        evidence=(*source_evidence, target_evidence),
+        retrieved_candidate_count=1,
+    )
+    repository = _repository((paper,))
+    llm = _ReportLLM()
+
+    run = PublishProduct(
+        repository=repository,
+        llm=cast(LLMPort, llm),
+        clock=lambda: NOW,
+    ).execute(_topic(), narrative_mode=ReportNarrativeMode.DEEPSEEK, logical_date=AS_OF)
+
+    assert run.status is RunStatus.COMPLETE
+    assert len(llm.calls) == 1
+    assert unsupported_text not in llm.calls[0].highlighted_papers[0].reason
+    assert repository.product_run is not None
+    assert repository.product_run.report is not None
+    assert unsupported_text not in repository.product_run.report.report.highlighted_papers[0].reason
 
 
 def test_deepseek_output_failure_fails_run_without_structured_fallback() -> None:

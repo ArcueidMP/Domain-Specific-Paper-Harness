@@ -3,6 +3,21 @@
   "total": 1,
   "data": [
     {
+      "contexts": [
+        "Reliable web-agent evaluation builds on the earlier harness."
+      ],
+      "intents": [
+        "background"
+      ],
+      "contextsWithIntent": [
+        {
+          "context": "Reliable web-agent evaluation builds on the earlier harness.",
+          "intents": [
+            "background"
+          ]
+        }
+      ],
+      "isInfluential": false,
       "citingPaper": {
         "paperId": "3333333333333333333333333333333333333333",
         "corpusId": 303,

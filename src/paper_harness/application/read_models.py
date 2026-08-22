@@ -34,6 +34,7 @@ from paper_harness.domain.knowledge import (
     LineageSnapshot,
     TrendPaperRecord,
     TrendSnapshot,
+    TrendWindow,
 )
 from paper_harness.domain.models import (
     DailyRun,
@@ -130,6 +131,48 @@ class ProductRunDetail:
             raise DomainInvariantError("product run items must belong to the projected run")
         if self.report is not None and self.report.report.run_id != self.run.id:
             raise DomainInvariantError("product run report must belong to the projected run")
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationTrendArtifact:
+    snapshot_id: UUID
+    window: TrendWindow
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationArtifactSummary:
+    """Exact run-owned product artifacts used by deployment verification."""
+
+    publication_run_id: UUID
+    pipeline_execution_id: UUID
+    graph_entity_count: int
+    graph_edge_count: int
+    inferred_graph_edge_count: int
+    trend_snapshots: tuple[PublicationTrendArtifact, ...]
+    lineage_snapshot_ids: tuple[UUID, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            min(
+                self.graph_entity_count,
+                self.graph_edge_count,
+                self.inferred_graph_edge_count,
+            )
+            < 0
+        ):
+            raise DomainInvariantError("publication artifact counts cannot be negative")
+        if self.inferred_graph_edge_count > self.graph_edge_count:
+            raise DomainInvariantError(
+                "inferred publication edge count cannot exceed the total edge count"
+            )
+        trend_ids = tuple(item.snapshot_id for item in self.trend_snapshots)
+        trend_windows = tuple(item.window for item in self.trend_snapshots)
+        if len(set(trend_ids)) != len(trend_ids):
+            raise DomainInvariantError("publication trend snapshot IDs must be unique")
+        if len(set(trend_windows)) != len(trend_windows):
+            raise DomainInvariantError("publication trend windows must be unique")
+        if len(set(self.lineage_snapshot_ids)) != len(self.lineage_snapshot_ids):
+            raise DomainInvariantError("publication lineage snapshot IDs must be unique")
 
 
 @dataclass(frozen=True, slots=True)

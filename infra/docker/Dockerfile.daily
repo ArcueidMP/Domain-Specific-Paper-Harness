@@ -1,17 +1,36 @@
 # syntax=docker/dockerfile:1.7
 
-FROM ghcr.io/astral-sh/uv:0.12.3 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc AS uv
 
-FROM python:3.13.13-slim-bookworm AS build
+FROM python:3.13.13-slim-bookworm@sha256:355bfa66770995d7e9a0da4b3473b44d0cb451f6b56f5615ad9c39e3c4eca03f AS dependencies
 COPY --from=uv /uv /uvx /bin/
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-COPY README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra specter2 --no-install-project
+
+# Model preparation intentionally depends only on the locked environment and
+# the modules that define the pinned artifact. Unrelated application changes
+# therefore cannot invalidate the expensive conversion layer.
+FROM dependencies AS specter2-model
+ENV PYTHONPATH=/opt/specter2-preparation
+COPY src/paper_harness/adapters/specter2/prepare.py /opt/specter2-preparation/paper_harness/adapters/specter2/prepare.py
+COPY src/paper_harness/adapters/specter2/contract.py /opt/specter2-preparation/paper_harness/adapters/specter2/contract.py
+COPY src/paper_harness/adapters/specter2/loader.py /opt/specter2-preparation/paper_harness/adapters/specter2/loader.py
+COPY src/paper_harness/ports/scientific_embedding.py /opt/specter2-preparation/paper_harness/ports/scientific_embedding.py
+COPY src/paper_harness/domain/errors.py /opt/specter2-preparation/paper_harness/domain/errors.py
+ARG PREPARE_SPECTER2_BASE=0
+RUN test "$PREPARE_SPECTER2_BASE" = "1"
+RUN --mount=type=cache,id=paper-harness-huggingface,target=/root/.cache/huggingface,sharing=locked \
+    /app/.venv/bin/python -m paper_harness.adapters.specter2.prepare \
+    --output /opt/models/specter2_base \
+    --cache-dir /root/.cache/huggingface
+
+FROM dependencies AS build
+COPY README.md ./
 COPY src src
 COPY apps/api apps/api
 COPY configs configs
@@ -20,16 +39,14 @@ COPY alembic.ini ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra specter2
 
-FROM build AS specter2-model
-ARG PREPARE_SPECTER2_BASE=0
-RUN test "$PREPARE_SPECTER2_BASE" = "1"
-RUN --mount=type=cache,id=paper-harness-huggingface,target=/root/.cache/huggingface,sharing=locked \
-    /app/.venv/bin/python -m paper_harness.adapters.specter2.prepare \
-    --output /opt/models/specter2_base \
-    --cache-dir /root/.cache/huggingface
-
-FROM python:3.13.13-slim-bookworm AS runtime-base
-ENV PATH=/app/.venv/bin:$PATH \
+FROM python:3.13.13-slim-bookworm@sha256:355bfa66770995d7e9a0da4b3473b44d0cb451f6b56f5615ad9c39e3c4eca03f AS runtime-base
+LABEL org.opencontainers.image.title="Domain-Specific Paper Harness Daily Job" \
+      org.opencontainers.image.description="Bounded daily research discovery and analysis job" \
+      org.opencontainers.image.source="https://github.com/ArcueidMP/Domain-Specific-Paper-Harness" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.licenses="Proprietary"
+ENV APP_ENV=production \
+    PATH=/app/.venv/bin:$PATH \
     PYTHONPATH=/app/apps/api \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -44,11 +61,13 @@ RUN groupadd --system --gid 10001 paper-harness \
 COPY --from=build --chown=paper-harness:paper-harness /app /app
 COPY --chown=paper-harness:paper-harness THIRD_PARTY_NOTICES.md /opt/licenses/paper-harness/THIRD_PARTY_NOTICES.md
 USER 10001:10001
+STOPSIGNAL SIGTERM
 ENTRYPOINT ["paper-harness-daily"]
 
 FROM runtime-base AS production
 COPY --from=specter2-model --chown=paper-harness:paper-harness /opt/models/specter2_base /opt/models/specter2_base
 
 # Keep the model-free runtime as the default target so CI and canonical
-# verification never download model weights. Deployment selects `production`.
+# verification never download model weights. Production builds select the
+# self-contained `production` target above.
 FROM runtime-base AS runtime

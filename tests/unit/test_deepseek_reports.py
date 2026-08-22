@@ -216,7 +216,7 @@ def test_report_maps_strict_sections_provenance_and_bounded_structured_input() -
     assert "mention_count" not in encoded_source["major_entities"][0]
 
 
-def test_report_rejects_unordered_sections() -> None:
+def test_report_normalizes_unordered_sections() -> None:
     payload = _payload()
     sections = list(cast(list[dict[str, object]], payload["sections"]))
     payload["sections"] = list(reversed(sections))
@@ -224,11 +224,75 @@ def test_report_rejects_unordered_sections() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_response(payload))
 
-    with pytest.raises(LLMOutputError, match="incomplete or unordered"):
+    result = _client(httpx.MockTransport(handler)).generate_report(_request())
+
+    assert tuple(section.kind for section in result.sections) == tuple(ReportSectionKind)
+
+
+def test_report_deduplicates_sections_without_fabricating_missing_narrative() -> None:
+    payload = _payload()
+    sections = list(cast(list[dict[str, object]], payload["sections"]))
+    sections[-1] = {**sections[0]}
+    payload["sections"] = sections
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_response(payload))
+
+    result = _client(httpx.MockTransport(handler)).generate_report(_request())
+
+    assert tuple(section.kind for section in result.sections) == tuple(ReportSectionKind)[:-1]
+    assert result.sections[0].narrative == sections[0]["narrative"]
+
+
+def test_report_discards_malformed_optional_sections_and_trims_usable_text() -> None:
+    payload = _payload()
+    sections = list(cast(list[dict[str, object]], payload["sections"]))
+    payload["summary"] = "  The daily corpus contains one completed paper.  "
+    payload["sections"] = [
+        {"kind": "UNSUPPORTED", "narrative": "Ignored."},
+        {**sections[1], "narrative": "   "},
+        {
+            **sections[0],
+            "narrative": "  Grounded overview.  ",
+            "evidence_ids": ["not-a-uuid", str(EVIDENCE_ID)],
+        },
+    ]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_response(payload))
+
+    result = _client(httpx.MockTransport(handler)).generate_report(_request())
+
+    assert result.summary == "The daily corpus contains one completed paper."
+    assert tuple(section.kind for section in result.sections) == (ReportSectionKind.OVERVIEW,)
+    assert result.sections[0].narrative == "Grounded overview."
+    assert result.sections[0].evidence_ids == (EVIDENCE_ID,)
+
+
+def test_report_accepts_omitted_optional_sections_without_defaults() -> None:
+    payload = _payload()
+    payload.pop("sections")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_response(payload))
+
+    result = _client(httpx.MockTransport(handler)).generate_report(_request())
+
+    assert result.sections == ()
+
+
+def test_report_keeps_required_summary_strict() -> None:
+    payload = _payload()
+    payload["summary"] = "   "
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_response(payload))
+
+    with pytest.raises(LLMOutputError, match="schema validation"):
         _client(httpx.MockTransport(handler)).generate_report(_request())
 
 
-def test_report_rejects_unknown_evidence_without_retrying_invalid_output() -> None:
+def test_report_filters_unknown_evidence_without_schema_retry() -> None:
     payload = _payload()
     sections = list(cast(list[dict[str, object]], payload["sections"]))
     sections[0] = {
@@ -243,12 +307,13 @@ def test_report_rejects_unknown_evidence_without_retrying_invalid_output() -> No
         calls += 1
         return httpx.Response(200, json=_response(payload))
 
-    with pytest.raises(LLMOutputError, match="unknown evidence"):
-        _client(httpx.MockTransport(handler)).generate_report(_request())
+    result = _client(httpx.MockTransport(handler)).generate_report(_request())
+
+    assert result.sections[0].evidence_ids == ()
     assert calls == 1
 
 
-def test_report_rejects_known_evidence_in_the_wrong_section() -> None:
+def test_report_filters_known_evidence_from_the_wrong_section() -> None:
     payload = _payload()
     sections = list(cast(list[dict[str, object]], payload["sections"]))
     sections[1] = {**sections[1], "evidence_ids": [str(EVIDENCE_ID)]}
@@ -260,12 +325,13 @@ def test_report_rejects_known_evidence_in_the_wrong_section() -> None:
         calls += 1
         return httpx.Response(200, json=_response(payload))
 
-    with pytest.raises(LLMOutputError, match="not permitted for its section"):
-        _client(httpx.MockTransport(handler)).generate_report(_request())
+    result = _client(httpx.MockTransport(handler)).generate_report(_request())
+
+    assert result.sections[1].evidence_ids == ()
     assert calls == 1
 
 
-def test_report_rejects_schema_extensions_without_retrying_invalid_output() -> None:
+def test_report_ignores_schema_extensions_without_retry() -> None:
     calls = 0
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -273,12 +339,13 @@ def test_report_rejects_schema_extensions_without_retrying_invalid_output() -> N
         calls += 1
         return httpx.Response(200, json=_response({**_payload(), "reasoning": "hidden"}))
 
-    with pytest.raises(LLMOutputError, match="schema validation"):
-        _client(httpx.MockTransport(handler)).generate_report(_request())
+    result = _client(httpx.MockTransport(handler)).generate_report(_request())
+
+    assert result.summary == _payload()["summary"]
     assert calls == 1
 
 
-def test_report_rejects_numeric_literals_so_statistics_remain_deterministic() -> None:
+def test_report_accepts_numeric_narrative_literals_without_schema_retry() -> None:
     payload = _payload()
     payload["summary"] = "The model claims a 42% increase."
     calls = 0
@@ -288,8 +355,9 @@ def test_report_rejects_numeric_literals_so_statistics_remain_deterministic() ->
         calls += 1
         return httpx.Response(200, json=_response(payload))
 
-    with pytest.raises(LLMOutputError, match="domain validation"):
-        _client(httpx.MockTransport(handler)).generate_report(_request())
+    result = _client(httpx.MockTransport(handler)).generate_report(_request())
+
+    assert result.summary == "The model claims a 42% increase."
     assert calls == 1
 
 
