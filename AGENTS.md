@@ -42,10 +42,12 @@ The finished product must:
 
 ## Working protocol
 
-Do not stop after writing a plan. Work by milestone dependency, implement
-immediately after preflight, verify the relevant milestone completely, inspect
-the diff, update current-state documentation, commit only the verified
-milestone, and continue automatically to the next milestone. Do not provide
+Do not stop after writing a plan. Work by milestone dependency and implement
+immediately after preflight. During iteration, run only the focused checks that
+cover the changed boundary and the observed failure. Inspect the diff and keep
+current-state documentation accurate as material state changes. Run the single
+canonical verification only once after M5 implementation and production
+acceptance are complete, then commit the verified milestone. Do not provide
 calendar estimates.
 
 Before modifying implementation or infrastructure:
@@ -84,8 +86,9 @@ Repository safety rules:
 - Never commit secrets, .env files, Terraform state, downloaded PDFs, model
   weights, caches, browser credentials, or service-account keys.
 - Do not bypass hooks or tests with --no-verify.
-- A milestone completion commit is authorized only after every applicable
-  acceptance criterion and verification command has actually passed.
+- The M5 completion commit is authorized only after focused checks for changed
+  boundaries and the one final canonical verification have actually passed.
+  Superseded M1-M4 historical gates are not current release checks.
 
 Keep execution communication short. Report only concise preflight findings,
 milestone completions, genuine user-action blockers, and the final deployment
@@ -355,6 +358,16 @@ Every item failure records the failed stage, stable error code, retryable flag,
 and concise diagnostic detail. Never mark an item complete after skipping a
 required stage.
 
+Normalize provider data once at the adapter/application boundary before domain
+use. Optional text metadata accepts missing, null, empty, or whitespace-only
+values as absent and trims non-empty strings. Provider ordering, duplicate
+records, equal timestamps, partial selector coverage, and surplus candidates
+are normalized through stable local sorting, deduplication, and capping; they
+are not metadata-validity failures. Non-string optional values, invalid required
+identity, missing required timestamps, and unparseable required types remain
+real failures. Never fabricate a required value or mark malformed input as
+successful.
+
 Run states are:
 
 - COMPLETE: every selected priority paper completed every required stage.
@@ -365,12 +378,28 @@ Run states are:
   global arXiv failure, missing secret required by the requested operation, no
   selected paper completed, or publication transaction failure.
 
+An item or candidate failure must not stop independent valid items. Continue
+within the configured bounds and publish a prominent PARTIAL result whenever at
+least one selected paper completes the product stages. Historical analysis or
+search may be partial without forcing the product publication to fail when
+valid comparison and evidence inputs remain. Product and report status describe
+the published product result; they do not have to equal every upstream child
+run status.
+
+A failed unpublished Daily or product run may discard its own staging and
+replan from current valid persisted inputs. Do not freeze a failed run to stale
+candidate, analysis, or comparison target sets. Source ownership, declared
+scope, required identities, and terminal published artifacts remain immutable.
+
 Parser failure must not silently become abstract-only analysis. Abstract-only
 and full-text are explicit preselected modes recorded in provenance.
 
-Fail immediately on missing/invalid configuration, authentication errors, HTTP
-400/401/403/422, migration incompatibility, unavailable database, external
-schema errors, Pydantic errors, and domain-invariant violations.
+Fail the owning operation immediately on missing or invalid configuration,
+authentication errors, HTTP 400/401/403/422, migration incompatibility, or an
+unavailable database. External schema, Pydantic, and domain-invariant failures
+belong to the narrowest identifiable item or provider operation. Promote them
+to a Daily run failure only when the dependency failure is global, no selected
+paper can complete, or publication cannot commit.
 
 Retry only the same operation for timeouts and HTTP 429/500/502/503. Centralize
 bounded retry count, backoff, total time, and Retry-After handling. Do not retry
@@ -531,6 +560,11 @@ must avoid duplicate work and eventually cover:
 - clean Alembic upgrade, migration-state checks, and PostgreSQL repository
   integration tests.
 
+Use focused unit, contract, static, and infrastructure checks while iterating.
+Do not run the canonical entry point after each defect. For M5, run it once only
+after the production Daily result, private Web/API, and Scheduler have been
+accepted and the source is otherwise ready for the final commit.
+
 Default verification must not need live credentials. Unit tests are
 deterministic with no network, cloud, DeepSeek, or Semantic Scholar dependency.
 Contract tests validate stored fixtures, requests, response schemas, error
@@ -576,72 +610,15 @@ README.md must always describe product purpose, architecture, prerequisites,
 local setup, verification, local run, deployment, required secrets, and current
 limitations without presenting target capabilities as completed.
 
-## Milestone order and gates
+## Milestone state and current gate
 
-### M1 — Platform and reliable ingestion
-
-Implement the permanent instructions/docs, exact runtime pins, uv project,
-React/Vite app, Compose PostgreSQL/pgvector, FastAPI, OpenAPI-generated frontend
-contract, Alembic, topic/core ingestion schemas, arXiv adapter, cursor/overlap,
-canonical versioned identity, database deduplication, Daily Job entrypoint,
-initial read API/dashboard/paper list, and safe Terraform/GCP skeleton including
-Secret Manager declarations, Scheduler, and a minimal private-access target.
-
-M1 is complete only when exact Python 3.13.13 is used locally and in images;
-local PostgreSQL and clean migrations work; explicit real arXiv ingestion is
-idempotent and models version changes/cursor overlap; persisted data reaches API
-and React; builds pass; Terraform validates; no secret is committed; safe
-deployment is attempted; blockers are explicit; and scripts/verify.ps1 passes.
-
-Commit: **feat(m1): establish platform and reliable ingestion**
-
-### M2 — Structured analysis and evidence
-
-Implement the strict DeepSeek adapter, configuration placeholders, GROBID and
-private deployment, ParsedPaper, PaperAnalysis/claims/Evidence, explicit
-analysis modes, selected-paper full text, grounded extraction, item failures,
-publication states, PaperQA2 audit/reuse, provenance/prompt versioning, and
-analysis/evidence product views.
-
-M2 is complete only when empty/malformed/invalid model data is rejected before
-persistence; parsing failure never silently changes mode; evidence links valid
-versions/claims; provenance and scope persist; PARTIAL failures display;
-PaperQA2 reuse/incompatibility is accurate; no parser/model fallback exists;
-Python remains exact; API/UI work; and scripts/verify.ps1 passes.
-
-Commit: **feat(m2): add structured analysis and grounded evidence**
-
-### M3 — PaSa and Semantic Scholar comparison
-
-Implement the typed authenticated Semantic Scholar adapter, persisted bounded
-PaSa-derived search sessions/actions/candidates, audits/selective vendoring,
-DeepSeek Crawler/Selector and tool allowlist, six-month backfill, pinned
-SPECTER2 embeddings in pgvector, hybrid historical retrieval, citation
-expansion, prior-work selection, structured evidence-linked Comparison and
-PaperRelation, Scholar QA audit/reuse, and related/comparison API/UI.
-
-M3 is complete only when schemas/auth/rate behavior are explicit; a missing key
-fails production search; tool and crawler limits are tested; provenance/search
-state are inspectable; embedding revision persists; comparable and
-non-comparable results differ; relations have provenance/evidence; no hidden
-provider exists; Python remains exact; and scripts/verify.ps1 passes.
-
-Commit: **feat(m3): add PaSa and Semantic Scholar comparison**
-
-### M4 — Knowledge graph, trends, reports, and product UI
-
-Implement graph entities/relations/provenance, entity extraction and
-verification, graph API/Cytoscape view, lineage, deterministic 7/30/90-day
-trends, daily/historical reports, sufficient-data weekly/monthly synthesis,
-STORM audit/reuse, partial banners, run status, navigation, and charts.
-
-M4 is complete only when graph references are valid; inferred relations are
-distinguished and evidenced; aggregations are deterministic and honest about
-insufficient data; report states and item error codes display; required product
-views work; STORM status is accurate; no arbitrary search exists; and
-scripts/verify.ps1 passes.
-
-Commit: **feat(m4): add graph trends reports and product views**
+M1 through M4 are the implemented product baseline: platform and arXiv
+ingestion, grounded full-text analysis, authenticated historical comparison,
+and the graph/trend/report product. Do not reopen their historical completion
+gates or rerun whole-milestone verification merely because M5 encounters a
+provider payload variation or an item-level failure. Preserve their real
+identity, provenance, transaction, security, and source boundaries, and verify
+only a baseline boundary affected by the current change.
 
 ### M5 — Product hardening and deployment
 
@@ -651,12 +628,13 @@ dependency, and license reviews; notices/reuse register; runbook,
 backup/export/rollback policy; logging/cost fields; all three deployments;
 Scheduler, Secret Manager, private auth, health checks; and final documentation.
 
-M5 is complete only when full verification and images pass; reviewed Terraform
-matches applied infrastructure; no unapproved fixed-cost resource exists;
-authenticated/private web/API, database readiness, persisted data, frontend,
-manual Job, 05:00 Asia/Kuala_Lumpur schedule, and private GROBID are actually
-verified; secrets are absent from source/logs; docs are current; and the
-post-commit tree is clean.
+M5 is complete only when one final canonical verification and the required
+images pass; reviewed Terraform matches applied infrastructure; no unapproved
+fixed-cost resource exists; an actual manual Daily Job publishes a terminal
+COMPLETE or honest PARTIAL product result; authenticated/private Web/API,
+database readiness, persisted report/graph/trend/lineage data, frontend, the
+05:00 Asia/Kuala_Lumpur schedule, and private GROBID are actually verified;
+secrets are absent from source/logs; and docs are current.
 
 Commit: **chore(m5): harden and deploy the product**
 

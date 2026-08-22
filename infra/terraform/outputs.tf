@@ -18,16 +18,74 @@ output "web_service_uri" {
 }
 
 output "daily_job_name" {
-  description = "Daily Cloud Run Job name, or null before runtime deployment."
-  value       = var.deploy_runtime_resources ? google_cloud_run_v2_job.daily[0].name : null
+  description = "Daily Cloud Run Job name, or null before complete Daily deployment."
+  value       = var.deploy_daily_resources ? google_cloud_run_v2_job.daily[0].name : null
+}
+
+output "migration_job_name" {
+  description = "Explicit Alembic migration Cloud Run Job name, or null before it is enabled."
+  value       = var.deploy_migration_resources ? google_cloud_run_v2_job.migration[0].name : null
+}
+
+output "scheduler_job_name" {
+  description = "Cloud Scheduler job name, or null before the verified scheduler gate is enabled."
+  value       = var.deploy_scheduler ? google_cloud_scheduler_job.daily[0].name : null
+}
+
+output "scheduler_paused" {
+  description = "Whether the deployed Scheduler remains paused before direct verification."
+  value       = var.deploy_scheduler ? google_cloud_scheduler_job.daily[0].paused : null
+}
+
+output "runtime_service_accounts" {
+  description = "Dedicated user-managed identities attached to each runtime boundary."
+  value = {
+    web       = google_service_account.web.email
+    daily     = google_service_account.daily.email
+    migration = google_service_account.migration.email
+    scheduler = google_service_account.scheduler.email
+    grobid    = var.deploy_analysis_resources ? google_service_account.grobid[0].email : null
+  }
 }
 
 output "grobid_service_uri" {
-  description = "IAM-private GROBID service URI, or null when M2 analysis resources are disabled."
+  description = "IAM-private GROBID service URI, or null when analysis resources are disabled."
   value       = var.deploy_analysis_resources ? google_cloud_run_v2_service.grobid[0].uri : null
 }
 
 output "grobid_service_name" {
   description = "IAM-private GROBID Cloud Run service name, or null when disabled."
   value       = var.deploy_analysis_resources ? google_cloud_run_v2_service.grobid[0].name : null
+}
+
+output "deployment_topology" {
+  description = "Non-secret applied topology and immutable inputs used to preserve staged upgrades."
+  value = {
+    migration = {
+      deployed                = var.deploy_migration_resources
+      image                   = var.deploy_migration_resources ? var.migration_image : null
+      database_secret_version = var.deploy_migration_resources ? var.migration_database_secret_version : null
+      timeout_seconds         = var.deploy_migration_resources ? var.migration_timeout_seconds : null
+    }
+    runtime = {
+      deployed                         = var.deploy_runtime_resources
+      analysis_deployed                = var.deploy_analysis_resources
+      daily_deployed                   = var.deploy_daily_resources
+      semantic_scholar_secret_attached = var.deploy_daily_resources
+      web_api_image                    = var.deploy_runtime_resources ? var.web_api_image : null
+      daily_image                      = var.deploy_daily_resources ? var.daily_image : null
+      grobid_image                     = var.deploy_analysis_resources ? var.grobid_image : null
+      database_secret_version          = (var.deploy_runtime_resources || var.deploy_daily_resources) ? var.database_secret_version : null
+      daily_timeout_seconds            = var.deploy_daily_resources ? var.daily_timeout_seconds : null
+      deepseek_secret_version          = var.deploy_daily_resources ? var.deepseek_secret_version : null
+      semantic_scholar_secret_version  = var.deploy_daily_resources ? var.semantic_scholar_secret_version : null
+    }
+    scheduler = {
+      deployed = var.deploy_scheduler
+      paused   = var.deploy_scheduler ? var.scheduler_paused : null
+    }
+    identity = {
+      owner_email = var.owner_email
+    }
+  }
 }

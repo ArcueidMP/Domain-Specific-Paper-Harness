@@ -249,7 +249,7 @@ def _map_references(root: ET.Element, parsed_paper_id: UUID) -> tuple[ParsedRefe
     ):
         source_id = element.get(_XML_ID) or f"reference-{reference_index}"
         if source_id in source_ids:
-            raise PdfParserOutputError("GROBID TEI contains duplicate reference identifiers")
+            continue
         source_ids.add(source_id)
 
         title_element = element.find("./tei:analytic/tei:title", _NAMESPACES)
@@ -273,8 +273,8 @@ def _map_references(root: ET.Element, parsed_paper_id: UUID) -> tuple[ParsedRefe
                 year=_reference_year(element),
                 raw_text=raw_text,
             )
-        except DomainInvariantError as error:
-            raise PdfParserOutputError("GROBID TEI contains an invalid reference") from error
+        except DomainInvariantError:
+            continue
         references.append(reference)
     return tuple(references)
 
@@ -300,13 +300,16 @@ def _map_citation_contexts(
         for reference_marker in mapped.element.findall(".//tei:ref", _NAMESPACES):
             if reference_marker.get("type") != "bibr":
                 continue
-            targets = _reference_targets(reference_marker.get("target"))
+            target_attribute = reference_marker.get("target")
+            if target_attribute is None:
+                continue
+            targets = _reference_targets(target_attribute)
             if not targets:
-                raise PdfParserOutputError("GROBID TEI citation marker has no reference target")
+                continue
             marker_text = _normalized_text(reference_marker)
             for reference_source_id in targets:
                 if reference_source_id not in reference_source_ids:
-                    raise PdfParserOutputError("GROBID TEI citation target does not resolve")
+                    continue
                 ordinal_key = (mapped.passage.id, reference_source_id)
                 ordinal = ordinals[ordinal_key]
                 ordinals[ordinal_key] += 1
@@ -325,10 +328,8 @@ def _map_citation_contexts(
                             coordinates=_parse_coordinates(reference_marker.get("coords")),
                         )
                     )
-                except DomainInvariantError as error:
-                    raise PdfParserOutputError(
-                        "GROBID TEI contains an invalid citation context"
-                    ) from error
+                except DomainInvariantError:
+                    continue
     return tuple(contexts)
 
 
@@ -372,8 +373,8 @@ def _parse_coordinates(value: str | None) -> tuple[PageCoordinates, ...]:
                     height=numeric[3],
                 )
             )
-    except (DomainInvariantError, ValueError) as error:
-        raise PdfParserOutputError("GROBID TEI contains invalid PDF coordinates") from error
+    except (DomainInvariantError, ValueError):
+        return ()
     return tuple(coordinates)
 
 

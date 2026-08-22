@@ -11,16 +11,24 @@ locals {
   ])
 }
 
-data "google_project" "current" {
-  project_id = var.project_id
-}
-
 resource "google_project_service" "required" {
   for_each = local.required_services
 
   project            = var.project_id
   service            = each.value
   disable_on_destroy = false
+}
+
+# Direct Cloud Run IAP requires its Google-managed service agent to exist
+# before the service-level Run Invoker binding can be applied. Creating a
+# service identity is idempotent and does not export a key.
+resource "google_project_service_identity" "iap" {
+  provider = google-beta
+
+  project = var.project_id
+  service = "iap.googleapis.com"
+
+  depends_on = [google_project_service.required["iap.googleapis.com"]]
 }
 
 resource "google_artifact_registry_repository" "containers" {
@@ -38,8 +46,9 @@ resource "google_artifact_registry_repository" "containers" {
 }
 
 resource "google_secret_manager_secret" "database_url" {
-  project   = var.project_id
-  secret_id = var.database_secret_id
+  project             = var.project_id
+  secret_id           = var.database_secret_id
+  deletion_protection = true
 
   replication {
     auto {}
@@ -49,8 +58,9 @@ resource "google_secret_manager_secret" "database_url" {
 }
 
 resource "google_secret_manager_secret" "deepseek_api_key" {
-  project   = var.project_id
-  secret_id = var.deepseek_secret_id
+  project             = var.project_id
+  secret_id           = var.deepseek_secret_id
+  deletion_protection = true
 
   replication {
     auto {}
@@ -60,8 +70,9 @@ resource "google_secret_manager_secret" "deepseek_api_key" {
 }
 
 resource "google_secret_manager_secret" "semantic_scholar_api_key" {
-  project   = var.project_id
-  secret_id = var.semantic_scholar_secret_id
+  project             = var.project_id
+  secret_id           = var.semantic_scholar_secret_id
+  deletion_protection = true
 
   replication {
     auto {}

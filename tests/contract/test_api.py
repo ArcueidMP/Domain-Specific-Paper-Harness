@@ -5,14 +5,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from uuid import UUID, uuid5
 
 import pytest
 from fastapi.testclient import TestClient
-from tests.fakes import FakeArxiv, FakeRepository
+from tests.fakes import FakeArxiv, FakeRepository, fake_pipeline_execution_contract
 
 from paper_harness.application.analyze_papers import build_analysis_bundle
 from paper_harness.application.ingest_arxiv import IngestArxiv
@@ -71,7 +71,11 @@ from paper_harness.domain.historical import (
     SearchTool,
     SelectionDecision,
 )
-from paper_harness.domain.identity import stable_paper_id, stable_paper_version_id
+from paper_harness.domain.identity import (
+    stable_paper_id,
+    stable_paper_version_id,
+    stable_pipeline_execution_id,
+)
 from paper_harness.domain.knowledge import (
     GraphEdge,
     GraphEntityType,
@@ -88,6 +92,8 @@ from paper_harness.domain.models import (
     Paper,
     PaperStage,
     PaperVersion,
+    PipelineExecution,
+    PipelineExecutionMode,
     RunItem,
     RunItemStatus,
     RunOperation,
@@ -109,6 +115,7 @@ from paper_harness.domain.reports import (
     ReportType,
 )
 from paper_harness.entrypoints.api import create_app
+from paper_harness.entrypoints.runtime import DailyPipelineSelectionError
 from paper_harness.ports.arxiv import ArxivPaperRecord
 from paper_harness.ports.repository import (
     MigrationIncompatibleError,
@@ -172,11 +179,6 @@ def _analysis_detail(record: ArxivPaperRecord, paper: Paper) -> AnalysisDetail:
         model_version="DeepSeek-V4-Flash-2026-04-24",
         prompt_version="m2-analysis-v1",
         generated_at=generated_at,
-        summary="The paper evaluates a tool-using language model agent.",
-        research_problem="Tool-using agents require reliable evaluation.",
-        method_summary="The authors evaluate a tool-using agent.",
-        key_contributions=("A focused agent evaluation.",),
-        limitations=("The abstract does not describe every benchmark.",),
         claims=(
             GeneratedClaim(
                 key="method_1",
@@ -188,8 +190,7 @@ def _analysis_detail(record: ArxivPaperRecord, paper: Paper) -> AnalysisDetail:
             GeneratedEvidence(
                 key="evidence_1",
                 claim_keys=("method_1",),
-                passage_id="abstract",
-                excerpt="evaluate a tool-using language model agent",
+                passage_ids=("abstract",),
                 evidence_type=EvidenceType.SUPPORTS,
             ),
         ),
@@ -858,6 +859,69 @@ def test_m1_read_api_exposes_persisted_topics_papers_and_latest_run(
     assert client.get(f"/api/v1/runs/{run['id']}").json()["id"] == run["id"]
 
 
+def test_run_reads_expose_a_failed_parent_execution_after_empty_selection(
+    topic_config: TopicConfig,
+) -> None:
+    now = datetime(2026, 1, 10, 5, tzinfo=UTC)
+    execution_id = stable_pipeline_execution_id(
+        topic_config.id,
+        now.date(),
+    )
+    repository = FakeRepository()
+    repository.upsert_topic(topic_config)
+    repository.start_pipeline_execution(
+        PipelineExecution(
+            id=execution_id,
+            topic_id=topic_config.id,
+            logical_date=now.date(),
+            execution_mode=PipelineExecutionMode.NORMAL,
+            analysis_scope=AnalysisScope.FULL_TEXT,
+            selection_limit=1,
+            contract=fake_pipeline_execution_contract(),
+            status=RunStatus.RUNNING,
+            deadline_at=now + timedelta(hours=8),
+            started_at=now,
+            completed_at=None,
+            error_code=None,
+            error_detail=None,
+            schema_version=1,
+            created_at=now,
+        )
+    )
+    ingestion = IngestArxiv(
+        arxiv=FakeArxiv(),
+        repository=repository,
+        clock=lambda: now,
+    ).execute(
+        topic_config,
+        logical_date=now.date(),
+        pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+        pipeline_selection_limit=1,
+        pipeline_execution_id=execution_id,
+    )
+    selection_error = DailyPipelineSelectionError(
+        "arXiv ingestion completed but no paper passed the deterministic relevance filter"
+    )
+    repository.fail_pipeline_execution(
+        execution_id,
+        completed_at=now + timedelta(minutes=1),
+        error_code=selection_error.error_code,
+        error_detail=str(selection_error),
+    )
+
+    client = TestClient(create_app(repository))
+    listed = client.get("/api/v1/runs").json()["items"][0]
+    latest = client.get("/api/v1/runs/latest").json()
+    detail = client.get(f"/api/v1/runs/{ingestion.id}").json()
+
+    for response in (listed, latest, detail):
+        assert response["status"] == "COMPLETE"
+        assert response["pipeline_status"] == "FAILED"
+        assert response["pipeline_error_code"] == selection_error.error_code
+        assert response["pipeline_error_detail"] == str(selection_error)
+        assert response["pipeline_deadline_at"] is not None
+
+
 def test_readiness_reports_incompatible_migration() -> None:
     repository = FakeRepository()
     repository.ready_error = MigrationIncompatibleError("database revision is behind")
@@ -976,7 +1040,9 @@ def test_m3_related_work_and_comparison_contracts_expose_bounded_provenance(
     )
     related, comparison = _m3_read_fixture(paper, version)
     repository.related_work = related
+    repository.canonical_search_session_ids = frozenset((related.session.id,))
     repository.comparisons[comparison.comparison.id] = comparison
+    repository.canonical_comparison_ids = frozenset((comparison.comparison.id,))
     client = TestClient(create_app(repository))
 
     related_response = client.get(f"/api/v1/papers/{paper.id}/related")
@@ -1049,6 +1115,109 @@ def test_m3_related_work_and_comparison_contracts_expose_bounded_provenance(
     assert evidence_by_id[target_evidence_id]["section"] == "Results"
     assert evidence_by_id[target_evidence_id]["evidence_type"] == "QUALIFIES"
     assert evidence_by_id[target_evidence_id]["verification_status"] == "HUMAN_VERIFIED"
+
+
+def test_smoke_only_products_stay_hidden_until_a_normal_publication(
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    repository = FakeRepository()
+    repository.enforce_published_visibility = True
+    paper = _paper(arxiv_record_v1)
+    version = _paper_version(arxiv_record_v1, paper)
+    analysis = _analysis_detail(arxiv_record_v1, paper)
+    related, comparison = _m3_read_fixture(paper, version)
+    repository.papers = (paper,)
+    repository.paper_detail = PaperDetail(
+        paper=paper,
+        versions=(version,),
+        source_identities=(),
+        topic_slugs=("broad-llm-agents",),
+    )
+    repository.analysis_detail = analysis
+    repository.related_work = related
+    repository.comparisons[comparison.comparison.id] = comparison
+    client = TestClient(create_app(repository))
+    evidence_path = f"/api/v1/papers/{paper.id}/evidence?analysis_id={analysis.analysis.id}"
+
+    assert client.get("/api/v1/papers").json()["total"] == 0
+    assert client.get(f"/api/v1/papers/{paper.id}").status_code == 404
+    assert client.get(f"/api/v1/papers/{paper.id}/analysis").status_code == 404
+    assert client.get(evidence_path).status_code == 404
+    assert client.get(f"/api/v1/papers/{paper.id}/related").status_code == 404
+    assert client.get(f"/api/v1/comparisons/{comparison.comparison.id}").status_code == 404
+
+    repository.canonically_published_version_ids = frozenset((version.id,))
+
+    assert client.get("/api/v1/papers").json()["total"] == 1
+    assert client.get(f"/api/v1/papers/{paper.id}").status_code == 200
+    assert client.get(f"/api/v1/papers/{paper.id}/analysis").status_code == 200
+    assert client.get(evidence_path).status_code == 200
+    assert client.get(f"/api/v1/papers/{paper.id}/related").json()["session"] is None
+    assert client.get(f"/api/v1/comparisons/{comparison.comparison.id}").status_code == 404
+    assert (
+        repository.get_related_work(
+            paper.id,
+            paper_version_id=version.id,
+            search_session_id=related.session.id,
+        )
+        is related
+    )
+
+    repository.canonical_search_session_ids = frozenset((related.session.id,))
+    repository.canonical_comparison_ids = frozenset((comparison.comparison.id,))
+
+    assert client.get(f"/api/v1/papers/{paper.id}/related").json()["session"] is not None
+    assert client.get(f"/api/v1/comparisons/{comparison.comparison.id}").status_code == 200
+
+
+def test_canonical_paper_reads_keep_published_v1_when_smoke_ingests_v2(
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    smoke_v2 = replace(
+        arxiv_record_v1,
+        version=2,
+        title="A Reliable LLM Agent, Smoke-Only Revision",
+        updated_at=arxiv_record_v1.updated_at + timedelta(days=1),
+        pdf_url="https://arxiv.org/pdf/2601.01234v2",
+        source_url="https://arxiv.org/abs/2601.01234v2",
+    )
+    paper = _paper(smoke_v2)
+    published_v1 = _paper_version(arxiv_record_v1, paper)
+    smoke_only_v2 = _paper_version(smoke_v2, paper)
+    analysis_v1 = _analysis_detail(arxiv_record_v1, paper)
+    repository = FakeRepository()
+    repository.enforce_published_visibility = True
+    repository.papers = (paper,)
+    repository.paper_detail = PaperDetail(
+        paper=paper,
+        versions=(smoke_only_v2, published_v1),
+        source_identities=(),
+        topic_slugs=("broad-llm-agents",),
+    )
+    repository.analysis_detail = analysis_v1
+    repository.canonically_published_version_ids = frozenset((published_v1.id,))
+    client = TestClient(create_app(repository))
+
+    list_body = client.get("/api/v1/papers").json()
+    assert list_body["total"] == 1
+    assert list_body["items"][0]["current_version"] == 1
+    assert list_body["items"][0]["title"] == arxiv_record_v1.title
+
+    detail_response = client.get(f"/api/v1/papers/{paper.id}")
+    assert detail_response.status_code == 200
+    detail_body = detail_response.json()
+    assert detail_body["current_version"] == 1
+    assert detail_body["title"] == arxiv_record_v1.title
+    assert [version["version"] for version in detail_body["versions"]] == [1]
+
+    analysis_response = client.get(f"/api/v1/papers/{paper.id}/analysis")
+    assert analysis_response.status_code == 200
+    assert analysis_response.json()["paper_version_id"] == str(published_v1.id)
+    evidence_response = client.get(
+        f"/api/v1/papers/{paper.id}/evidence?analysis_id={analysis_v1.analysis.id}"
+    )
+    assert evidence_response.status_code == 200
+    assert evidence_response.json()["items"][0]["paper_version_id"] == str(published_v1.id)
 
 
 def test_comparison_detail_requires_exact_unique_evidence_with_version_ownership(
@@ -1131,8 +1300,13 @@ def test_comparison_404_and_m3_read_503_are_explicit(
     assert missing.json()["detail"]["code"] == "COMPARISON_NOT_FOUND"
 
     class UnavailableComparisonRepository(FakeRepository):
-        def get_comparison(self, comparison_id: UUID) -> ComparisonDetail | None:
-            del comparison_id
+        def get_comparison(
+            self,
+            comparison_id: UUID,
+            *,
+            canonical_only: bool = False,
+        ) -> ComparisonDetail | None:
+            del comparison_id, canonical_only
             raise RepositoryUnavailableError("comparison read unavailable")
 
     unavailable = TestClient(create_app(UnavailableComparisonRepository())).get(
@@ -1147,8 +1321,9 @@ def test_comparison_404_and_m3_read_503_are_explicit(
             paper_id: UUID,
             *,
             paper_version_id: UUID | None = None,
+            search_session_id: UUID | None = None,
         ) -> RelatedWorkDetail | None:
-            del paper_id, paper_version_id
+            del paper_id, paper_version_id, search_session_id
             raise RepositoryUnavailableError("related-work read unavailable")
 
     paper = _paper(arxiv_record_v1)

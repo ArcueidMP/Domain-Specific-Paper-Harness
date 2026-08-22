@@ -37,6 +37,7 @@ GRAPH_ENTITY_MENTION_NAMESPACE = UUID("d73b3650-d074-4d28-991c-bd97e8fc4899")
 GRAPH_EDGE_NAMESPACE = UUID("09c7e488-4471-430e-87f7-6d9312918710")
 LINEAGE_SNAPSHOT_NAMESPACE = UUID("048c51ec-5f00-4245-bb51-5e66123a32f4")
 TREND_SNAPSHOT_NAMESPACE = UUID("eb58cde7-537d-4677-aa2f-b71b5fe3d6a2")
+PIPELINE_EXECUTION_NAMESPACE = UUID("0357d07f-0ab6-48d1-a941-a5b4786db14f")
 
 _ARXIV_VERSIONED_ID = re.compile(
     r"^(?P<canonical>(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7}))v(?P<version>[1-9]\d*)$",
@@ -206,6 +207,18 @@ def stable_search_session_id(
     )
 
 
+def stable_pipeline_execution_id(
+    topic_id: UUID,
+    logical_date: date,
+) -> UUID:
+    """Identify the one Daily pipeline execution for a topic and logical date."""
+
+    return uuid5(
+        PIPELINE_EXECUTION_NAMESPACE,
+        _encode_identity_parts(str(topic_id), logical_date.isoformat(), "NORMAL", "canonical"),
+    )
+
+
 def stable_search_action_id(session_id: UUID, step: int) -> UUID:
     if step < 1:
         raise DomainInvariantError("search action step must be positive")
@@ -340,6 +353,7 @@ def stable_graph_entity_mention_id(
     *,
     analysis_id: UUID | None = None,
     comparison_id: UUID | None = None,
+    pipeline_execution_id: UUID | None = None,
 ) -> UUID:
     if (analysis_id is None) == (comparison_id is None):
         raise DomainInvariantError(
@@ -348,15 +362,10 @@ def stable_graph_entity_mention_id(
     owner_kind = "analysis" if analysis_id is not None else "comparison"
     owner_id = analysis_id if analysis_id is not None else comparison_id
     assert owner_id is not None
-    return uuid5(
-        GRAPH_ENTITY_MENTION_NAMESPACE,
-        _encode_identity_parts(
-            str(entity_id),
-            str(paper_version_id),
-            owner_kind,
-            str(owner_id),
-        ),
-    )
+    parts = (str(entity_id), str(paper_version_id), owner_kind, str(owner_id))
+    if pipeline_execution_id is not None:
+        parts = (*parts, "pipeline_execution", str(pipeline_execution_id))
+    return uuid5(GRAPH_ENTITY_MENTION_NAMESPACE, _encode_identity_parts(*parts))
 
 
 def stable_graph_edge_id(
@@ -369,6 +378,7 @@ def stable_graph_edge_id(
     analysis_id: UUID | None = None,
     comparison_id: UUID | None = None,
     paper_relation_id: UUID | None = None,
+    pipeline_execution_id: UUID | None = None,
 ) -> UUID:
     relation_value = relation_type.strip()
     if source_entity_id == target_entity_id:
@@ -381,19 +391,19 @@ def stable_graph_edge_id(
         raise DomainInvariantError("graph edge cannot have both analysis and comparison owners")
     if paper_relation_id is not None and comparison_id is None:
         raise DomainInvariantError("paper-relation graph edge requires a comparison owner")
-    return uuid5(
-        GRAPH_EDGE_NAMESPACE,
-        _encode_identity_parts(
-            str(source_entity_id),
-            str(target_entity_id),
-            relation_value,
-            str(source_paper_version_id),
-            str(target_paper_version_id or "none"),
-            str(analysis_id or "none"),
-            str(comparison_id or "none"),
-            str(paper_relation_id or "none"),
-        ),
+    parts = (
+        str(source_entity_id),
+        str(target_entity_id),
+        relation_value,
+        str(source_paper_version_id),
+        str(target_paper_version_id or "none"),
+        str(analysis_id or "none"),
+        str(comparison_id or "none"),
+        str(paper_relation_id or "none"),
     )
+    if pipeline_execution_id is not None:
+        parts = (*parts, "pipeline_execution", str(pipeline_execution_id))
+    return uuid5(GRAPH_EDGE_NAMESPACE, _encode_identity_parts(*parts))
 
 
 def stable_lineage_snapshot_id(
@@ -406,25 +416,26 @@ def stable_lineage_snapshot_id(
     max_nodes: int,
     max_edges: int,
     lineage_version: str,
+    pipeline_execution_id: UUID | None = None,
 ) -> UUID:
     relation_values = tuple(sorted(set(permitted_relation_types)))
     if not relation_values:
         raise DomainInvariantError("lineage requires at least one permitted relation type")
     if max_depth < 1 or max_nodes < 1 or max_edges < 1 or not lineage_version.strip():
         raise DomainInvariantError("lineage identity bounds and version must be positive")
-    return uuid5(
-        LINEAGE_SNAPSHOT_NAMESPACE,
-        _encode_identity_parts(
-            str(topic_id),
-            str(root_paper_id),
-            as_of_date.isoformat(),
-            *relation_values,
-            str(max_depth),
-            str(max_nodes),
-            str(max_edges),
-            lineage_version,
-        ),
+    parts = (
+        str(topic_id),
+        str(root_paper_id),
+        as_of_date.isoformat(),
+        *relation_values,
+        str(max_depth),
+        str(max_nodes),
+        str(max_edges),
+        lineage_version,
     )
+    if pipeline_execution_id is not None:
+        parts = (*parts, "pipeline_execution", str(pipeline_execution_id))
+    return uuid5(LINEAGE_SNAPSHOT_NAMESPACE, _encode_identity_parts(*parts))
 
 
 def stable_trend_snapshot_id(
@@ -432,17 +443,18 @@ def stable_trend_snapshot_id(
     as_of_date: date,
     window: str,
     aggregation_version: str,
+    pipeline_execution_id: UUID | None = None,
 ) -> UUID:
     window_value = window.strip()
     version_value = aggregation_version.strip()
     if not window_value or not version_value:
         raise DomainInvariantError("trend window and aggregation version are required")
-    return uuid5(
-        TREND_SNAPSHOT_NAMESPACE,
-        _encode_identity_parts(
-            str(topic_id),
-            as_of_date.isoformat(),
-            window_value,
-            version_value,
-        ),
+    parts = (
+        str(topic_id),
+        as_of_date.isoformat(),
+        window_value,
+        version_value,
     )
+    if pipeline_execution_id is not None:
+        parts = (*parts, "pipeline_execution", str(pipeline_execution_id))
+    return uuid5(TREND_SNAPSHOT_NAMESPACE, _encode_identity_parts(*parts))

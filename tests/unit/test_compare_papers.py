@@ -356,6 +356,40 @@ def test_comparison_persists_fixed_dimensions_and_explicit_status(
         )
 
 
+def test_comparison_persists_partial_dimensions_at_their_canonical_positions() -> None:
+    source = _paper(
+        paper_id=SOURCE_PAPER_ID,
+        version_id=SOURCE_VERSION_ID,
+        evidence_id=SOURCE_EVIDENCE_ID,
+    )
+    target = _paper(
+        paper_id=TARGET_PAPER_ID,
+        version_id=TARGET_VERSION_ID,
+        evidence_id=TARGET_EVIDENCE_ID,
+    )
+    generated = _generated(ComparabilityStatus.PARTIALLY_COMPARABLE)
+    retained = (generated.dimensions[0], generated.dimensions[-1])
+    repository = _Repository(source, target)
+
+    bundle = _service(
+        repository,
+        _LLM(replace(generated, dimensions=retained, relations=())),
+    ).execute(
+        search_session_id=SESSION_ID,
+        source_paper_version_id=SOURCE_VERSION_ID,
+        target_paper_version_id=TARGET_VERSION_ID,
+    )
+
+    assert tuple(item.name for item in bundle.comparison.dimensions) == (
+        COMPARISON_DIMENSION_ORDER[0],
+        COMPARISON_DIMENSION_ORDER[-1],
+    )
+    assert tuple(item.position for item in bundle.comparison.dimensions) == (
+        0,
+        len(COMPARISON_DIMENSION_ORDER) - 1,
+    )
+
+
 def test_comparison_persists_direct_semantic_scholar_reference_as_metadata_cites() -> None:
     source = _paper(
         paper_id=SOURCE_PAPER_ID,
@@ -461,7 +495,7 @@ def test_comparison_rejects_a_rejected_historical_candidate_before_model_call() 
     repository = _Repository(source, target, selected=False)
     llm = _LLM(_generated(ComparabilityStatus.PARTIALLY_COMPARABLE))
 
-    with pytest.raises(ComparisonInputMissingError, match="selected local historical"):
+    with pytest.raises(ComparisonInputMissingError, match="bounded local historical"):
         _service(repository, llm).execute(
             search_session_id=SESSION_ID,
             source_paper_version_id=SOURCE_VERSION_ID,

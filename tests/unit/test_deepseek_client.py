@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 from datetime import UTC, datetime
 from typing import cast
@@ -46,11 +47,6 @@ def _request() -> AnalysisRequest:
 
 def _payload() -> dict[str, object]:
     return {
-        "summary": "The paper studies reliable tool use.",
-        "research_problem": "Tool-using agents can fail unreliably.",
-        "method_summary": "The method adds a reliability controller.",
-        "key_contributions": ["A reliability controller."],
-        "limitations": ["Only one benchmark is evaluated."],
         "claims": [
             {
                 "key": "result_1",
@@ -62,9 +58,9 @@ def _payload() -> dict[str, object]:
             {
                 "key": "evidence_1",
                 "claim_keys": ["result_1"],
-                "passage_id": "abstract",
-                "excerpt": "report a 12% gain",
+                "passage_ids": ["abstract"],
                 "evidence_type": "SUPPORTS",
+                "rationale": "The passage reports the measured result.",
             }
         ],
     }
@@ -138,33 +134,107 @@ def test_deepseek_validates_and_maps_strict_json_without_exposing_reasoning() ->
     assert result.claims[0].key == "result_1"
     assert result.usage.total_tokens == 120
     assert result.usage.estimated_cost_usd is not None
-    body = observed["body"]
-    assert isinstance(body, dict)
+    body = cast(dict[str, object], observed["body"])
     assert body["thinking"] == {"type": "disabled"}
     assert body["response_format"] == {"type": "json_object"}
+    messages = cast(list[object], body["messages"])
+    assert isinstance(messages, list)
+    assert messages
+    assert all(
+        isinstance(message, dict)
+        and isinstance(cast(dict[str, object], message).get("content"), str)
+        for message in messages
+    )
+    serialized_body = json.dumps(body, sort_keys=True)
+    for multimodal_field in ("image_url", "input_image", "images", "file_id"):
+        assert multimodal_field not in serialized_body
     assert observed["authorization"] == "Bearer test-only-key"
     assert observed["accept_encoding"] == "identity"
 
 
-@pytest.mark.parametrize("content_encoding", ["gzip", "br"])
-def test_encoded_response_is_rejected_before_httpx_decompression(
-    content_encoding: str,
-) -> None:
+def test_response_header_presentation_does_not_override_valid_decoded_content() -> None:
     calls = 0
+    encoded = gzip.compress(json.dumps(_response(_payload())).encode())
 
     def handler(_request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
         return httpx.Response(
             200,
-            headers={"Content-Encoding": content_encoding},
-            stream=httpx.ByteStream(b"not-compressed-test-data"),
+            headers={
+                "Content-Encoding": "gzip",
+                "Content-Type": "text/plain; charset=utf-8",
+                "Content-Length": str(len(encoded) + 17),
+            },
+            stream=httpx.ByteStream(encoded),
         )
 
-    with pytest.raises(LLMOutputError, match="unsupported encoded response") as raised:
-        _client(httpx.MockTransport(handler)).analyze(_request())
-    assert content_encoding not in str(raised.value)
+    result = _client(httpx.MockTransport(handler)).analyze(_request())
+
+    assert result.claims[0].key == "result_1"
     assert calls == 1
+
+
+def test_finish_reason_and_extra_keys_do_not_trigger_schema_retry() -> None:
+    calls = 0
+    payload = {
+        **_payload(),
+        "unexpected": True,
+        "claims": [{**cast(list[dict[str, object]], _payload()["claims"])[0], "extra": 1}],
+    }
+    response_json = {
+        **_response(payload, finish_reason="length"),
+        "provider_metadata": {"request_id": "provider-only"},
+    }
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json=response_json)
+
+    result = _client(httpx.MockTransport(handler)).analyze(_request())
+
+    assert result.claims[0].key == "result_1"
+    assert calls == 1
+
+
+def test_analysis_keeps_usable_grounded_items_and_normalizes_text_references() -> None:
+    payload = _payload()
+    payload["claims"] = [
+        {"key": "bad", "claim_type": "UNSUPPORTED", "text": "Ignored."},
+        {
+            "key": "  result_1  ",
+            "claim_type": "RESULT",
+            "text": "  The reported gain is 12%.  ",
+        },
+    ]
+    payload["evidence"] = [
+        {
+            "key": "bad_evidence",
+            "claim_keys": ["result_1"],
+            "passage_ids": ["abstract"],
+            "evidence_type": "UNSUPPORTED",
+        },
+        {
+            "key": "  evidence_1  ",
+            "claim_keys": [None, "missing", "  result_1  ", "result_1"],
+            "passage_ids": [12, "missing", "  abstract  ", "abstract"],
+            "evidence_type": "SUPPORTS",
+            "rationale": "   ",
+        },
+    ]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_response(payload))
+
+    result = _client(httpx.MockTransport(handler)).analyze(_request())
+
+    assert tuple(item.key for item in result.claims) == ("result_1",)
+    assert result.claims[0].text == "The reported gain is 12%."
+    assert tuple(item.key for item in result.evidence) == ("evidence_1",)
+    assert result.evidence[0].claim_keys == ("result_1",)
+    assert result.evidence[0].passage_ids == ("abstract",)
+    assert result.evidence[0].rationale is None
 
 
 @pytest.mark.parametrize(
@@ -172,8 +242,21 @@ def test_encoded_response_is_rejected_before_httpx_decompression(
     [
         (_response(_payload(), content=""), "empty structured output"),
         (_response(_payload(), content="not json"), "malformed JSON"),
-        (_response({**_payload(), "unexpected": True}), "schema validation"),
-        (_response({**_payload(), "summary": "invalid\x00summary"}), "domain validation"),
+        (
+            _response(
+                {
+                    **_payload(),
+                    "claims": [
+                        {
+                            "key": "result_1",
+                            "claim_type": "RESULT",
+                            "text": "invalid\x00claim",
+                        }
+                    ],
+                }
+            ),
+            "domain validation",
+        ),
         (
             _response(
                 {
@@ -182,8 +265,7 @@ def test_encoded_response_is_rejected_before_httpx_decompression(
                         {
                             "key": "evidence_1",
                             "claim_keys": ["missing_claim"],
-                            "passage_id": "abstract",
-                            "excerpt": "report a 12% gain",
+                            "passage_ids": ["abstract"],
                             "evidence_type": "SUPPORTS",
                         }
                     ],
@@ -191,7 +273,6 @@ def test_encoded_response_is_rejected_before_httpx_decompression(
             ),
             "domain validation",
         ),
-        (_response(_payload(), finish_reason="length"), "did not finish normally"),
     ],
 )
 def test_invalid_model_output_is_rejected_without_retry(
@@ -223,7 +304,7 @@ def test_transient_status_retries_only_the_same_operation_with_a_bound() -> None
         )
 
     result = _client(httpx.MockTransport(handler)).analyze(_request())
-    assert result.summary
+    assert result.claims
     assert result.usage.call_count == 3
     assert len(bodies) == 3
     assert bodies[0] == bodies[1] == bodies[2]
@@ -273,16 +354,17 @@ def test_settings_reject_unsafe_api_key_characters(api_key: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("cache_hit", "cache_miss", "match"),
+    ("cache_hit", "cache_miss", "normalized_hit", "normalized_miss"),
     [
-        (101, 0, "cache-hit tokens exceed"),
-        (25, 70, "cache-token counts are inconsistent"),
+        (101, 0, 100, 0),
+        (25, 70, 25, 75),
     ],
 )
-def test_inconsistent_usage_cache_counts_are_rejected_without_normalization(
+def test_inconsistent_usage_cache_counts_are_normalized_deterministically(
     cache_hit: int,
     cache_miss: int,
-    match: str,
+    normalized_hit: int,
+    normalized_miss: int,
 ) -> None:
     response_json = _response(_payload())
     usage = response_json["usage"]
@@ -290,10 +372,22 @@ def test_inconsistent_usage_cache_counts_are_rejected_without_normalization(
     usage["prompt_cache_hit_tokens"] = cache_hit
     usage["prompt_cache_miss_tokens"] = cache_miss
 
-    with pytest.raises(LLMOutputError, match=match):
-        _client(
-            httpx.MockTransport(lambda _request: httpx.Response(200, json=response_json))
-        ).analyze(_request())
+    normalized_response = _response(_payload())
+    normalized_usage = normalized_response["usage"]
+    assert isinstance(normalized_usage, dict)
+    normalized_usage["prompt_cache_hit_tokens"] = normalized_hit
+    normalized_usage["prompt_cache_miss_tokens"] = normalized_miss
+
+    result = _client(
+        httpx.MockTransport(lambda _request: httpx.Response(200, json=response_json))
+    ).analyze(_request())
+    expected = _client(
+        httpx.MockTransport(lambda _request: httpx.Response(200, json=normalized_response))
+    ).analyze(_request())
+
+    assert (result.usage.prompt_tokens, result.usage.completion_tokens) == (100, 20)
+    assert result.usage.total_tokens == 120
+    assert result.usage.estimated_cost_usd == expected.usage.estimated_cost_usd
 
 
 @pytest.mark.parametrize("prompt_tokens", ["100", MAX_MODEL_TOKEN_COUNT + 1])

@@ -103,11 +103,6 @@ class GroundedAnalysisLLM:
             model_version="DeepSeek-V4-Flash-2026-04-24",
             prompt_version="m2-analysis-v1",
             generated_at=NOW + timedelta(minutes=2),
-            summary=f"Evidence-backed analysis of {request.title}.",
-            research_problem="Reliable evaluation of tool-using LLM agents.",
-            method_summary="The authors evaluate a bounded tool-using agent.",
-            key_contributions=("A grounded agent evaluation.",),
-            limitations=("The abstract reports limited implementation detail.",),
             claims=(
                 GeneratedClaim(
                     key="method",
@@ -119,8 +114,7 @@ class GroundedAnalysisLLM:
                 GeneratedEvidence(
                     key="method_evidence",
                     claim_keys=("method",),
-                    passage_id=passage.id,
-                    excerpt=passage.text[:120],
+                    passage_ids=(passage.id,),
                     evidence_type=EvidenceType.SUPPORTS,
                 ),
             ),
@@ -542,6 +536,208 @@ def test_backfill_page_atomically_persists_identity_embedding_and_cursor(
         )
         == ()
     )
+
+
+def test_ranked_historical_arxiv_materialization_preserves_exact_versions(
+    postgres_repository: PostgresRepository,
+    postgres_engine: Engine,
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    postgres_repository.upsert_topic(topic_config)
+    first_record = replace(
+        arxiv_record_v1,
+        canonical_arxiv_id="2601.10001",
+        version=2,
+        title="Historical Agent Planning",
+        updated_at=arxiv_record_v1.updated_at + timedelta(days=1),
+        pdf_url="https://arxiv.org/pdf/2601.10001v2",
+        source_url="https://arxiv.org/abs/2601.10001v2",
+    )
+    second_record = replace(
+        _second_arxiv_record(arxiv_record_v1),
+        canonical_arxiv_id="2601.10002",
+        title="Historical Web Agents",
+        pdf_url="https://arxiv.org/pdf/2601.10002v1",
+        source_url="https://arxiv.org/abs/2601.10002v1",
+    )
+    first_external = replace(
+        _external_stub(first_record, semantic_scholar_id="1" * 40),
+        abstract=None,
+    )
+    second_external = replace(
+        _external_stub(second_record, semantic_scholar_id="2" * 40),
+        abstract=None,
+    )
+    run = HistoricalBackfillRun(
+        id=UUID("b65f166c-fe3f-4d2e-a1e4-7791c79931c2"),
+        topic_id=topic_config.id,
+        window_from=date(2025, 7, 10),
+        window_to=date(2026, 1, 10),
+        query_plan=("LLM agent",),
+        max_results_per_query=500,
+        overall_timeout_seconds=3600.0,
+        embedding_model_identifier=SPECTER2_MODEL_IDENTIFIER,
+        embedding_model_revision=SPECTER2_MODEL_REVISION,
+        embedding_tokenizer_identifier=SPECTER2_TOKENIZER_IDENTIFIER,
+        embedding_tokenizer_revision=SPECTER2_TOKENIZER_REVISION,
+        embedding_dimension=SPECTER2_DIMENSION,
+        embedding_preprocessing_contract=SPECTER2_PREPROCESSING_CONTRACT,
+        embedding_model_provenance=SPECTER2_MODEL_PROVENANCE,
+        embedding_source=SPECTER2_EMBEDDING_SOURCE,
+        status=BackfillStatus.RUNNING,
+        next_query_index=0,
+        discovered_count=0,
+        persisted_count=0,
+        representative_count=0,
+        started_at=NOW,
+        completed_at=None,
+        error_code=None,
+        error_detail=None,
+        schema_version=1,
+        created_at=NOW,
+    )
+    entries = tuple(
+        HistoricalCorpusEntry(
+            id=stable_historical_corpus_entry_id(topic_config.id, external.id),
+            topic_id=topic_config.id,
+            external_paper_id=external.id,
+            local_paper_id=None,
+            local_paper_version_id=None,
+            representative_rank=None,
+            first_seen_at=NOW,
+            last_seen_at=NOW,
+            schema_version=1,
+        )
+        for external in (first_external, second_external)
+    )
+    postgres_repository.start_historical_backfill(run)
+    postgres_repository.persist_historical_backfill_page(
+        run.id,
+        expected_query_index=0,
+        next_query_index=1,
+        papers=(first_external, second_external),
+        entries=entries,
+        embeddings=(),
+        discovered_count=2,
+        persisted_count=2,
+        persisted_at=NOW + timedelta(seconds=1),
+    )
+    postgres_repository.finalize_historical_backfill(
+        run.id,
+        representatives=((second_external.id, 1), (first_external.id, 2)),
+        completed_at=NOW + timedelta(seconds=2),
+    )
+
+    assert postgres_repository.list_historical_representative_arxiv_ids(
+        topic_config.id,
+        limit=1,
+    ) == (second_record.canonical_arxiv_id,)
+    assert postgres_repository.list_historical_representative_arxiv_ids(
+        topic_config.id,
+        limit=2,
+    ) == (
+        second_record.canonical_arxiv_id,
+        first_record.canonical_arxiv_id,
+    )
+    with pytest.raises(RepositoryIntegrityError, match="run bound"):
+        postgres_repository.list_historical_representative_arxiv_ids(
+            topic_config.id,
+            limit=0,
+        )
+
+    unranked_record = replace(
+        first_record,
+        canonical_arxiv_id="2601.19999",
+        version=1,
+        pdf_url="https://arxiv.org/pdf/2601.19999v1",
+        source_url="https://arxiv.org/abs/2601.19999v1",
+    )
+    with pytest.raises(RepositoryIntegrityError, match="not ranked representatives"):
+        postgres_repository.persist_historical_arxiv_records(
+            topic=topic_config,
+            records=(unranked_record,),
+            persisted_at=NOW + timedelta(milliseconds=2500),
+        )
+
+    version_ids = postgres_repository.persist_historical_arxiv_records(
+        topic=topic_config,
+        records=(first_record, second_record),
+        persisted_at=NOW + timedelta(seconds=3),
+    )
+    expected_first_version = stable_paper_version_id(first_record.canonical_arxiv_id, 2)
+    expected_second_version = stable_paper_version_id(second_record.canonical_arxiv_id, 1)
+    assert version_ids == (expected_second_version, expected_first_version)
+    assert (
+        postgres_repository.persist_historical_arxiv_records(
+            topic=topic_config,
+            records=(second_record, first_record),
+            persisted_at=NOW + timedelta(seconds=4),
+        )
+        == version_ids
+    )
+
+    with postgres_engine.connect() as connection:
+        versions = set(
+            connection.execute(
+                text(
+                    "SELECT p.canonical_arxiv_id, v.version, i.source_version "
+                    "FROM papers p JOIN paper_versions v ON v.paper_id = p.id "
+                    "JOIN paper_source_identities i ON i.paper_version_id = v.id"
+                )
+            ).all()
+        )
+        linked = connection.execute(
+            text(
+                "SELECT e.arxiv_id, h.representative_rank, v.version "
+                "FROM historical_corpus_entries h "
+                "JOIN external_paper_stubs e ON e.id = h.external_paper_id "
+                "JOIN paper_versions v ON v.id = h.local_paper_version_id "
+                "ORDER BY h.representative_rank"
+            )
+        ).all()
+        counts = connection.execute(
+            text(
+                "SELECT (SELECT count(*) FROM papers), "
+                "(SELECT count(*) FROM paper_versions), "
+                "(SELECT count(*) FROM paper_source_identities), "
+                "(SELECT count(*) FROM topic_papers), "
+                "(SELECT count(*) FROM run_items)"
+            )
+        ).one()
+    assert versions == {
+        (first_record.canonical_arxiv_id, 2, "v2"),
+        (second_record.canonical_arxiv_id, 1, "v1"),
+    }
+    assert linked == [
+        (second_record.canonical_arxiv_id, 1, 1),
+        (first_record.canonical_arxiv_id, 2, 2),
+    ]
+    assert counts == (2, 2, 2, 2, 0)
+
+    stale_first = replace(
+        first_record,
+        version=1,
+        updated_at=first_record.submitted_at,
+        pdf_url="https://arxiv.org/pdf/2601.10001v1",
+        source_url="https://arxiv.org/abs/2601.10001v1",
+    )
+    with pytest.raises(RepositoryIntegrityError, match="older than"):
+        postgres_repository.persist_historical_arxiv_records(
+            topic=topic_config,
+            records=(stale_first,),
+            persisted_at=NOW + timedelta(seconds=5),
+        )
+    with postgres_engine.connect() as connection:
+        assert (
+            connection.scalar(
+                text(
+                    "SELECT count(*) FROM paper_versions v JOIN papers p ON p.id = v.paper_id "
+                    "WHERE p.canonical_arxiv_id = '2601.10001'"
+                )
+            )
+            == 1
+        )
 
 
 def test_failed_search_action_persists_without_result_rows(
@@ -1173,7 +1369,7 @@ def test_external_refresh_rejects_identifier_conflicts_without_mutation(
     )
 
 
-def test_related_work_uses_latest_session_and_resolves_local_candidate_identity(
+def test_related_work_explicit_session_resolves_local_candidate_identity(
     postgres_repository: PostgresRepository,
     topic_config: TopicConfig,
     arxiv_record_v1: ArxivPaperRecord,
@@ -1257,7 +1453,11 @@ def test_related_work_uses_latest_session_and_resolves_local_candidate_identity(
         discoveries=(discovery,),
     )
 
-    related = postgres_repository.get_related_work(source_paper_id)
+    assert postgres_repository.get_related_work(source_paper_id) is None
+    related = postgres_repository.get_related_work(
+        source_paper_id,
+        search_session_id=latest_session.id,
+    )
     assert related is not None
     assert related.session.id == latest_session.id
     assert related.actions == (completed_action,)

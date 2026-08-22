@@ -12,6 +12,16 @@ function readable(value: string): string {
   return value.replaceAll("_", " ").toLocaleLowerCase();
 }
 
+function executionModeLabel(value: string): string {
+  if (value === "SMOKE") {
+    return "Deployment smoke";
+  }
+  if (value === "NORMAL") {
+    return "Normal execution";
+  }
+  return "Standalone operation";
+}
+
 export function RunsPage() {
   const { runId } = useParams();
   const runs = useQuery(runsQuery());
@@ -58,9 +68,22 @@ export function RunsPage() {
                   <Link className={run.id === detail.data?.id ? "active" : ""} to={`/runs/${run.id}`}>
                     <div>
                       <strong>{run.logical_date}</strong>
-                      <RunStatusBadge status={run.status} />
+                      <div className="run-index-statuses" aria-label="Operation and pipeline status">
+                        <span>
+                          <small>Operation</small>
+                          <RunStatusBadge status={run.status} />
+                        </span>
+                        {run.pipeline_status ? (
+                          <span>
+                            <small>Pipeline</small>
+                            <RunStatusBadge status={run.pipeline_status} />
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
-                    <span>{readable(run.operation)}</span>
+                    <span>
+                      {executionModeLabel(run.pipeline_execution_mode)} · {readable(run.operation)}
+                    </span>
                     <small>{run.completed_count} completed / {run.failed_count} failed</small>
                   </Link>
                 </li>

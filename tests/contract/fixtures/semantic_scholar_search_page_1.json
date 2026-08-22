@@ -1,5 +1,5 @@
 {
-  "total": 3,
+  "total": "3",
   "offset": 0,
   "next": 2,
   "data": [
@@ -25,7 +25,11 @@
       ],
       "citationCount": 12,
       "influentialCitationCount": 4,
-      "referenceCount": 24
+      "referenceCount": 24,
+      "openAccessPdf": {
+        "url": "https://arxiv.org/pdf/2601.01234",
+        "status": "GREEN"
+      }
     },
     {
       "paperId": "2222222222222222222222222222222222222222",
@@ -47,7 +51,8 @@
       ],
       "citationCount": 8,
       "influentialCitationCount": 2,
-      "referenceCount": 19
+      "referenceCount": 19,
+      "openAccessPdf": null
     }
   ]
 }

@@ -9,11 +9,13 @@ from uuid import UUID
 from paper_harness.domain.analysis import VerificationStatus
 from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.domain.historical import (
+    COMPARISON_DIMENSION_ORDER,
     CandidateOrigin,
     Comparison,
     ComparisonBundle,
     ComparisonDimension,
     ComparisonRequest,
+    ComparisonTargetDecision,
     PaperRelation,
     PaperRelationType,
     RelationProvenance,
@@ -53,6 +55,7 @@ class ComparePapers:
         search_session_id: UUID,
         source_paper_version_id: UUID,
         target_paper_version_id: UUID,
+        target_analysis_id: UUID | None = None,
     ) -> ComparisonBundle:
         session_detail = self._repository.get_search_session(search_session_id)
         if (
@@ -68,19 +71,29 @@ class ComparePapers:
                 candidate
                 for candidate in session_detail.candidates
                 if candidate.local_paper_version_id == target_paper_version_id
-                and candidate.decision is SelectionDecision.SELECTED
+                and (
+                    candidate.comparison_target_decision is ComparisonTargetDecision.TARGET
+                    or (
+                        session_detail.session.pipeline_execution_id is None
+                        and candidate.comparison_target_decision is None
+                        and candidate.decision is SelectionDecision.SELECTED
+                    )
+                )
             ),
             None,
         )
         if selected_candidate is None:
             raise ComparisonInputMissingError(
-                "comparison target must be a selected local historical candidate"
+                "comparison target must be a bounded local historical target"
             )
         source = self._repository.get_comparison_paper_input(
             source_paper_version_id,
             analysis_id=session_detail.session.source_analysis_id,
         )
-        target = self._repository.get_comparison_paper_input(target_paper_version_id)
+        target = self._repository.get_comparison_paper_input(
+            target_paper_version_id,
+            analysis_id=target_analysis_id,
+        )
         if source is None or target is None:
             raise ComparisonInputMissingError(
                 "comparison requires persisted structured analysis and evidence for both versions"
@@ -114,7 +127,7 @@ class ComparePapers:
                 id=stable_comparison_dimension_id(comparison_id, item.name.value),
                 comparison_id=comparison_id,
                 name=item.name,
-                position=position,
+                position=COMPARISON_DIMENSION_ORDER.index(item.name),
                 source_value=item.source_value,
                 target_value=item.target_value,
                 assessment=item.assessment,
@@ -123,7 +136,7 @@ class ComparePapers:
                 schema_version=1,
                 created_at=created_at,
             )
-            for position, item in enumerate(generated.dimensions)
+            for item in generated.dimensions
         )
         comparison = Comparison(
             id=comparison_id,

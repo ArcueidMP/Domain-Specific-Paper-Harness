@@ -1,3 +1,56 @@
+resource "google_cloud_run_v2_job" "migration" {
+  count = var.deploy_migration_resources ? 1 : 0
+
+  project             = var.project_id
+  name                = "${var.name_prefix}-migration"
+  location            = var.region
+  deletion_protection = true
+
+  template {
+    task_count  = 1
+    parallelism = 1
+
+    template {
+      service_account = google_service_account.migration.email
+      timeout         = "${var.migration_timeout_seconds}s"
+      max_retries     = 0
+
+      containers {
+        image   = var.migration_image
+        command = ["alembic"]
+        args    = ["upgrade", "head"]
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "1Gi"
+          }
+        }
+
+        env {
+          name  = "APP_ENV"
+          value = "production"
+        }
+
+        env {
+          name = "DATABASE_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.database_url.secret_id
+              version = var.migration_database_secret_version
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    google_project_service.required["run.googleapis.com"],
+    google_secret_manager_secret_iam_binding.database_accessors,
+  ]
+}
+
 resource "google_cloud_run_v2_service" "web" {
   count = var.deploy_runtime_resources ? 1 : 0
 
@@ -11,6 +64,10 @@ resource "google_cloud_run_v2_service" "web" {
   template {
     service_account = google_service_account.web.email
     timeout         = "300s"
+    # Each instance owns a three-connection SQLAlchemy pool with no overflow.
+    # Two user requests leave one connection available to the database-backed
+    # readiness probe, whose timeout is intentionally shorter than pool wait.
+    max_instance_request_concurrency = 2
 
     scaling {
       min_instance_count = 0
@@ -23,6 +80,13 @@ resource "google_cloud_run_v2_service" "web" {
       ports {
         name           = "http1"
         container_port = 8080
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
       }
 
       env {
@@ -62,6 +126,17 @@ resource "google_cloud_run_v2_service" "web" {
           port = 8080
         }
       }
+
+      readiness_probe {
+        timeout_seconds   = 3
+        period_seconds    = 5
+        failure_threshold = 3
+
+        http_get {
+          path = "/health/ready"
+          port = 8080
+        }
+      }
     }
   }
 
@@ -73,7 +148,7 @@ resource "google_cloud_run_v2_service" "web" {
   depends_on = [
     google_project_service.required["run.googleapis.com"],
     google_project_service.required["iap.googleapis.com"],
-    google_secret_manager_secret_iam_member.web_database,
+    google_secret_manager_secret_iam_binding.database_accessors,
   ]
 }
 
@@ -85,10 +160,10 @@ resource "google_cloud_run_v2_service_iam_binding" "iap_invoker" {
   name     = google_cloud_run_v2_service.web[0].name
   role     = "roles/run.invoker"
   members = [
-    "serviceAccount:service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com",
+    "serviceAccount:${google_project_service_identity.iap.email}",
   ]
 
-  depends_on = [google_project_service.required["iap.googleapis.com"]]
+  depends_on = [google_project_service_identity.iap]
 }
 
 resource "google_iap_web_cloud_run_service_iam_binding" "owner" {
@@ -194,22 +269,21 @@ resource "google_cloud_run_v2_service" "grobid" {
 
   depends_on = [
     google_project_service.required["run.googleapis.com"],
-    google_project_iam_member.grobid_log_writer,
   ]
 }
 
-resource "google_cloud_run_v2_service_iam_member" "grobid_daily_invoker" {
+resource "google_cloud_run_v2_service_iam_binding" "grobid_invokers" {
   count = var.deploy_analysis_resources ? 1 : 0
 
   project  = var.project_id
   location = google_cloud_run_v2_service.grobid[0].location
   name     = google_cloud_run_v2_service.grobid[0].name
   role     = "roles/run.invoker"
-  member   = "serviceAccount:${google_service_account.daily.email}"
+  members  = ["serviceAccount:${google_service_account.daily.email}"]
 }
 
 resource "google_cloud_run_v2_job" "daily" {
-  count = var.deploy_runtime_resources ? 1 : 0
+  count = var.deploy_daily_resources ? 1 : 0
 
   project             = var.project_id
   name                = "${var.name_prefix}-daily"
@@ -222,11 +296,56 @@ resource "google_cloud_run_v2_job" "daily" {
 
     template {
       service_account = google_service_account.daily.email
-      timeout         = var.daily_timeout
+      timeout         = "${var.daily_timeout_seconds}s"
       max_retries     = 0
 
       containers {
-        image = var.daily_image
+        image   = var.daily_image
+        command = ["paper-harness-daily"]
+        args = [
+          "run-pipeline",
+          "--topic-config",
+          "/app/configs/topics/broad-llm-agents.yaml",
+          "--analysis-scope",
+          "full_text",
+          "--narrative-mode",
+          "deepseek",
+          "--max-selected-papers",
+          "10",
+          "--backfill-max-queries",
+          "8",
+          "--backfill-per-query-limit",
+          "100",
+          "--backfill-timeout-seconds",
+          "1800",
+          "--max-search-steps",
+          "12",
+          "--max-search-queries",
+          "4",
+          "--max-search-queue-size",
+          "100",
+          "--max-citation-depth",
+          "2",
+          "--max-search-candidates",
+          "100",
+          "--max-selected-candidates",
+          "5",
+          "--search-operation-timeout-seconds",
+          "60",
+          "--search-overall-timeout-seconds",
+          "300",
+          "--max-comparisons-per-paper",
+          "3",
+          "--pipeline-timeout-seconds",
+          "28800",
+        ]
+
+        resources {
+          limits = {
+            cpu    = "4"
+            memory = "16Gi"
+          }
+        }
 
         env {
           name  = "APP_ENV"
@@ -249,7 +368,7 @@ resource "google_cloud_run_v2_job" "daily" {
         }
 
         dynamic "env" {
-          for_each = var.deploy_analysis_resources ? tomap({
+          for_each = var.deploy_daily_resources ? tomap({
             ANALYSIS_MODE    = "full_text"
             GROBID_AUDIENCE  = google_cloud_run_v2_service.grobid[0].uri
             GROBID_AUTH_MODE = "google_identity"
@@ -265,7 +384,7 @@ resource "google_cloud_run_v2_job" "daily" {
         }
 
         dynamic "env" {
-          for_each = var.deploy_analysis_resources ? [var.deepseek_secret_version] : []
+          for_each = var.deploy_daily_resources ? [var.deepseek_secret_version] : []
           iterator = deepseek_secret
 
           content {
@@ -280,7 +399,7 @@ resource "google_cloud_run_v2_job" "daily" {
         }
 
         dynamic "env" {
-          for_each = var.attach_semantic_scholar_secret_to_daily ? [var.semantic_scholar_secret_version] : []
+          for_each = var.deploy_daily_resources ? [var.semantic_scholar_secret_version] : []
           iterator = semantic_scholar_secret
 
           content {
@@ -299,25 +418,25 @@ resource "google_cloud_run_v2_job" "daily" {
 
   depends_on = [
     google_project_service.required["run.googleapis.com"],
-    google_secret_manager_secret_iam_member.daily_database,
-    google_secret_manager_secret_iam_member.daily_deepseek,
-    google_secret_manager_secret_iam_member.daily_semantic_scholar,
-    google_cloud_run_v2_service_iam_member.grobid_daily_invoker,
+    google_secret_manager_secret_iam_binding.database_accessors,
+    google_secret_manager_secret_iam_binding.deepseek_accessors,
+    google_secret_manager_secret_iam_binding.semantic_scholar_accessors,
+    google_cloud_run_v2_service_iam_binding.grobid_invokers,
   ]
 }
 
-resource "google_cloud_run_v2_job_iam_member" "scheduler_invoker" {
-  count = var.deploy_runtime_resources ? 1 : 0
+resource "google_cloud_run_v2_job_iam_binding" "scheduler_invokers" {
+  count = var.deploy_scheduler ? 1 : 0
 
   project  = var.project_id
   location = google_cloud_run_v2_job.daily[0].location
   name     = google_cloud_run_v2_job.daily[0].name
   role     = "roles/run.invoker"
-  member   = "serviceAccount:${google_service_account.scheduler.email}"
+  members  = ["serviceAccount:${google_service_account.scheduler.email}"]
 }
 
 resource "google_cloud_scheduler_job" "daily" {
-  count = var.deploy_runtime_resources ? 1 : 0
+  count = var.deploy_scheduler ? 1 : 0
 
   project          = var.project_id
   region           = var.region
@@ -326,13 +445,13 @@ resource "google_cloud_scheduler_job" "daily" {
   schedule         = var.schedule
   time_zone        = var.schedule_time_zone
   attempt_deadline = "320s"
+  paused           = var.scheduler_paused
 
   retry_config {
-    retry_count          = 2
-    max_retry_duration   = "600s"
-    min_backoff_duration = "30s"
-    max_backoff_duration = "300s"
-    max_doublings        = 3
+    retry_count          = 0
+    max_retry_duration   = "0s"
+    min_backoff_duration = "5s"
+    max_backoff_duration = "5s"
   }
 
   http_target {
@@ -352,6 +471,6 @@ resource "google_cloud_scheduler_job" "daily" {
 
   depends_on = [
     google_project_service.required["cloudscheduler.googleapis.com"],
-    google_cloud_run_v2_job_iam_member.scheduler_invoker,
+    google_cloud_run_v2_job_iam_binding.scheduler_invokers,
   ]
 }

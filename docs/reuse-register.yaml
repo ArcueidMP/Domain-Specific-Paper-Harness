@@ -23,7 +23,7 @@ entries:
     integration_mode: pinned-external-container-runtime
     source_copied: false
     copied_files: []
-    local_changes: A first-party wrapper Dockerfile adds provenance labels only; no upstream source or model files are copied or modified.
+    local_changes: A first-party wrapper Dockerfile adds provenance labels, bundled license material, a health check, a dedicated UID/GID 10001, and narrowly owned scratch directories; no upstream source or model files are copied or modified.
     reason: Sole scientific PDF-to-TEI parser for explicitly selected full-text analysis.
     runtime:
       upstream_image: grobid/grobid:0.9.0-crf@sha256:24ba90eb1c959f65d812bcdb2cf79c677fa5fd7b95235de616b8bc9fa1317849
@@ -39,10 +39,11 @@ entries:
         verification: Docker pull and image inspection returned the same repository digest.
       local_smoke_test:
         status: passed
-        checked_at: "2026-08-08"
+        checked_at: "2026-08-10"
         version_response: "version 0.9.0, revision 0.9.0"
         health_response: initialized and ready with 12 CRF models loaded and no model failures
-        hardening: Read-only root filesystem, bounded CPU, memory and process count, dropped capabilities, no-new-privileges, zero core-dump ulimit, init, and writable tmpfs paths remained healthy.
+        hardening: UID/GID 10001, a read-only root filesystem, bounded CPU, memory and process count, dropped capabilities, no-new-privileges, zero core-dump ulimit, init, and UID-owned 0700 tmpfs paths remained healthy.
+        parsing: A bounded live parse of arXiv 1706.03762v7 completed through /api/processFulltextDocument without retaining the PDF.
     update_strategy: Verify the release tag, full source revision, license, container manifest digest, image contents, REST contract, and local fixture behavior before changing the pin.
     constraints:
       - The CRF image is selected for bounded CPU-only runtime size and cost; its lower extraction accuracy than the full deep-learning image must remain visible in provenance.
@@ -50,6 +51,28 @@ entries:
       - TEI remains the source representation; no alternate parser or lossy client converter is permitted.
       - Cloud deployment accepts only an immutable Artifact Registry digest produced after mirroring the verified upstream image through the first-party wrapper.
     python_compatibility: GROBID is an isolated Java service and is exempt from the first-party CPython 3.13.13 runtime constraint.
+license_review:
+  checked_at: "2026-08-10"
+  gate: scripts/check_dependency_licenses.py
+  frontend_material_exporter: scripts/export_frontend_licenses.mjs
+  policy:
+    python: Traverse the installed first-party production closure including the specter2 extra, report available license metadata, and block known incompatible terms.
+    frontend: Inspect pnpm's installed production license metadata with Corepack and npm network access disabled, and export material only from identity-matched roots inside the .pnpm store to a new repository/build-root directory.
+    output: Package, version, and license only; package paths, authors, descriptions, and environment data are never emitted.
+  verified:
+    - The exact local CPython 3.13.13 production closure passed the policy gate; CI repeats it on the production Linux platform.
+    - The frozen pnpm production closure used by the bundled React application passed the policy gate.
+    - psycopg and psycopg-binary are used unmodified under LGPL-3.0-only and retain their installed distribution license files in the copied virtual environment.
+    - External Dockerfile bases are pinned by immutable manifest digest; the direct GROBID and SPECTER2 Apache-2.0 licenses are recorded above.
+    - The frontend exporter retains discovered license, notice, or copying files without treating inventory counts or hashes as legal invariants.
+    - The pinned GROBID runtime and wrapper retain direct Apache-2.0 text, project notices, operating-system material, and upstream bundled notices.
+    - Retained weak-copyleft or dual-license text includes EPL, CDDL, LGPL, and GPL with the Classpath exception or an alternative license. The wrapper keeps those files intact and does not modify the libraries.
+    - Production Artifact Registry images use immutable digests; dependency and retained-notice reviews are repeated when a source release changes.
+  accepted_limitations:
+    - No OS-package SBOM was generated, so the focused review is not an image-wide legal attestation. Runtime operating-system copyright and common-license directories are retained instead.
+    - Installed Python distribution metadata does not enumerate every component embedded in native wheels such as psycopg-binary, PyTorch, NumPy, lxml, or tokenizers; their upstream metadata and retained material are checked without a second heavy scanner.
+    - The pinned GROBID image contains transitive Java and operating-system components without a scanner-generated complete SBOM; any upstream digest change requires a renewed review.
+  release_decision: No incompatible license was found. The focused package review and retained notices are accepted for the private unmodified internal deployment; the documented SBOM and embedded-metadata gaps are limitations, not publication blockers.
 audits:
   paperqa2:
     status: reviewed-incompatible-no-code-reuse

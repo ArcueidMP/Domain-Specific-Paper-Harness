@@ -236,12 +236,99 @@ class IngestionCursorRow(Base):
     )
 
 
+class PipelineExecutionRow(Base):
+    __tablename__ = "pipeline_executions"
+    __table_args__ = (
+        UniqueConstraint(
+            "topic_id",
+            "logical_date",
+            "execution_mode",
+            "execution_key",
+            name="uq_pipeline_executions_scope",
+        ),
+        UniqueConstraint(
+            "id",
+            "topic_id",
+            "logical_date",
+            "execution_mode",
+            name="uq_pipeline_executions_child_ownership",
+        ),
+        UniqueConstraint(
+            "id",
+            "topic_id",
+            name="uq_pipeline_executions_topic_ownership",
+        ),
+        CheckConstraint(
+            "execution_mode IN ('NORMAL', 'SMOKE')",
+            name="ck_pipeline_executions_mode",
+        ),
+        CheckConstraint(
+            "(execution_mode = 'NORMAL' AND execution_key = 'canonical') OR "
+            "(execution_mode = 'SMOKE' AND execution_key <> 'canonical' "
+            "AND execution_key = btrim(execution_key) "
+            "AND length(execution_key) BETWEEN 1 AND 200)",
+            name="ck_pipeline_executions_key",
+        ),
+        CheckConstraint(
+            "analysis_scope IN ('ABSTRACT_ONLY', 'FULL_TEXT')",
+            name="ck_pipeline_executions_analysis_scope",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(execution_contract) = 'object'",
+            name="ck_pipeline_executions_contract",
+        ),
+        CheckConstraint(
+            "selection_limit BETWEEN 1 AND 200 "
+            "AND (execution_mode <> 'SMOKE' OR selection_limit <= 5)",
+            name="ck_pipeline_executions_selection_limit",
+        ),
+        CheckConstraint(
+            "status IN ('RUNNING', 'COMPLETE', 'PARTIAL', 'FAILED')",
+            name="ck_pipeline_executions_status",
+        ),
+        CheckConstraint(
+            "deadline_at > started_at",
+            name="ck_pipeline_executions_deadline",
+        ),
+        CheckConstraint(
+            "(status = 'RUNNING' AND completed_at IS NULL) OR "
+            "(status <> 'RUNNING' AND completed_at IS NOT NULL)",
+            name="ck_pipeline_executions_completion",
+        ),
+        CheckConstraint(
+            "(status = 'FAILED' AND error_code IS NOT NULL) OR "
+            "(status <> 'FAILED' AND error_code IS NULL AND error_detail IS NULL)",
+            name="ck_pipeline_executions_failure",
+        ),
+        CheckConstraint("schema_version > 0", name="ck_pipeline_executions_schema_version"),
+        Index("ix_pipeline_executions_topic_date", "topic_id", "logical_date"),
+        Index("ix_pipeline_executions_status_deadline", "status", "deadline_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    topic_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("topics.id", ondelete="RESTRICT"), nullable=False
+    )
+    logical_date: Mapped[date] = mapped_column(Date, nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    execution_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    analysis_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    selection_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+    execution_contract: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class DailyRunRow(Base):
     __tablename__ = "daily_runs"
     __table_args__ = (
-        UniqueConstraint(
-            "topic_id", "logical_date", "operation", name="uq_daily_runs_topic_date_operation"
-        ),
         UniqueConstraint("id", "topic_id", name="uq_daily_runs_topic_ownership"),
         UniqueConstraint(
             "id",
@@ -260,7 +347,8 @@ class DailyRunRow(Base):
         CheckConstraint("failed_count >= 0", name="ck_daily_runs_failed_nonnegative"),
         CheckConstraint("schema_version > 0", name="ck_daily_runs_schema_version_positive"),
         CheckConstraint(
-            "operation IN ('ARXIV_INGESTION', 'STRUCTURED_ANALYSIS', 'PRODUCT_PUBLICATION')",
+            "operation IN ('ARXIV_INGESTION', 'STRUCTURED_ANALYSIS', "
+            "'HISTORICAL_ANALYSIS', 'PRODUCT_PUBLICATION')",
             name="ck_daily_runs_operation_allowed",
         ),
         CheckConstraint(
@@ -273,10 +361,24 @@ class DailyRunRow(Base):
             name="ck_daily_runs_status_allowed",
         ),
         CheckConstraint(
+            "pipeline_execution_mode IN ('STANDALONE', 'NORMAL', 'SMOKE')",
+            name="ck_daily_runs_pipeline_execution_mode_allowed",
+        ),
+        CheckConstraint(
+            "(pipeline_execution_mode = 'STANDALONE' AND pipeline_execution_id IS NULL "
+            "AND pipeline_selection_limit IS NULL) OR "
+            "(pipeline_execution_mode = 'NORMAL' AND pipeline_execution_id IS NOT NULL "
+            "AND pipeline_selection_limit BETWEEN 1 AND 200) OR "
+            "(pipeline_execution_mode = 'SMOKE' AND pipeline_execution_id IS NOT NULL "
+            "AND pipeline_selection_limit BETWEEN 1 AND 5)",
+            name="ck_daily_runs_pipeline_selection_limit",
+        ),
+        CheckConstraint(
             "(operation = 'ARXIV_INGESTION' AND cursor_from IS NOT NULL "
             "AND cursor_to IS NOT NULL AND cursor_from <= cursor_to "
             "AND analysis_scope IS NULL AND selected_count = 0 AND completed_count = 0) OR "
-            "(operation = 'STRUCTURED_ANALYSIS' AND cursor_from IS NULL "
+            "(operation IN ('STRUCTURED_ANALYSIS', 'HISTORICAL_ANALYSIS') "
+            "AND cursor_from IS NULL "
             "AND cursor_to IS NULL AND analysis_scope IN ('ABSTRACT_ONLY', 'FULL_TEXT')) OR "
             "(operation = 'PRODUCT_PUBLICATION' AND cursor_from IS NULL "
             "AND cursor_to IS NULL AND analysis_scope IS NULL "
@@ -309,7 +411,38 @@ class DailyRunRow(Base):
             name="fk_daily_runs_source_run",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            [
+                "pipeline_execution_id",
+                "topic_id",
+                "logical_date",
+                "pipeline_execution_mode",
+            ],
+            [
+                "pipeline_executions.id",
+                "pipeline_executions.topic_id",
+                "pipeline_executions.logical_date",
+                "pipeline_executions.execution_mode",
+            ],
+            name="fk_daily_runs_pipeline_execution",
+            ondelete="RESTRICT",
+        ),
         Index("ix_daily_runs_started_at", "started_at"),
+        Index(
+            "uq_daily_runs_standalone_topic_date_operation",
+            "topic_id",
+            "logical_date",
+            "operation",
+            unique=True,
+            postgresql_where=text("pipeline_execution_id IS NULL"),
+        ),
+        Index(
+            "uq_daily_runs_pipeline_execution_operation",
+            "pipeline_execution_id",
+            "operation",
+            unique=True,
+            postgresql_where=text("pipeline_execution_id IS NOT NULL"),
+        ),
         Index(
             "uq_daily_runs_product_source_date",
             "source_run_id",
@@ -329,6 +462,13 @@ class DailyRunRow(Base):
         PostgreSQLUUID(as_uuid=True),
         nullable=True,
     )
+    pipeline_execution_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
+    )
+    pipeline_execution_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="STANDALONE", server_default="STANDALONE"
+    )
+    pipeline_selection_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     analysis_scope: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -1234,15 +1374,32 @@ class SearchSessionRow(Base):
             name="fk_search_sessions_source_analysis",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["pipeline_execution_id", "topic_id"],
+            ["pipeline_executions.id", "pipeline_executions.topic_id"],
+            name="fk_search_sessions_pipeline_execution",
+            ondelete="RESTRICT",
+        ),
         Index(
             "ix_search_sessions_source_started",
             "source_paper_id",
             "started_at",
             "id",
         ),
+        Index("ix_search_sessions_pipeline_execution", "pipeline_execution_id"),
+        Index(
+            "uq_search_sessions_pipeline_execution_source_analysis",
+            "pipeline_execution_id",
+            "source_analysis_id",
+            unique=True,
+            postgresql_where=text("pipeline_execution_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    pipeline_execution_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
+    )
     topic_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), ForeignKey("topics.id", ondelete="CASCADE"), nullable=False
     )
@@ -1409,6 +1566,12 @@ class SearchCandidateRow(Base):
             name="ck_search_candidates_decision",
         ),
         CheckConstraint(
+            "(comparison_target_decision IS NULL AND comparison_target_reason IS NULL) OR "
+            "(comparison_target_decision IN ('TARGET', 'NOT_TARGET', 'INELIGIBLE') "
+            "AND comparison_target_reason IS NOT NULL)",
+            name="ck_search_candidates_comparison_target",
+        ),
+        CheckConstraint(
             "verification_status IN ('UNVERIFIED', 'HUMAN_VERIFIED', 'REJECTED')",
             name="ck_search_candidates_verification",
         ),
@@ -1472,6 +1635,8 @@ class SearchCandidateRow(Base):
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     decision: Mapped[str] = mapped_column(String(16), nullable=False)
     decision_reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    comparison_target_decision: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    comparison_target_reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
     configured_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
     model_version: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -2136,6 +2301,7 @@ class GraphEntityMentionRow(Base):
             "comparison_id",
             "observed_label",
             "provenance",
+            "pipeline_execution_id",
             name="uq_graph_entity_mentions_source",
             postgresql_nulls_not_distinct=True,
         ),
@@ -2197,6 +2363,12 @@ class GraphEntityMentionRow(Base):
             name="fk_graph_entity_mentions_publication_run",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["pipeline_execution_id"],
+            ["pipeline_executions.id"],
+            name="fk_graph_entity_mentions_pipeline_execution",
+            ondelete="RESTRICT",
+        ),
         Index("ix_graph_entity_mentions_entity", "entity_id", "generated_at"),
         Index("ix_graph_entity_mentions_paper", "paper_id", "paper_version_id"),
         Index("ix_graph_entity_mentions_publication_run", "publication_run_id"),
@@ -2204,6 +2376,9 @@ class GraphEntityMentionRow(Base):
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
     publication_run_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    pipeline_execution_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
+    )
     topic_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     entity_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     paper_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
@@ -2286,6 +2461,7 @@ class GraphEdgeRow(Base):
             "analysis_id",
             "comparison_id",
             "provenance",
+            "pipeline_execution_id",
             name="uq_graph_edges_source",
             postgresql_nulls_not_distinct=True,
         ),
@@ -2391,6 +2567,12 @@ class GraphEdgeRow(Base):
             name="fk_graph_edges_publication_run",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["pipeline_execution_id"],
+            ["pipeline_executions.id"],
+            name="fk_graph_edges_pipeline_execution",
+            ondelete="RESTRICT",
+        ),
         Index("ix_graph_edges_topic_relation", "topic_id", "relation_type"),
         Index("ix_graph_edges_source", "source_entity_id"),
         Index("ix_graph_edges_target", "target_entity_id"),
@@ -2399,6 +2581,9 @@ class GraphEdgeRow(Base):
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
     publication_run_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    pipeline_execution_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
+    )
     topic_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     source_entity_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     target_entity_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
@@ -2482,7 +2667,9 @@ class TrendSnapshotRow(Base):
             "as_of_date",
             "window",
             "aggregation_version",
+            "pipeline_execution_id",
             name="uq_trend_snapshots_identity",
+            postgresql_nulls_not_distinct=True,
         ),
         CheckConstraint("\"window\" IN ('7D', '30D', '90D')", name="ck_trend_snapshots_window"),
         CheckConstraint(
@@ -2538,6 +2725,12 @@ class TrendSnapshotRow(Base):
             name="fk_trend_snapshots_publication_run",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["pipeline_execution_id"],
+            ["pipeline_executions.id"],
+            name="fk_trend_snapshots_pipeline_execution",
+            ondelete="RESTRICT",
+        ),
         Index("ix_trend_snapshots_topic_as_of", "topic_id", "as_of_date"),
         Index("ix_trend_snapshots_publication_run", "publication_run_id"),
     )
@@ -2546,6 +2739,9 @@ class TrendSnapshotRow(Base):
     publication_run_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         nullable=False,
+    )
+    pipeline_execution_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
     )
     topic_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
@@ -2717,7 +2913,9 @@ class LineageSnapshotRow(Base):
             "max_edges",
             "permitted_relation_types",
             "lineage_version",
+            "pipeline_execution_id",
             name="uq_lineage_snapshots_identity",
+            postgresql_nulls_not_distinct=True,
         ),
         CheckConstraint(
             "cardinality(permitted_relation_types) BETWEEN 1 AND 3 "
@@ -2745,6 +2943,12 @@ class LineageSnapshotRow(Base):
             name="fk_lineage_snapshots_publication_run",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["pipeline_execution_id"],
+            ["pipeline_executions.id"],
+            name="fk_lineage_snapshots_pipeline_execution",
+            ondelete="RESTRICT",
+        ),
         Index("ix_lineage_snapshots_topic_as_of", "topic_id", "as_of_date"),
         Index("ix_lineage_snapshots_publication_run", "publication_run_id"),
     )
@@ -2753,6 +2957,9 @@ class LineageSnapshotRow(Base):
     publication_run_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         nullable=False,
+    )
+    pipeline_execution_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
     )
     topic_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),

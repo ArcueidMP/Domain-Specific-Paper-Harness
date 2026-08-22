@@ -11,6 +11,7 @@ from paper_harness.application.product_models import (
     GraphCorpusInput,
     GraphWriteResult,
     PeriodicReportInput,
+    ProductFailureInput,
     ProductPublicationInput,
 )
 from paper_harness.application.read_models import (
@@ -22,6 +23,7 @@ from paper_harness.application.read_models import (
     LineageDetail,
     PaperDetail,
     ProductRunDetail,
+    PublicationArtifactSummary,
     RelatedWorkDetail,
     ReportDetail,
     RunDetail,
@@ -60,7 +62,18 @@ from paper_harness.domain.knowledge import (
     TrendSnapshot,
     TrendWindow,
 )
-from paper_harness.domain.models import DailyRun, IngestionCursor, Paper, PaperStage, TopicConfig
+from paper_harness.domain.models import (
+    DailyRun,
+    IngestionCursor,
+    Paper,
+    PaperStage,
+    PipelineExecution,
+    PipelineExecutionContract,
+    PipelineExecutionMode,
+    RunOperation,
+    RunStatus,
+    TopicConfig,
+)
 from paper_harness.domain.reports import Report, ReportType
 from paper_harness.ports.arxiv import ArxivPaperRecord
 
@@ -92,6 +105,38 @@ class MigrationIncompatibleError(RepositoryError):
 
 
 class RepositoryPort(Protocol):
+    def daily_pipeline_lock(self, execution_id: UUID) -> AbstractContextManager[None]: ...
+
+    def get_pipeline_execution(self, execution_id: UUID) -> PipelineExecution | None: ...
+
+    def start_pipeline_execution(self, execution: PipelineExecution) -> PipelineExecution: ...
+
+    def restart_pipeline_execution(
+        self,
+        execution_id: UUID,
+        *,
+        started_at: datetime,
+        deadline_at: datetime,
+        contract: PipelineExecutionContract,
+    ) -> PipelineExecution: ...
+
+    def complete_pipeline_execution(
+        self,
+        execution_id: UUID,
+        *,
+        status: RunStatus,
+        completed_at: datetime,
+    ) -> PipelineExecution: ...
+
+    def fail_pipeline_execution(
+        self,
+        execution_id: UUID,
+        *,
+        completed_at: datetime,
+        error_code: str,
+        error_detail: str,
+    ) -> PipelineExecution: ...
+
     def daily_run_lock(
         self, topic_id: UUID, logical_date: date
     ) -> AbstractContextManager[None]: ...
@@ -100,7 +145,13 @@ class RepositoryPort(Protocol):
 
     def get_ingestion_cursor(self, topic_id: UUID) -> IngestionCursor | None: ...
 
-    def get_run_for_date(self, topic_id: UUID, logical_date: date) -> DailyRun | None: ...
+    def get_run_for_date(
+        self,
+        topic_id: UUID,
+        logical_date: date,
+        *,
+        pipeline_execution_id: UUID | None = None,
+    ) -> DailyRun | None: ...
 
     def start_ingestion_run(
         self,
@@ -110,7 +161,28 @@ class RepositoryPort(Protocol):
         started_at: datetime,
         cursor_from: datetime,
         cursor_to: datetime,
+        pipeline_execution_mode: PipelineExecutionMode = PipelineExecutionMode.STANDALONE,
+        pipeline_selection_limit: int | None = None,
+        pipeline_execution_id: UUID | None = None,
     ) -> DailyRun: ...
+
+    def restart_ingestion_run(
+        self,
+        run_id: UUID,
+        *,
+        started_at: datetime,
+        cursor_from: datetime,
+        cursor_to: datetime,
+        pipeline_selection_limit: int | None,
+    ) -> DailyRun: ...
+
+    def persist_ingestion_selection(
+        self,
+        run_id: UUID,
+        *,
+        selected_paper_version_ids: tuple[UUID, ...],
+        updated_at: datetime,
+    ) -> None: ...
 
     def persist_arxiv_batch_and_complete(
         self,
@@ -119,6 +191,7 @@ class RepositoryPort(Protocol):
         run_id: UUID,
         records: tuple[ArxivPaperRecord, ...],
         watermark: datetime,
+        advance_shared_cursor: bool,
         persisted_at: datetime,
         completed_at: datetime,
     ) -> DailyRun: ...
@@ -140,7 +213,13 @@ class RepositoryPort(Protocol):
         self, *, topic_slug: str | None, limit: int, offset: int
     ) -> tuple[tuple[Paper, ...], int]: ...
 
+    def list_published_papers(
+        self, *, topic_slug: str | None, limit: int, offset: int
+    ) -> tuple[tuple[Paper, ...], int]: ...
+
     def get_paper(self, paper_id: UUID) -> PaperDetail | None: ...
+
+    def get_published_paper(self, paper_id: UUID) -> PaperDetail | None: ...
 
     def list_runs(
         self, *, topic_slug: str | None, limit: int, offset: int
@@ -190,7 +269,15 @@ class RepositoryPort(Protocol):
         *,
         logical_date: date | None,
         topic_slug: str | None,
+        pipeline_execution_id: UUID | None = None,
     ) -> ProductRunDetail | None: ...
+
+    def get_publication_artifact_summary(
+        self,
+        *,
+        publication_run_id: UUID,
+        pipeline_execution_id: UUID,
+    ) -> PublicationArtifactSummary | None: ...
 
     def list_reports(
         self,
@@ -210,10 +297,20 @@ class RepositoryPort(Protocol):
         topic_slug: str | None,
     ) -> ReportDetail | None: ...
 
-    def get_product_run_for_date(self, topic_id: UUID, logical_date: date) -> DailyRun | None: ...
+    def get_product_run_for_date(
+        self,
+        topic_id: UUID,
+        logical_date: date,
+        *,
+        pipeline_execution_id: UUID | None = None,
+    ) -> DailyRun | None: ...
 
     def get_product_publication_input(
-        self, topic_id: UUID, logical_date: date
+        self,
+        topic_id: UUID,
+        logical_date: date,
+        *,
+        pipeline_execution_id: UUID | None = None,
     ) -> ProductPublicationInput | None: ...
 
     def start_product_run(
@@ -222,7 +319,9 @@ class RepositoryPort(Protocol):
         topic_id: UUID,
         logical_date: date,
         source: ProductPublicationInput,
+        upstream_failures: tuple[ProductFailureInput, ...] = (),
         started_at: datetime,
+        pipeline_execution_id: UUID | None = None,
     ) -> DailyRun: ...
 
     def restart_product_run(
@@ -230,6 +329,7 @@ class RepositoryPort(Protocol):
         run_id: UUID,
         *,
         source: ProductPublicationInput,
+        upstream_failures: tuple[ProductFailureInput, ...] = (),
         started_at: datetime,
     ) -> DailyRun: ...
 
@@ -265,7 +365,13 @@ class RepositoryPort(Protocol):
         updated_at: datetime,
     ) -> None: ...
 
-    def get_graph_corpus(self, topic_id: UUID, *, as_of_date: date) -> GraphCorpusInput: ...
+    def get_graph_corpus(
+        self,
+        topic_id: UUID,
+        *,
+        as_of_date: date,
+        current_publication_run_id: UUID | None = None,
+    ) -> GraphCorpusInput: ...
 
     def persist_product_aggregates(
         self,
@@ -310,7 +416,58 @@ class RepositoryPort(Protocol):
         self, topic_id: UUID, paper_ids: tuple[UUID, ...]
     ) -> tuple[AnalysisTarget, ...]: ...
 
-    def get_analysis_run_for_date(self, topic_id: UUID, logical_date: date) -> DailyRun | None: ...
+    def get_analysis_targets_by_version_ids(
+        self,
+        topic_id: UUID,
+        paper_version_ids: tuple[UUID, ...],
+    ) -> tuple[AnalysisTarget, ...]: ...
+
+    def get_analyzed_paper_version_ids(
+        self,
+        paper_version_ids: tuple[UUID, ...],
+        *,
+        analysis_scope: AnalysisScope,
+    ) -> frozenset[UUID]: ...
+
+    def get_reusable_analyzed_paper_version_ids(
+        self,
+        paper_version_ids: tuple[UUID, ...],
+        *,
+        analysis_scope: AnalysisScope,
+        provider: str,
+        configured_model: str,
+        prompt_version: str,
+        parser_name: str | None,
+        parser_version: str | None,
+    ) -> frozenset[UUID]: ...
+
+    def get_canonically_published_paper_version_ids(
+        self,
+        paper_version_ids: tuple[UUID, ...],
+    ) -> frozenset[UUID]: ...
+
+    def attach_existing_analysis_to_run(
+        self,
+        *,
+        run_id: UUID,
+        paper_version_id: UUID,
+        analysis_scope: AnalysisScope,
+        provider: str,
+        configured_model: str,
+        prompt_version: str,
+        parser_name: str | None,
+        parser_version: str | None,
+        updated_at: datetime,
+    ) -> bool: ...
+
+    def get_analysis_run_for_date(
+        self,
+        topic_id: UUID,
+        logical_date: date,
+        *,
+        pipeline_execution_id: UUID | None = None,
+        operation: RunOperation = RunOperation.STRUCTURED_ANALYSIS,
+    ) -> DailyRun | None: ...
 
     def start_analysis_run(
         self,
@@ -320,6 +477,19 @@ class RepositoryPort(Protocol):
         analysis_scope: AnalysisScope,
         started_at: datetime,
         targets: tuple[AnalysisTarget, ...],
+        pipeline_execution_mode: PipelineExecutionMode = PipelineExecutionMode.STANDALONE,
+        pipeline_selection_limit: int | None = None,
+        pipeline_execution_id: UUID | None = None,
+        operation: RunOperation = RunOperation.STRUCTURED_ANALYSIS,
+    ) -> DailyRun: ...
+
+    def restart_analysis_run(
+        self,
+        run_id: UUID,
+        *,
+        targets: tuple[AnalysisTarget, ...],
+        started_at: datetime,
+        pipeline_selection_limit: int | None,
     ) -> DailyRun: ...
 
     def advance_analysis_item(
@@ -381,6 +551,7 @@ class RepositoryPort(Protocol):
         *,
         paper_version_id: UUID | None,
         analysis_scope: AnalysisScope | None = None,
+        canonical_only: bool = False,
     ) -> AnalysisDetail | None: ...
 
     def list_paper_evidence(
@@ -390,6 +561,7 @@ class RepositoryPort(Protocol):
         analysis_id: UUID,
         paper_version_id: UUID | None,
         analysis_scope: AnalysisScope | None = None,
+        canonical_only: bool = False,
     ) -> tuple[Evidence, ...] | None: ...
 
     def start_historical_backfill(self, run: HistoricalBackfillRun) -> HistoricalBackfillRun: ...
@@ -420,6 +592,36 @@ class RepositoryPort(Protocol):
         completed_at: datetime,
     ) -> HistoricalBackfillRun: ...
 
+    def list_historical_representative_arxiv_ids(
+        self,
+        topic_id: UUID,
+        *,
+        limit: int,
+    ) -> tuple[str, ...]: ...
+
+    def list_historical_representative_version_ids(
+        self,
+        topic_id: UUID,
+        *,
+        limit: int,
+    ) -> tuple[UUID, ...]: ...
+
+    def persist_historical_arxiv_records(
+        self,
+        *,
+        topic: TopicConfig,
+        records: tuple[ArxivPaperRecord, ...],
+        persisted_at: datetime,
+    ) -> tuple[UUID, ...]: ...
+
+    def materialize_search_candidate_arxiv_records(
+        self,
+        *,
+        topic: TopicConfig,
+        candidates: tuple[tuple[UUID, ArxivPaperRecord], ...],
+        persisted_at: datetime,
+    ) -> tuple[tuple[UUID, UUID, UUID], ...]: ...
+
     def fail_historical_backfill(
         self,
         run_id: UUID,
@@ -432,6 +634,10 @@ class RepositoryPort(Protocol):
     def start_search_session(self, session: SearchSession) -> SearchSession: ...
 
     def get_search_session(self, session_id: UUID) -> SearchSessionDetail | None: ...
+
+    def restart_search_session(
+        self, session_id: UUID, *, restarted_at: datetime
+    ) -> SearchSession: ...
 
     def start_search_action(self, action: SearchAction) -> SearchAction: ...
 
@@ -458,6 +664,12 @@ class RepositoryPort(Protocol):
     ) -> None: ...
 
     def update_search_candidate_decisions(
+        self,
+        session_id: UUID,
+        candidates: tuple[SearchCandidate, ...],
+    ) -> None: ...
+
+    def update_search_comparison_targets(
         self,
         session_id: UUID,
         candidates: tuple[SearchCandidate, ...],
@@ -513,15 +725,27 @@ class RepositoryPort(Protocol):
         paper_version_id: UUID,
         *,
         analysis_id: UUID | None = None,
+        analysis_scope: AnalysisScope | None = None,
+        provider: str | None = None,
+        configured_model: str | None = None,
+        prompt_version: str | None = None,
+        parser_name: str | None = None,
+        parser_version: str | None = None,
     ) -> ComparisonPaperInput | None: ...
 
     def persist_comparison_bundle(self, bundle: ComparisonBundle) -> None: ...
 
-    def get_comparison(self, comparison_id: UUID) -> ComparisonDetail | None: ...
+    def get_comparison(
+        self,
+        comparison_id: UUID,
+        *,
+        canonical_only: bool = False,
+    ) -> ComparisonDetail | None: ...
 
     def get_related_work(
         self,
         paper_id: UUID,
         *,
         paper_version_id: UUID | None = None,
+        search_session_id: UUID | None = None,
     ) -> RelatedWorkDetail | None: ...

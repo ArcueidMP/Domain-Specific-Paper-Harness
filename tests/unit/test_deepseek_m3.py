@@ -322,30 +322,80 @@ def test_selector_timeout_bounds_http_requests_and_the_shared_retry_deadline() -
     assert observed_timeouts == [3.0, 1.0]
 
 
-def test_crawler_rejects_query_count_above_request_bound() -> None:
+def test_crawler_deduplicates_and_caps_queries_in_model_order() -> None:
     payload = _crawler_payload()
-    payload["queries"] = ["one", "two", "three"]
+    payload["queries"] = [None, "   ", " one ", 12, "one", "two", "three"]
 
-    with pytest.raises(LLMOutputError, match="query bound"):
-        _client(payload).plan_scholarly_search(_crawler_request())
+    result = _client(payload).plan_scholarly_search(_crawler_request())
+
+    assert result.queries == ("one", "two")
 
 
-def test_selector_rejects_missing_candidate_decision() -> None:
+def test_selector_accepts_a_nonempty_subset_in_request_order() -> None:
     payload = _selection_payload()
     decisions = cast(list[dict[str, object]], payload["decisions"])
-    payload["decisions"] = decisions[:1]
+    payload["decisions"] = list(reversed(decisions))[:1]
 
-    with pytest.raises(LLMOutputError, match="every requested candidate once"):
-        _client(payload).select_prior_work(_selection_request())
+    result = _client(payload).select_prior_work(_selection_request())
+
+    assert tuple(item.semantic_scholar_id for item in result.decisions) == ("b" * 40,)
+    assert result.decisions[0].decision is SelectionDecision.REJECTED
 
 
-def test_selector_rejects_selected_count_above_bound() -> None:
+def test_selector_caps_over_selection_in_requested_order() -> None:
     payload = _selection_payload()
     decisions = list(cast(list[dict[str, object]], payload["decisions"]))
     decisions[1] = {**decisions[1], "decision": "SELECTED"}
-    payload["decisions"] = decisions
+    payload["decisions"] = list(reversed(decisions))
 
-    with pytest.raises(LLMOutputError, match="selected-candidate bound"):
+    result = _client(payload).select_prior_work(_selection_request())
+
+    assert tuple(item.semantic_scholar_id for item in result.decisions) == ("a" * 40,)
+    assert result.decisions[0].decision is SelectionDecision.SELECTED
+
+
+def test_selector_discards_malformed_decisions_and_keeps_valid_siblings() -> None:
+    payload = _selection_payload()
+    decisions = list(cast(list[dict[str, object]], payload["decisions"]))
+    payload["decisions"] = [
+        None,
+        {**decisions[0], "decision": "UNSUPPORTED"},
+        {**decisions[1], "reason": "  Not methodologically relevant.  "},
+    ]
+
+    result = _client(payload).select_prior_work(_selection_request())
+
+    assert tuple(item.semantic_scholar_id for item in result.decisions) == ("b" * 40,)
+    assert result.decisions[0].reason == "Not methodologically relevant."
+
+
+def test_selector_filters_unknown_and_conflicting_duplicate_candidate_ids() -> None:
+    payload = _selection_payload()
+    decisions = list(cast(list[dict[str, object]], payload["decisions"]))
+    payload["decisions"] = [
+        decisions[0],
+        {**decisions[0], "decision": "REJECTED"},
+        decisions[1],
+        {**decisions[1]},
+        {**decisions[0], "semantic_scholar_id": "unknown"},
+    ]
+
+    result = _client(payload).select_prior_work(_selection_request())
+
+    assert tuple(item.semantic_scholar_id for item in result.decisions) == ("b" * 40,)
+
+
+def test_selector_rejects_output_with_no_usable_requested_decision() -> None:
+    payload = _selection_payload()
+    payload["decisions"] = [
+        {
+            "semantic_scholar_id": "unknown",
+            "decision": "REJECTED",
+            "reason": "Not a requested candidate.",
+        }
+    ]
+
+    with pytest.raises(LLMOutputError, match="no usable candidate decisions"):
         _client(payload).select_prior_work(_selection_request())
 
 
@@ -359,7 +409,73 @@ def test_comparison_maps_fixed_dimensions_evidence_and_provenance() -> None:
     assert result.prompt_version == "m3-comparison-v1"
 
 
-def test_comparison_rejects_unknown_evidence_reference() -> None:
+def test_comparison_normalizes_order_deduplicates_and_keeps_honest_partial_dimensions() -> None:
+    payload = _comparison_payload()
+    dimensions = list(cast(list[dict[str, object]], payload["dimensions"]))
+    payload["dimensions"] = list(reversed(dimensions))
+
+    result = _client(payload).compare_papers(_comparison_request())
+
+    assert tuple(item.name for item in result.dimensions) == COMPARISON_DIMENSION_ORDER
+
+    payload["dimensions"] = [*dimensions[:-1], dimensions[0]]
+    normalized = _client(payload).compare_papers(_comparison_request())
+
+    assert tuple(item.name for item in normalized.dimensions) == COMPARISON_DIMENSION_ORDER[:-1]
+    assert normalized.dimensions[0].source_value == dimensions[0]["source_value"]
+
+
+def test_comparison_discards_malformed_optional_items_and_trims_core_text() -> None:
+    payload = _comparison_payload()
+    dimensions = list(cast(list[dict[str, object]], payload["dimensions"]))
+    payload["comparability_reason"] = "  The reported benchmark versions differ.  "
+    payload["summary"] = "  The available evidence indicates related planning methods.  "
+    payload["dimensions"] = [
+        {"name": "UNSUPPORTED", "source_value": "Bad"},
+        {**dimensions[1], "assessment": "   "},
+        {
+            **dimensions[0],
+            "source_value": "  Reported in the supplied evidence.  ",
+            "source_evidence_ids": ["not-a-uuid", str(SOURCE_EVIDENCE_ID)],
+        },
+    ]
+    payload["relations"] = [
+        {
+            "relation_type": "UNSUPPORTED",
+            "justification": "Ignored.",
+            "evidence_ids": [str(SOURCE_EVIDENCE_ID)],
+            "confidence": 0.5,
+        },
+        {
+            "relation_type": "SIMILAR_TO",
+            "justification": "  Both papers address reliable planning.  ",
+            "evidence_ids": ["not-a-uuid", str(SOURCE_EVIDENCE_ID)],
+            "confidence": 0.8,
+        },
+    ]
+
+    result = _client(payload).compare_papers(_comparison_request())
+
+    assert result.comparability_reason == "The reported benchmark versions differ."
+    assert result.summary == "The available evidence indicates related planning methods."
+    assert tuple(item.name for item in result.dimensions) == (COMPARISON_DIMENSION_ORDER[0],)
+    assert result.dimensions[0].source_value == "Reported in the supplied evidence."
+    assert result.relations[0].justification == "Both papers address reliable planning."
+    assert result.relations[0].evidence_ids == (SOURCE_EVIDENCE_ID,)
+
+
+def test_comparison_accepts_omitted_optional_collections_without_defaults() -> None:
+    payload = _comparison_payload()
+    payload.pop("dimensions")
+    payload["relations"] = None
+
+    result = _client(payload).compare_papers(_comparison_request())
+
+    assert result.dimensions == ()
+    assert result.relations == ()
+
+
+def test_comparison_filters_unknown_or_wrong_side_evidence_reference() -> None:
     payload = _comparison_payload()
     dimensions = list(cast(list[dict[str, object]], payload["dimensions"]))
     dimensions[0] = {
@@ -368,11 +484,13 @@ def test_comparison_rejects_unknown_evidence_reference() -> None:
     }
     payload["dimensions"] = dimensions
 
-    with pytest.raises(LLMOutputError, match="unknown evidence"):
-        _client(payload).compare_papers(_comparison_request())
+    result = _client(payload).compare_papers(_comparison_request())
+
+    assert result.dimensions[0].source_evidence_ids == ()
+    assert result.dimensions[0].target_evidence_ids == (TARGET_EVIDENCE_ID,)
 
 
-def test_direct_comparison_requires_bilateral_result_evidence() -> None:
+def test_direct_comparison_without_bilateral_result_evidence_is_downgraded() -> None:
     payload = _comparison_payload()
     payload["comparability_status"] = "DIRECTLY_COMPARABLE"
     dimensions = list(cast(list[dict[str, object]], payload["dimensions"]))
@@ -380,11 +498,24 @@ def test_direct_comparison_requires_bilateral_result_evidence() -> None:
     dimensions[result_position] = {**dimensions[result_position], "target_evidence_ids": []}
     payload["dimensions"] = dimensions
 
-    with pytest.raises(LLMOutputError, match="domain validation"):
-        _client(payload).compare_papers(_comparison_request())
+    result = _client(payload).compare_papers(_comparison_request())
+
+    assert result.comparability_status is ComparabilityStatus.PARTIALLY_COMPARABLE
 
 
-def test_improves_on_requires_direct_comparability_and_bilateral_evidence() -> None:
+def test_direct_comparison_without_usable_dimensions_is_insufficient() -> None:
+    payload = _comparison_payload()
+    payload["comparability_status"] = "DIRECTLY_COMPARABLE"
+    payload["dimensions"] = None
+
+    result = _client(payload).compare_papers(_comparison_request())
+
+    assert result.comparability_status is ComparabilityStatus.INSUFFICIENT_EVIDENCE
+    assert result.dimensions == ()
+    assert result.relations == ()
+
+
+def test_ungrounded_improves_on_relation_is_filtered() -> None:
     payload = _comparison_payload()
     relations = list(cast(list[dict[str, object]], payload["relations"]))
     relations[0] = {
@@ -394,14 +525,17 @@ def test_improves_on_requires_direct_comparability_and_bilateral_evidence() -> N
     }
     payload["relations"] = relations
 
-    with pytest.raises(LLMOutputError, match="direct comparability and bilateral evidence"):
-        _client(payload).compare_papers(_comparison_request())
+    result = _client(payload).compare_papers(_comparison_request())
+
+    assert result.relations == ()
 
 
-def test_comparison_rejects_duplicate_relation_types() -> None:
+def test_comparison_deduplicates_relation_types_with_stable_first_wins() -> None:
     payload = _comparison_payload()
     relation = cast(list[dict[str, object]], payload["relations"])[0]
-    payload["relations"] = [relation, dict(relation)]
+    payload["relations"] = [relation, {**relation, "confidence": 0.1}]
 
-    with pytest.raises(LLMOutputError, match="duplicate relation types"):
-        _client(payload).compare_papers(_comparison_request())
+    result = _client(payload).compare_papers(_comparison_request())
+
+    assert len(result.relations) == 1
+    assert result.relations[0].confidence == relation["confidence"]

@@ -22,6 +22,14 @@ resource "google_service_account" "scheduler" {
   depends_on = [google_project_service.required["iam.googleapis.com"]]
 }
 
+resource "google_service_account" "migration" {
+  project      = var.project_id
+  account_id   = "${var.name_prefix}-migration"
+  display_name = "Paper Harness one-off database migration"
+
+  depends_on = [google_project_service.required["iam.googleapis.com"]]
+}
+
 resource "google_service_account" "grobid" {
   count = var.deploy_analysis_resources ? 1 : 0
 
@@ -32,54 +40,31 @@ resource "google_service_account" "grobid" {
   depends_on = [google_project_service.required["iam.googleapis.com"]]
 }
 
-resource "google_project_iam_member" "web_log_writer" {
-  project = var.project_id
-  role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${google_service_account.web.email}"
-}
-
-resource "google_project_iam_member" "daily_log_writer" {
-  project = var.project_id
-  role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${google_service_account.daily.email}"
-}
-
-resource "google_project_iam_member" "grobid_log_writer" {
-  count = var.deploy_analysis_resources ? 1 : 0
-
-  project = var.project_id
-  role    = "roles/logging.logWriter"
-  member  = "serviceAccount:${google_service_account.grobid[0].email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "web_database" {
+resource "google_secret_manager_secret_iam_binding" "database_accessors" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.database_url.secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.web.email}"
+  members = [
+    "serviceAccount:${google_service_account.daily.email}",
+    "serviceAccount:${google_service_account.migration.email}",
+    "serviceAccount:${google_service_account.web.email}",
+  ]
 }
 
-resource "google_secret_manager_secret_iam_member" "daily_database" {
-  project   = var.project_id
-  secret_id = google_secret_manager_secret.database_url.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.daily.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "daily_deepseek" {
-  count = var.deploy_analysis_resources ? 1 : 0
+resource "google_secret_manager_secret_iam_binding" "deepseek_accessors" {
+  count = var.deploy_daily_resources ? 1 : 0
 
   project   = var.project_id
   secret_id = google_secret_manager_secret.deepseek_api_key.secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.daily.email}"
+  members   = ["serviceAccount:${google_service_account.daily.email}"]
 }
 
-resource "google_secret_manager_secret_iam_member" "daily_semantic_scholar" {
-  count = var.attach_semantic_scholar_secret_to_daily ? 1 : 0
+resource "google_secret_manager_secret_iam_binding" "semantic_scholar_accessors" {
+  count = var.deploy_daily_resources ? 1 : 0
 
   project   = var.project_id
   secret_id = google_secret_manager_secret.semantic_scholar_api_key.secret_id
   role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.daily.email}"
+  members   = ["serviceAccount:${google_service_account.daily.email}"]
 }

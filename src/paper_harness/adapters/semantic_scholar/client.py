@@ -40,6 +40,7 @@ MAX_POSITIVE_PAPER_IDS = 100
 MAX_PAGE_SIZE = 100
 MAX_PAGINATION_PAGES = 20
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+MAX_SEARCH_TOTAL = (1 << 63) - 1
 PAPER_FIELDS = ",".join(
     (
         "paperId",
@@ -59,7 +60,51 @@ PAPER_FIELDS = ",".join(
 )
 
 _SEMANTIC_SCHOLAR_ID = re.compile(r"^[0-9a-f]{40}$")
+_MAX_SEARCH_TOTAL_TEXT = str(MAX_SEARCH_TOTAL)
+_SAFE_VALIDATION_LOCATIONS = frozenset(
+    {
+        "abstract",
+        "authorId",
+        "authors",
+        "citationCount",
+        "citedPaper",
+        "citingPaper",
+        "context",
+        "contexts",
+        "contextsWithIntent",
+        "corpusId",
+        "data",
+        "disclaimer",
+        "externalIds",
+        "influentialCitationCount",
+        "intents",
+        "isInfluential",
+        "license",
+        "name",
+        "next",
+        "offset",
+        "openAccessPdf",
+        "paperId",
+        "publicationDate",
+        "recommendedPapers",
+        "referenceCount",
+        "status",
+        "title",
+        "total",
+        "url",
+        "venue",
+        "year",
+    }
+)
 _ResponseModel = TypeVar("_ResponseModel", bound=BaseModel)
+_SchemaOperation = Literal[
+    "search",
+    "paper",
+    "arxiv_lookup",
+    "references",
+    "citations",
+    "recommendations",
+]
 
 
 class SemanticScholarSettings(BaseModel):
@@ -95,42 +140,63 @@ class SemanticScholarSettings(BaseModel):
 
 
 class _PayloadModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
+
+
+def _normalize_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if type(value) is not str:
+        raise ValueError("optional text metadata must be a string or null")
+    normalized = value.strip()
+    return normalized or None
 
 
 class _AuthorPayload(_PayloadModel):
     author_id: str | None = Field(alias="authorId", max_length=64)
     name: str = Field(min_length=1, max_length=500)
 
-    @field_validator("author_id", "name")
+    @field_validator("author_id", mode="before")
     @classmethod
-    def validate_author_text(cls, value: str | None) -> str | None:
-        if value is not None and value != value.strip():
-            raise ValueError("author fields must be trimmed")
-        return value
+    def normalize_author_id(cls, value: object) -> str | None:
+        return _normalize_optional_text(value)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_author_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
 
 class _PaperPayload(_PayloadModel):
     paper_id: str = Field(alias="paperId", pattern=r"^[0-9a-f]{40}$")
     corpus_id: int = Field(alias="corpusId", strict=True, ge=1)
-    external_ids: dict[str, str | int] | None = Field(alias="externalIds", max_length=50)
-    url: str = Field(min_length=1, max_length=2000)
+    external_ids: dict[str, str | int] | None = Field(
+        default=None, alias="externalIds", max_length=50
+    )
+    # The provider URL is display metadata. The adapter derives the approved
+    # canonical URL from paperId instead of making a paper depend on this field.
+    url: object | None = None
     title: str = Field(min_length=1, max_length=10_000)
-    abstract: str | None = Field(max_length=1_000_000)
-    venue: str | None = Field(max_length=1000)
-    year: int | None = Field(strict=True, ge=1000, le=3000)
-    publication_date: date | None = Field(alias="publicationDate")
-    authors: tuple[_AuthorPayload, ...] = Field(max_length=500)
-    citation_count: int = Field(alias="citationCount", strict=True, ge=0)
-    influential_citation_count: int = Field(alias="influentialCitationCount", strict=True, ge=0)
-    reference_count: int = Field(alias="referenceCount", strict=True, ge=0)
+    abstract: str | None = Field(default=None, max_length=1_000_000)
+    venue: str | None = Field(default=None, max_length=1000)
+    year: int | None = Field(default=None, strict=True, ge=1000, le=3000)
+    publication_date: date | None = Field(default=None, alias="publicationDate")
+    authors: tuple[_AuthorPayload, ...] = Field(default=(), max_length=500)
+    citation_count: int = Field(default=0, alias="citationCount", strict=True, ge=0)
+    influential_citation_count: int = Field(
+        default=0, alias="influentialCitationCount", strict=True, ge=0
+    )
+    reference_count: int = Field(default=0, alias="referenceCount", strict=True, ge=0)
 
-    @field_validator("url", "title", "abstract", "venue")
+    @field_validator("title", mode="before")
     @classmethod
-    def validate_paper_text(cls, value: str | None) -> str | None:
-        if value is not None and (not value.strip() or value != value.strip()):
-            raise ValueError("paper text fields must be non-empty trimmed text")
-        return value
+    def normalize_required_paper_text(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("abstract", "venue", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> str | None:
+        return _normalize_optional_text(value)
 
     @field_validator("external_ids")
     @classmethod
@@ -153,37 +219,58 @@ class _PaperPayload(_PayloadModel):
         return value
 
 
+class _SearchPaperPayload(_PaperPayload):
+    open_access_pdf: object | None = Field(
+        default=None,
+        alias="openAccessPdf",
+    )
+
+
 class _SearchPage(_PayloadModel):
-    total: int = Field(strict=True, ge=0)
+    total: int = Field(strict=True, ge=0, le=MAX_SEARCH_TOTAL)
     offset: int = Field(strict=True, ge=0)
     next_offset: int | None = Field(default=None, alias="next", strict=True, ge=0)
-    data: tuple[_PaperPayload, ...] = Field(max_length=MAX_PAGE_SIZE)
+    data: tuple[object, ...] = Field(max_length=MAX_PAGE_SIZE)
+
+    @field_validator("total", mode="before")
+    @classmethod
+    def normalize_total(cls, value: object) -> object:
+        if type(value) is not str:
+            return value
+        if (
+            not value
+            or len(value) > len(_MAX_SEARCH_TOTAL_TEXT)
+            or re.fullmatch(r"(?:0|[1-9][0-9]*)", value) is None
+            or (len(value) == len(_MAX_SEARCH_TOTAL_TEXT) and value > _MAX_SEARCH_TOTAL_TEXT)
+        ):
+            raise ValueError("search total must be a bounded canonical decimal")
+        return int(value)
 
 
 class _ReferenceItem(_PayloadModel):
-    paper: _PaperPayload = Field(alias="citedPaper")
+    paper: object = Field(alias="citedPaper")
 
 
 class _CitationItem(_PayloadModel):
-    paper: _PaperPayload = Field(alias="citingPaper")
+    paper: object = Field(alias="citingPaper")
 
 
 class _ReferencePage(_PayloadModel):
     offset: int = Field(strict=True, ge=0)
     next_offset: int | None = Field(default=None, alias="next", strict=True, ge=0)
     total: int | None = Field(default=None, strict=True, ge=0)
-    data: tuple[_ReferenceItem, ...] = Field(max_length=MAX_PAGE_SIZE)
+    data: tuple[object, ...] = Field(max_length=MAX_PAGE_SIZE)
 
 
 class _CitationPage(_PayloadModel):
     offset: int = Field(strict=True, ge=0)
     next_offset: int | None = Field(default=None, alias="next", strict=True, ge=0)
     total: int | None = Field(default=None, strict=True, ge=0)
-    data: tuple[_CitationItem, ...] = Field(max_length=MAX_PAGE_SIZE)
+    data: tuple[object, ...] = Field(max_length=MAX_PAGE_SIZE)
 
 
 class _RecommendationsResponse(_PayloadModel):
-    recommended_papers: tuple[_PaperPayload, ...] = Field(
+    recommended_papers: tuple[object, ...] = Field(
         alias="recommendedPapers", max_length=MAX_RECOMMENDATIONS
     )
 
@@ -281,6 +368,7 @@ class SemanticScholarClient:
                 },
                 response_model=_SearchPage,
                 operation_deadline=operation_deadline,
+                schema_operation="search",
             )
             _validate_page(
                 page.offset,
@@ -292,8 +380,8 @@ class SemanticScholarClient:
             _append_unique(
                 papers,
                 paper_ids,
-                tuple(item for item in page.data),
-                operation="search",
+                page.data,
+                payload_model=_SearchPaperPayload,
             )
             if len(papers) >= limit or page.next_offset is None:
                 return tuple(papers[:limit])
@@ -313,6 +401,7 @@ class SemanticScholarClient:
             params={"fields": PAPER_FIELDS},
             response_model=_PaperPayload,
             operation_deadline=operation_deadline,
+            schema_operation="paper",
         )
         return _to_paper(payload)
 
@@ -327,6 +416,7 @@ class SemanticScholarClient:
             params={"fields": PAPER_FIELDS},
             response_model=_PaperPayload,
             operation_deadline=self._operation_deadline(timeout_seconds),
+            schema_operation="arxiv_lookup",
         )
         paper = _to_paper(payload)
         if paper.external_ids.arxiv_id != arxiv_id:
@@ -363,11 +453,7 @@ class SemanticScholarClient:
             raise ScholarlySearchRequestError(
                 "Semantic Scholar recommendations require between 1 and 100 positive papers"
             )
-        paper_ids = tuple(_validate_paper_id(value) for value in positive_paper_ids)
-        if len(set(paper_ids)) != len(paper_ids):
-            raise ScholarlySearchRequestError(
-                "Semantic Scholar recommendation paper identities must be unique"
-            )
+        paper_ids = tuple(dict.fromkeys(_validate_paper_id(value) for value in positive_paper_ids))
         response = self._request_model(
             "POST",
             f"{self._settings.recommendations_base_url}/papers/",
@@ -375,12 +461,12 @@ class SemanticScholarClient:
             json_body={"positivePaperIds": list(paper_ids), "negativePaperIds": []},
             response_model=_RecommendationsResponse,
             operation_deadline=self._operation_deadline(timeout_seconds),
+            schema_operation="recommendations",
         )
-        if len(response.recommended_papers) > self._recommendation_limit:
-            raise ScholarlySearchResponseError(
-                "Semantic Scholar returned more recommendations than requested"
-            )
-        return _convert_unique(response.recommended_papers, operation="recommendations")
+        return _convert_unique(
+            response.recommended_papers,
+            payload_model=_PaperPayload,
+        )[: self._recommendation_limit]
 
     def _get_relations(
         self,
@@ -407,8 +493,12 @@ class SemanticScholarClient:
                     },
                     response_model=_ReferencePage,
                     operation_deadline=operation_deadline,
+                    schema_operation="references",
                 )
-                payloads = tuple(item.paper for item in page.data)
+                payloads = _relation_paper_values(
+                    page.data,
+                    item_model=_ReferenceItem,
+                )
             else:
                 page = self._request_model(
                     "GET",
@@ -420,8 +510,12 @@ class SemanticScholarClient:
                     },
                     response_model=_CitationPage,
                     operation_deadline=operation_deadline,
+                    schema_operation="citations",
                 )
-                payloads = tuple(item.paper for item in page.data)
+                payloads = _relation_paper_values(
+                    page.data,
+                    item_model=_CitationItem,
+                )
             _validate_page(
                 page.offset,
                 offset,
@@ -429,7 +523,12 @@ class SemanticScholarClient:
                 len(payloads),
                 requested_page_size,
             )
-            _append_unique(papers, paper_ids, payloads, operation=relation)
+            _append_unique(
+                papers,
+                paper_ids,
+                payloads,
+                payload_model=_PaperPayload,
+            )
             if len(papers) >= self._max_relation_results or page.next_offset is None:
                 return tuple(papers[: self._max_relation_results])
             offset = page.next_offset
@@ -445,6 +544,7 @@ class SemanticScholarClient:
         params: dict[str, str | int],
         response_model: type[_ResponseModel],
         operation_deadline: float,
+        schema_operation: _SchemaOperation,
         json_body: dict[str, object] | None = None,
     ) -> _ResponseModel:
         retry_policy = self._remaining_retry_policy(operation_deadline)
@@ -515,9 +615,16 @@ class SemanticScholarClient:
             _raise_for_status(response.status_code)
             try:
                 return response_model.model_validate_json(response.content)
-            except (RecursionError, ValueError, ValidationError):
+            except ValidationError as error:
+                summary = _validation_error_summary(error)
                 raise ScholarlySearchResponseError(
-                    "Semantic Scholar returned an invalid response schema"
+                    "Semantic Scholar returned an invalid response schema "
+                    f"for operation={schema_operation} ({summary})"
+                ) from None
+            except (RecursionError, ValueError):
+                raise ScholarlySearchResponseError(
+                    "Semantic Scholar returned an invalid response schema "
+                    f"for operation={schema_operation}"
                 ) from None
         finally:
             response.close()
@@ -639,42 +746,64 @@ def _validate_page(
     item_count: int,
     requested_page_size: int,
 ) -> None:
-    if response_offset != requested_offset:
-        raise ScholarlySearchResponseError(
-            "Semantic Scholar pagination offset did not match the request"
-        )
-    if item_count > requested_page_size:
-        raise ScholarlySearchResponseError(
-            "Semantic Scholar returned more page items than requested"
-        )
-    if next_offset is not None and (item_count == 0 or next_offset <= requested_offset):
+    del response_offset, item_count, requested_page_size
+    if next_offset is not None and next_offset <= requested_offset:
         raise ScholarlySearchResponseError("Semantic Scholar returned an invalid pagination cursor")
 
 
 def _append_unique(
     papers: list[ScholarlyPaper],
     paper_ids: set[str],
-    payloads: tuple[_PaperPayload, ...],
+    values: tuple[object, ...],
     *,
-    operation: str,
+    payload_model: type[_PaperPayload],
 ) -> None:
-    for payload in payloads:
-        paper = _to_paper(payload)
+    for value in values:
+        paper = _to_collection_paper(value, payload_model=payload_model)
+        if paper is None:
+            continue
         if paper.semantic_scholar_id in paper_ids:
-            raise ScholarlySearchResponseError(
-                f"Semantic Scholar {operation} returned a duplicate paper identity"
-            )
+            continue
         paper_ids.add(paper.semantic_scholar_id)
         papers.append(paper)
 
 
 def _convert_unique(
-    payloads: tuple[_PaperPayload, ...], *, operation: str
+    values: tuple[object, ...],
+    *,
+    payload_model: type[_PaperPayload],
 ) -> tuple[ScholarlyPaper, ...]:
     papers: list[ScholarlyPaper] = []
     paper_ids: set[str] = set()
-    _append_unique(papers, paper_ids, payloads, operation=operation)
+    _append_unique(papers, paper_ids, values, payload_model=payload_model)
     return tuple(papers)
+
+
+def _relation_paper_values(
+    values: tuple[object, ...],
+    *,
+    item_model: type[_ReferenceItem] | type[_CitationItem],
+) -> tuple[object, ...]:
+    papers: list[object] = []
+    for value in values:
+        try:
+            item = item_model.model_validate(value, strict=False)
+        except (RecursionError, ValidationError, ValueError):
+            continue
+        papers.append(item.paper)
+    return tuple(papers)
+
+
+def _to_collection_paper(
+    value: object,
+    *,
+    payload_model: type[_PaperPayload],
+) -> ScholarlyPaper | None:
+    try:
+        payload = payload_model.model_validate(value, strict=False)
+        return _to_paper(payload)
+    except (RecursionError, ValidationError, ValueError, ScholarlySearchResponseError):
+        return None
 
 
 def _to_paper(payload: _PaperPayload) -> ScholarlyPaper:
@@ -689,10 +818,11 @@ def _to_paper(payload: _PaperPayload) -> ScholarlyPaper:
             try:
                 arxiv_id = validate_canonical_arxiv_id(raw_arxiv_id)
             except DomainInvariantError:
-                raise ScholarlySearchResponseError(
-                    "Semantic Scholar returned an invalid arXiv external identity"
-                ) from None
-            identifier_values["ArXiv"] = arxiv_id
+                # Keep the Semantic Scholar metadata, but do not claim arXiv
+                # full-text eligibility from an unusable optional identifier.
+                identifier_values.pop("ArXiv")
+            else:
+                identifier_values["ArXiv"] = arxiv_id
         doi = identifier_values.get("DOI")
     try:
         return ScholarlyPaper(
@@ -705,7 +835,7 @@ def _to_paper(payload: _PaperPayload) -> ScholarlyPaper:
                     sorted(identifier_values.items(), key=lambda item: item[0].casefold())
                 ),
             ),
-            url=payload.url,
+            url=f"https://www.semanticscholar.org/paper/{payload.paper_id}",
             title=payload.title,
             abstract=payload.abstract,
             venue=payload.venue,
@@ -716,13 +846,39 @@ def _to_paper(payload: _PaperPayload) -> ScholarlyPaper:
                 for author in payload.authors
             ),
             citation_count=payload.citation_count,
-            influential_citation_count=payload.influential_citation_count,
+            influential_citation_count=min(
+                payload.influential_citation_count,
+                payload.citation_count,
+            ),
             reference_count=payload.reference_count,
         )
     except DomainInvariantError:
         raise ScholarlySearchResponseError(
             "Semantic Scholar response violated scholarly paper invariants"
         ) from None
+
+
+def _validation_error_summary(error: ValidationError) -> str:
+    summaries: list[str] = []
+    for detail in error.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    )[:3]:
+        location_parts: list[str] = []
+        for part in detail.get("loc", ()):
+            if type(part) is int:
+                location_parts.append(str(part))
+            elif type(part) is str and part in _SAFE_VALIDATION_LOCATIONS:
+                location_parts.append(part)
+            else:
+                location_parts.append("field")
+        location = ".".join(location_parts) or "root"
+        error_type = str(detail.get("type", "validation_error"))
+        if re.fullmatch(r"[a-z][a-z0-9_.]{0,80}", error_type) is None:
+            error_type = "validation_error"
+        summaries.append(f"{location}:{error_type}")
+    return ", ".join(summaries) or "root:validation_error"
 
 
 def _bounded_json_content(
@@ -732,28 +888,6 @@ def _bounded_json_content(
     deadline: float,
     monotonic: Callable[[], float],
 ) -> bytes:
-    content_type = response.headers.get("Content-Type", "").split(";", maxsplit=1)[0].strip()
-    if content_type != "application/json":
-        raise ScholarlySearchResponseError(
-            "Semantic Scholar returned an unsupported response content type"
-        )
-    content_encoding = response.headers.get("Content-Encoding")
-    if content_encoding is not None and content_encoding.strip().lower() not in {"", "identity"}:
-        raise ScholarlySearchResponseError(
-            "Semantic Scholar returned an unsupported encoded response"
-        )
-    declared_length = response.headers.get("Content-Length")
-    if declared_length is not None:
-        try:
-            parsed_length = int(declared_length)
-        except ValueError:
-            raise ScholarlySearchResponseError(
-                "Semantic Scholar returned an invalid Content-Length"
-            ) from None
-        if parsed_length < 0 or parsed_length > max_bytes:
-            raise ScholarlySearchResponseError(
-                "Semantic Scholar response exceeds the configured size bound"
-            )
     content = bytearray()
     for chunk in response.iter_bytes():
         if monotonic() >= deadline:

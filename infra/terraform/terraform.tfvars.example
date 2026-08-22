@@ -1,26 +1,44 @@
 project_id  = "your-existing-project-id"
 owner_email = "owner@example.com"
 
-# Foundation-only is the safe default. Runtime deployment additionally requires
-# immutable image digests and an enabled DATABASE_URL secret version.
+# Infrastructure-only is the safe default. Each runtime boundary is enabled only
+# after its immutable image and required fixed numeric secret versions exist.
+deploy_migration_resources = false
 deploy_runtime_resources = false
 deploy_analysis_resources = false
-attach_semantic_scholar_secret_to_daily = false
+deploy_daily_resources = false
+deploy_scheduler = false
+scheduler_paused = true
 
+# migration_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/web-api@sha256:..."
+# migration_database_secret_version = "1"
+
+# Migrations are deployed and executed before the Web/API service or Daily Job.
+# deploy_migration_resources = true
+
+# Web/API and its IAP boundary can be deployed without the Daily Job.
+# deploy_runtime_resources = true
 # web_api_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/web-api@sha256:..."
-# daily_image   = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/daily@sha256:..."
 # database_secret_version = "1"
 
-# M2 analysis remains opt-in so the M1 runtime can deploy without a DeepSeek key.
+# GROBID is independently deployable and does not require Web/API, Daily, or
+# DeepSeek. It has no public invoker; only the dedicated Daily identity
+# receives its authoritative invoker binding for private verification and use.
 # The upstream GROBID 0.9.0-crf manifest is pinned in Dockerfile.grobid. Before
-# enabling M2, mirror the first-party wrapper and use its Artifact Registry digest.
+# enabling it, build the first-party service image and use its immutable digest.
 # deploy_analysis_resources = true
 # grobid_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/grobid@sha256:..."
-# deepseek_secret_version = "1"
 
-# M3 Semantic Scholar access is separately opt-in and is attached only to the
-# Daily Job. Keep it disabled until an enabled key version exists. The selected
-# SPECTER2 Base artifact is baked into the production Daily image and does not
-# use this secret.
-# attach_semantic_scholar_secret_to_daily = true
+# The complete Daily Job requires GROBID plus fixed database, DeepSeek, and
+# Semantic Scholar secret versions. It can be deployed independently of Web/API.
+# Keep it disabled while either required API key version is unavailable. SPECTER2
+# Base is baked into the production Daily image and does not use either API key.
+# deploy_daily_resources = true
+# daily_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/daily@sha256:..."
+# database_secret_version = "1"
+# deepseek_secret_version = "1"
 # semantic_scholar_secret_version = "1"
+
+# Create Scheduler paused only after a successful manual Daily execution.
+# deploy_scheduler = true
+# scheduler_paused = true

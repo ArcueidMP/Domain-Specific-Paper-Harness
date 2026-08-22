@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 import pytest
@@ -8,8 +9,12 @@ from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.domain.identity import (
     parse_arxiv_identifier,
     stable_embedding_id,
+    stable_graph_edge_id,
+    stable_graph_entity_mention_id,
+    stable_lineage_snapshot_id,
     stable_paper_id,
     stable_paper_version_id,
+    stable_trend_snapshot_id,
 )
 
 
@@ -75,4 +80,76 @@ def test_embedding_identity_includes_the_complete_static_contract() -> None:
     assert baseline != _embedding_id(source="another_embedding_source")
     assert _embedding_id(model_identifier="a:b", model_revision="c") != _embedding_id(
         model_identifier="a", model_revision="b:c"
+    )
+
+
+def test_product_occurrence_identities_are_isolated_by_pipeline_execution() -> None:
+    first_execution = UUID("05baa0ee-9bb2-5e06-ab74-ee77bca475f6")
+    second_execution = UUID("61bf7a75-3d4e-56c0-a9c0-5ff9be2c1de4")
+    entity_id = UUID("e0324287-3a3a-4f4c-b0eb-b1e7a9732799")
+    target_entity_id = UUID("967b6604-48b3-4864-817b-334fbc3e344e")
+    version_id = UUID("1c27b53f-e172-469e-808f-33d0495968c0")
+    analysis_id = UUID("ed261504-34c2-4328-9b58-76b3cb559e9f")
+    paper_id = UUID("d8fdbf73-cf9a-487f-9b6a-237e13272d55")
+    topic_id = UUID("4b7db6d4-349c-5c06-bc41-f84091580fcb")
+
+    assert stable_graph_entity_mention_id(
+        entity_id,
+        version_id,
+        analysis_id=analysis_id,
+        pipeline_execution_id=first_execution,
+    ) != stable_graph_entity_mention_id(
+        entity_id,
+        version_id,
+        analysis_id=analysis_id,
+        pipeline_execution_id=second_execution,
+    )
+    assert stable_graph_edge_id(
+        entity_id,
+        target_entity_id,
+        "extends",
+        version_id,
+        analysis_id=analysis_id,
+        pipeline_execution_id=first_execution,
+    ) != stable_graph_edge_id(
+        entity_id,
+        target_entity_id,
+        "extends",
+        version_id,
+        analysis_id=analysis_id,
+        pipeline_execution_id=second_execution,
+    )
+    assert stable_trend_snapshot_id(
+        topic_id,
+        date(2026, 8, 10),
+        "7",
+        "m4-trend-v1",
+        pipeline_execution_id=first_execution,
+    ) != stable_trend_snapshot_id(
+        topic_id,
+        date(2026, 8, 10),
+        "7",
+        "m4-trend-v1",
+        pipeline_execution_id=second_execution,
+    )
+    assert stable_lineage_snapshot_id(
+        topic_id,
+        paper_id,
+        date(2026, 8, 10),
+        permitted_relation_types=("extends",),
+        max_depth=3,
+        max_nodes=20,
+        max_edges=40,
+        lineage_version="m4-lineage-v1",
+        pipeline_execution_id=first_execution,
+    ) != stable_lineage_snapshot_id(
+        topic_id,
+        paper_id,
+        date(2026, 8, 10),
+        permitted_relation_types=("extends",),
+        max_depth=3,
+        max_nodes=20,
+        max_edges=40,
+        lineage_version="m4-lineage-v1",
+        pipeline_execution_id=second_execution,
     )

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import NoReturn
 from uuid import UUID
 
 from paper_harness.application.ingest_arxiv import SCHEDULE_TIME_ZONE
-from paper_harness.application.product_models import GraphWriteResult
+from paper_harness.application.product_models import GraphWriteResult, ProductFailureInput
 from paper_harness.application.report_inputs import build_daily_report_plan
 from paper_harness.application.reporting import (
     assemble_product_report,
@@ -23,6 +24,9 @@ from paper_harness.domain.knowledge import (
     extract_analysis_graph,
     extract_comparison_graph,
     merge_knowledge_graph_bundles,
+    namespace_knowledge_graph_bundle,
+    namespace_lineage_snapshot,
+    namespace_trend_snapshot,
 )
 from paper_harness.domain.models import (
     DailyRun,
@@ -85,18 +89,26 @@ class PublishProduct:
         *,
         narrative_mode: ReportNarrativeMode,
         logical_date: date | None = None,
+        comparison_ids: frozenset[UUID] | None = None,
+        pipeline_execution_id: UUID | None = None,
+        upstream_failures: tuple[ProductFailureInput, ...] = (),
     ) -> DailyRun:
         if narrative_mode is ReportNarrativeMode.DEEPSEEK and self._llm is None:
             raise ValueError("DeepSeek narrative mode requires the configured LLM adapter")
         started_at = self._aware_now()
         run_date = logical_date or started_at.astimezone(SCHEDULE_TIME_ZONE).date()
         with self._repository.daily_run_lock(topic.id, run_date):
-            existing = self._repository.get_product_run_for_date(topic.id, run_date)
+            existing = self._repository.get_product_run_for_date(
+                topic.id,
+                run_date,
+                pipeline_execution_id=pipeline_execution_id,
+            )
             if existing is not None:
                 if existing.status in (RunStatus.COMPLETE, RunStatus.PARTIAL):
                     detail = self._repository.get_product_run(
                         logical_date=run_date,
                         topic_slug=topic.slug,
+                        pipeline_execution_id=pipeline_execution_id,
                     )
                     if detail is None or detail.report is None:
                         raise RepositoryError(
@@ -111,28 +123,53 @@ class PublishProduct:
                     raise DuplicateDailyRunError(
                         f"product publication already exists for topic {topic.slug!r} on {run_date}"
                     )
-            source = self._repository.get_product_publication_input(topic.id, run_date)
+            source = self._repository.get_product_publication_input(
+                topic.id,
+                run_date,
+                pipeline_execution_id=pipeline_execution_id,
+            )
             if source is None:
                 raise ProductInputMissingError(
                     "product publication requires a persisted complete or partial analysis run"
+                )
+            if comparison_ids is not None:
+                source = replace(
+                    source,
+                    papers=tuple(
+                        replace(
+                            paper,
+                            comparisons=tuple(
+                                comparison
+                                for comparison in paper.comparisons
+                                if comparison.bundle.comparison.id in comparison_ids
+                            ),
+                        )
+                        for paper in source.papers
+                    ),
                 )
             run = (
                 self._repository.start_product_run(
                     topic_id=topic.id,
                     logical_date=run_date,
                     source=source,
+                    upstream_failures=upstream_failures,
                     started_at=started_at,
+                    pipeline_execution_id=pipeline_execution_id,
                 )
                 if existing is None
                 else self._repository.restart_product_run(
                     existing.id,
                     source=source,
+                    upstream_failures=upstream_failures,
                     started_at=started_at,
                 )
             )
             graph_results: dict[UUID, GraphWriteResult] = {}
             materialized_types: set[GraphEntityType] = set()
+            upstream_failed_versions = {failure.paper_version_id for failure in upstream_failures}
             for paper in source.papers:
+                if paper.paper_version_id in upstream_failed_versions:
+                    continue
                 if not paper.comparisons:
                     self._fail_item(
                         run.id,
@@ -175,6 +212,11 @@ class PublishProduct:
                     bundle = merge_knowledge_graph_bundles(
                         (analysis_graph.bundle, *(item.bundle for item in comparison_graphs))
                     )
+                    if pipeline_execution_id is not None:
+                        bundle = namespace_knowledge_graph_bundle(
+                            bundle,
+                            pipeline_execution_id,
+                        )
                     result = self._repository.persist_product_graph(
                         run_id=run.id,
                         paper_version_id=paper.paper_version_id,
@@ -196,12 +238,13 @@ class PublishProduct:
                         failed_stage=PaperStage.GRAPH_UPDATED,
                         error=error,
                     )
-                graph_results[paper.paper_version_id] = result
-                materialized_types.update(
-                    entity.entity_type
-                    for entity in bundle.entities
-                    if entity.entity_type is not GraphEntityType.PAPER
-                )
+                else:
+                    graph_results[paper.paper_version_id] = result
+                    materialized_types.update(
+                        entity.entity_type
+                        for entity in bundle.entities
+                        if entity.entity_type is not GraphEntityType.PAPER
+                    )
 
             if not graph_results:
                 return self._repository.fail_product_run(
@@ -213,7 +256,11 @@ class PublishProduct:
                     error_detail="No selected paper completed graph construction.",
                 )
             try:
-                corpus = self._repository.get_graph_corpus(topic.id, as_of_date=run_date)
+                corpus = self._repository.get_graph_corpus(
+                    topic.id,
+                    as_of_date=run_date,
+                    current_publication_run_id=run.id,
+                )
                 trends = aggregate_trend_snapshots(
                     topic.id,
                     as_of_date=run_date,
@@ -225,6 +272,10 @@ class PublishProduct:
                     edge_activity_dates=corpus.edge_activity_dates,
                     generated_at=started_at,
                 )
+                if pipeline_execution_id is not None:
+                    trends = tuple(
+                        namespace_trend_snapshot(item, pipeline_execution_id) for item in trends
+                    )
                 completed_paper_ids = {
                     paper.paper_id
                     for paper in source.papers
@@ -241,6 +292,10 @@ class PublishProduct:
                     )
                     for paper_id in sorted(completed_paper_ids, key=str)
                 )
+                if pipeline_execution_id is not None:
+                    lineages = tuple(
+                        namespace_lineage_snapshot(item, pipeline_execution_id) for item in lineages
+                    )
             except DomainInvariantError as error:
                 self._fail_run_then_raise(
                     run.id,

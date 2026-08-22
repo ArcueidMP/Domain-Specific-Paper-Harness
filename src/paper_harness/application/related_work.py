@@ -16,9 +16,11 @@ from paper_harness.application.historical_ranking import (
 )
 from paper_harness.application.read_models import HistoricalRetrievalMatch, SearchSessionDetail
 from paper_harness.application.scholarly_mapping import external_stub_from_scholarly_paper
-from paper_harness.domain.analysis import ModelUsage, VerificationStatus
+from paper_harness.domain.analysis import AnalysisScope, ModelUsage, VerificationStatus
 from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.domain.historical import (
+    M3_CRAWLER_PROMPT_VERSION,
+    M3_SELECTOR_PROMPT_VERSION,
     CandidateOrigin,
     CandidateScoreComponents,
     CandidateSelectionInput,
@@ -45,6 +47,7 @@ from paper_harness.domain.identity import (
     stable_embedding_id,
     stable_search_action_id,
     stable_search_candidate_id,
+    stable_search_session_id,
 )
 from paper_harness.domain.models import TopicConfig
 from paper_harness.ports.llm import LLMPort, LLMPortError
@@ -65,6 +68,21 @@ from paper_harness.ports.scientific_embedding import (
 
 MAX_SEARCH_ACTION_RESULTS = 500
 MAX_RELATION_ACTION_RESULTS = 100
+
+
+def _search_limits_identity(limits: SearchLimits) -> str:
+    return ":".join(
+        (
+            str(limits.max_steps),
+            str(limits.max_queries),
+            str(limits.max_queue_size),
+            str(limits.max_citation_depth),
+            str(limits.max_candidates),
+            str(limits.max_selected_candidates),
+            format(limits.per_operation_timeout_seconds, ".12g"),
+            format(limits.overall_timeout_seconds, ".12g"),
+        )
+    )
 
 
 class RelatedWorkInputError(RuntimeError):
@@ -137,55 +155,124 @@ class RelatedWorkSearch:
         year_from: int,
         year_to: int,
         limits: SearchLimits,
+        pipeline_execution_id: UUID | None = None,
+        source_paper_version_id: UUID | None = None,
+        source_analysis_id: UUID | None = None,
+        source_analysis_scope: AnalysisScope | None = None,
     ) -> SearchSessionDetail:
         if not 1000 <= year_from <= year_to <= 9999:
             raise RelatedWorkInputError("related-work year range is invalid")
+        exact_provenance = (
+            source_paper_version_id,
+            source_analysis_id,
+            source_analysis_scope,
+        )
+        if any(value is not None for value in exact_provenance) and any(
+            value is None for value in exact_provenance
+        ):
+            raise RelatedWorkInputError(
+                "exact related-work analysis provenance must be supplied together"
+            )
         paper_detail = self._repository.get_paper(source_paper_id)
         if paper_detail is None:
             raise RelatedWorkInputError("source paper does not exist")
         analysis_detail = self._repository.get_paper_analysis(
             source_paper_id,
-            paper_version_id=None,
+            paper_version_id=source_paper_version_id,
+            analysis_scope=source_analysis_scope,
         )
         if analysis_detail is None:
             raise RelatedWorkInputError(
                 "related-work search requires a persisted source-paper analysis"
             )
+        if source_analysis_id is not None and (
+            analysis_detail.analysis.id != source_analysis_id
+            or analysis_detail.analysis.paper_version_id != source_paper_version_id
+            or analysis_detail.analysis.analysis_scope is not source_analysis_scope
+        ):
+            raise RelatedWorkInputError(
+                "related-work source analysis does not match the requested exact provenance"
+            )
         source_version_id = analysis_detail.analysis.paper_version_id
-        prior_year_to = min(year_to, paper_detail.paper.first_submitted_at.year)
+        source_version = next(
+            (version for version in paper_detail.versions if version.id == source_version_id),
+            None,
+        )
+        if source_version is None:
+            raise RelatedWorkInputError(
+                "related-work source analysis references an unavailable paper version"
+            )
+        prior_year_to = min(year_to, source_version.submitted_at.year)
         if year_from > prior_year_to:
             raise RelatedWorkInputError(
                 "related-work year range begins after the source paper was submitted"
             )
         started_at = self._aware_now()
         deadline = self._monotonic() + limits.overall_timeout_seconds
-        session = self._repository.start_search_session(
-            SearchSession(
-                id=uuid4(),
-                topic_id=topic.id,
-                source_paper_id=source_paper_id,
-                source_paper_version_id=source_version_id,
-                source_analysis_id=analysis_detail.analysis.id,
-                source_analysis_scope=analysis_detail.analysis.analysis_scope,
-                requested_year_from=year_from,
-                effective_year_to=prior_year_to,
-                objective=objective,
-                status=SearchSessionStatus.RUNNING,
-                limits=limits,
-                started_at=started_at,
-                completed_at=None,
-                stop_reason=None,
-                error_code=None,
-                error_detail=None,
-                provider=None,
-                configured_model=None,
-                model_version=None,
-                prompt_version=None,
-                usage=None,
-                schema_version=1,
-                created_at=started_at,
+        session_id = (
+            uuid4()
+            if pipeline_execution_id is None
+            else stable_search_session_id(
+                source_version_id,
+                objective,
+                f"{pipeline_execution_id}:{year_from}:{prior_year_to}:"
+                f"{_search_limits_identity(limits)}",
+                f"{M3_CRAWLER_PROMPT_VERSION}+{M3_SELECTOR_PROMPT_VERSION}",
             )
         )
+        existing_detail = self._repository.get_search_session(session_id)
+        if existing_detail is not None:
+            existing = existing_detail.session
+            if (
+                existing.pipeline_execution_id != pipeline_execution_id
+                or existing.topic_id != topic.id
+                or existing.source_paper_id != source_paper_id
+                or existing.source_paper_version_id != source_version_id
+                or existing.source_analysis_id != analysis_detail.analysis.id
+                or existing.source_analysis_scope is not analysis_detail.analysis.analysis_scope
+                or existing.requested_year_from != year_from
+                or existing.effective_year_to != prior_year_to
+                or existing.objective != objective
+                or existing.limits != limits
+            ):
+                raise RelatedWorkInputError(
+                    "stable related-work session conflicts with persisted provenance"
+                )
+            if existing.status is SearchSessionStatus.COMPLETE:
+                return existing_detail
+            session = self._repository.restart_search_session(
+                session_id,
+                restarted_at=started_at,
+            )
+        else:
+            session = self._repository.start_search_session(
+                SearchSession(
+                    id=session_id,
+                    pipeline_execution_id=pipeline_execution_id,
+                    topic_id=topic.id,
+                    source_paper_id=source_paper_id,
+                    source_paper_version_id=source_version_id,
+                    source_analysis_id=analysis_detail.analysis.id,
+                    source_analysis_scope=analysis_detail.analysis.analysis_scope,
+                    requested_year_from=year_from,
+                    effective_year_to=prior_year_to,
+                    objective=objective,
+                    status=SearchSessionStatus.RUNNING,
+                    limits=limits,
+                    started_at=started_at,
+                    completed_at=None,
+                    stop_reason=None,
+                    error_code=None,
+                    error_detail=None,
+                    provider=None,
+                    configured_model=None,
+                    model_version=None,
+                    prompt_version=None,
+                    usage=None,
+                    schema_version=1,
+                    created_at=started_at,
+                )
+            )
         candidates: dict[str, _CandidateState] = {}
         source_semantic_scholar_ids: set[str] = set()
         step = 0
@@ -193,7 +280,7 @@ class RelatedWorkSearch:
         stop_reason = SearchStopReason.QUEUE_EXHAUSTED
         source_text = " ".join(
             (
-                paper_detail.paper.title,
+                source_version.title,
                 analysis_detail.analysis.research_problem,
                 analysis_detail.analysis.method_summary,
             )
@@ -203,8 +290,8 @@ class RelatedWorkSearch:
             local_timed_out = self._add_local_candidates(
                 session=session,
                 topic=topic,
-                paper_title=paper_detail.paper.title,
-                paper_abstract=paper_detail.paper.abstract,
+                paper_title=source_version.title,
+                paper_abstract=source_version.abstract,
                 source_text=source_text,
                 candidates=candidates,
                 limit=min(limits.max_queue_size, limits.max_candidates),
@@ -228,20 +315,20 @@ class RelatedWorkSearch:
                         step=step,
                         tool=SearchTool.GET_PAPER,
                         query=None,
-                        target_id=(f"ARXIV:{paper_detail.paper.canonical_arxiv_id}"),
+                        target_id=(f"ARXIV:{source_version.canonical_arxiv_id}"),
                         positive_ids=(),
                         year_from=None,
                         year_to=None,
                         relation_depth=0,
                         requested_limit=1,
                         invoke=lambda timeout_seconds: self._resolve_source_paper(
-                            paper_detail.paper.canonical_arxiv_id,
+                            source_version.canonical_arxiv_id,
                             timeout_seconds=timeout_seconds,
                         ),
                         candidates=candidates,
                         source_text=source_text,
                         origin=CandidateOrigin.SEARCH,
-                        excluded_arxiv_id=paper_detail.paper.canonical_arxiv_id,
+                        excluded_arxiv_id=source_version.canonical_arxiv_id,
                         excluded_semantic_scholar_ids=frozenset(),
                         deadline=deadline,
                         per_operation_timeout=limits.per_operation_timeout_seconds,
@@ -260,7 +347,7 @@ class RelatedWorkSearch:
                         crawler_plan = self._llm.plan_scholarly_search(
                             CrawlerPlanRequest(
                                 objective=objective,
-                                source_title=paper_detail.paper.title,
+                                source_title=source_version.title,
                                 source_research_problem=(analysis_detail.analysis.research_problem),
                                 source_method=analysis_detail.analysis.method_summary,
                                 topic_include_terms=topic.include_terms,
@@ -280,10 +367,10 @@ class RelatedWorkSearch:
                                 "DeepSeek crawler exhausted the overall search timeout"
                             ) from None
                         raise
-                    if len(crawler_plan.queries) > limits.max_queries:
-                        raise DomainInvariantError(
-                            "crawler plan exceeded the configured query bound"
-                        )
+                    crawler_plan = replace(
+                        crawler_plan,
+                        queries=tuple(dict.fromkeys(crawler_plan.queries))[: limits.max_queries],
+                    )
                     session = self._repository.persist_search_crawler_plan(session.id, crawler_plan)
             queries = () if crawler_plan is None else crawler_plan.queries
             for query in queries:
@@ -332,7 +419,7 @@ class RelatedWorkSearch:
                     candidates=candidates,
                     source_text=source_text,
                     origin=CandidateOrigin.SEARCH,
-                    excluded_arxiv_id=paper_detail.paper.canonical_arxiv_id,
+                    excluded_arxiv_id=source_version.canonical_arxiv_id,
                     excluded_semantic_scholar_ids=frozenset(source_semantic_scholar_ids),
                     deadline=deadline,
                     per_operation_timeout=limits.per_operation_timeout_seconds,
@@ -340,7 +427,7 @@ class RelatedWorkSearch:
                 source_semantic_scholar_ids.update(
                     record.semantic_scholar_id
                     for record in records
-                    if record.external_ids.arxiv_id == paper_detail.paper.canonical_arxiv_id
+                    if record.external_ids.arxiv_id == source_version.canonical_arxiv_id
                 )
                 if not records:
                     continue
@@ -387,7 +474,7 @@ class RelatedWorkSearch:
                     candidates=candidates,
                     source_text=source_text,
                     origin=CandidateOrigin.RECOMMENDATIONS,
-                    excluded_arxiv_id=paper_detail.paper.canonical_arxiv_id,
+                    excluded_arxiv_id=source_version.canonical_arxiv_id,
                     excluded_semantic_scholar_ids=frozenset(source_semantic_scholar_ids),
                     deadline=deadline,
                     per_operation_timeout=limits.per_operation_timeout_seconds,
@@ -484,7 +571,7 @@ class RelatedWorkSearch:
                         candidates=candidates,
                         source_text=source_text,
                         origin=origin,
-                        excluded_arxiv_id=paper_detail.paper.canonical_arxiv_id,
+                        excluded_arxiv_id=source_version.canonical_arxiv_id,
                         excluded_semantic_scholar_ids=frozenset(source_semantic_scholar_ids),
                         deadline=deadline,
                         per_operation_timeout=limits.per_operation_timeout_seconds,
@@ -504,7 +591,7 @@ class RelatedWorkSearch:
             ):
                 terminal_candidates, selection = self._select_candidates(
                     objective=objective,
-                    source_title=paper_detail.paper.title,
+                    source_title=source_version.title,
                     source_problem=analysis_detail.analysis.research_problem,
                     source_method=analysis_detail.analysis.method_summary,
                     candidates=candidates,
@@ -955,40 +1042,56 @@ class RelatedWorkSearch:
                 ) from None
             raise
         decisions = {item.semantic_scholar_id: item for item in generated.decisions}
-        expected_ids = {state.stub.semantic_scholar_id for state in ranked}
-        if set(decisions) != expected_ids:
-            raise DomainInvariantError(
-                "selector must return exactly one decision for every candidate"
-            )
-        if sum(item.decision is SelectionDecision.SELECTED for item in generated.decisions) > limit:
-            raise DomainInvariantError("selector exceeded the selected-candidate bound")
-        return (
-            tuple(
-                SearchCandidate(
-                    id=stable_search_candidate_id(session_id, state.stub.semantic_scholar_id),
-                    session_id=session_id,
-                    external_paper_id=state.stub.id,
-                    semantic_scholar_id=state.stub.semantic_scholar_id,
-                    local_paper_id=state.local_paper_id,
-                    local_paper_version_id=state.local_paper_version_id,
-                    discovered_by_action_id=state.first_action_id,
-                    origins=tuple(sorted(state.origins, key=lambda item: item.value)),
-                    relation_depth=state.relation_depth,
-                    scores=state.scores(),
-                    rank=rank,
-                    decision=decisions[state.stub.semantic_scholar_id].decision,
-                    decision_reason=decisions[state.stub.semantic_scholar_id].reason,
-                    provider=generated.provider,
-                    configured_model=generated.configured_model,
-                    model_version=generated.model_version,
-                    prompt_version=generated.prompt_version,
-                    generated_at=generated.generated_at,
-                    verification_status=VerificationStatus.UNVERIFIED,
-                    schema_version=1,
-                    created_at=generated.generated_at,
+        selected_order = tuple(
+            state.stub.semantic_scholar_id
+            for state in ranked
+            if (decision := decisions.get(state.stub.semantic_scholar_id)) is not None
+            and decision.decision is SelectionDecision.SELECTED
+        )
+        selected_ids = frozenset(selected_order[:limit])
+
+        def candidate_value(state: _CandidateState, rank: int) -> SearchCandidate:
+            semantic_scholar_id = state.stub.semantic_scholar_id
+            decision = decisions.get(semantic_scholar_id)
+            if decision is None:
+                return replace(
+                    self._pending_candidate(session_id, state, rank=rank),
+                    decision_reason="Selector returned no usable decision for this candidate.",
                 )
-                for rank, state in enumerate(ranked, start=1)
-            ),
+            if (
+                decision.decision is SelectionDecision.SELECTED
+                and semantic_scholar_id not in selected_ids
+            ):
+                return replace(
+                    self._pending_candidate(session_id, state, rank=rank),
+                    decision_reason="Excluded by the configured local selection bound.",
+                )
+            return SearchCandidate(
+                id=stable_search_candidate_id(session_id, semantic_scholar_id),
+                session_id=session_id,
+                external_paper_id=state.stub.id,
+                semantic_scholar_id=semantic_scholar_id,
+                local_paper_id=state.local_paper_id,
+                local_paper_version_id=state.local_paper_version_id,
+                discovered_by_action_id=state.first_action_id,
+                origins=tuple(sorted(state.origins, key=lambda item: item.value)),
+                relation_depth=state.relation_depth,
+                scores=state.scores(),
+                rank=rank,
+                decision=decision.decision,
+                decision_reason=decision.reason,
+                provider=generated.provider,
+                configured_model=generated.configured_model,
+                model_version=generated.model_version,
+                prompt_version=generated.prompt_version,
+                generated_at=generated.generated_at,
+                verification_status=VerificationStatus.UNVERIFIED,
+                schema_version=1,
+                created_at=generated.generated_at,
+            )
+
+        return (
+            tuple(candidate_value(state, rank) for rank, state in enumerate(ranked, start=1)),
             generated,
         )
 

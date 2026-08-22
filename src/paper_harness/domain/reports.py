@@ -337,16 +337,11 @@ class GeneratedReportNarrative:
             _require_text(value, name, maximum=maximum)
         _require_aware(self.generated_at, "generated_at")
         kinds = tuple(section.kind for section in self.sections)
-        if kinds != tuple(ReportSectionKind):
-            raise DomainInvariantError("generated report sections must be complete and ordered")
-        if any(
-            character.isdigit()
-            for text in (self.summary, *(section.narrative for section in self.sections))
-            for character in text
+        if len(set(kinds)) != len(kinds) or kinds != tuple(
+            sorted(kinds, key=tuple(ReportSectionKind).index)
         ):
             raise DomainInvariantError(
-                "generated report narrative cannot contain numeric literals; "
-                "authoritative statistics remain structured data"
+                "generated report sections must be unique and canonically ordered"
             )
 
 
@@ -464,8 +459,12 @@ class Report:
             if self.counts.completed < 1:
                 raise DomainInvariantError("product report requires a completed paper")
             section_kinds = tuple(section.kind for section in self.sections)
-            if section_kinds != tuple(ReportSectionKind):
-                raise DomainInvariantError("product report sections must be complete and ordered")
+            if len(set(section_kinds)) != len(section_kinds) or section_kinds != tuple(
+                sorted(section_kinds, key=tuple(ReportSectionKind).index)
+            ):
+                raise DomainInvariantError(
+                    "product report sections must be unique and canonically ordered"
+                )
             if any(section.report_id != self.id for section in self.sections):
                 raise DomainInvariantError("report section ownership is invalid")
         reference_groups = (

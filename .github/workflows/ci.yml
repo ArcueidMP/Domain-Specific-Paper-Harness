@@ -15,9 +15,10 @@ concurrency:
 jobs:
   python:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     services:
       postgres:
-        image: pgvector/pgvector:0.8.5-pg17-bookworm
+        image: pgvector/pgvector:0.8.5-pg17-bookworm@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
         env:
           POSTGRES_DB: paper_harness_ci
           POSTGRES_USER: paper_harness_ci
@@ -33,21 +34,32 @@ jobs:
       DATABASE_URL: postgresql+psycopg://paper_harness_ci:paper_harness_ci@localhost:5432/paper_harness_ci
       TEST_DATABASE_URL: postgresql+psycopg://paper_harness_ci:paper_harness_ci@localhost:5432/paper_harness_ci
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: 3.13.13
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           version: 0.12.3
           enable-cache: true
-      - run: uv sync --frozen --python 3.13.13
+      - run: uv sync --frozen --all-extras --python 3.13.13
       - run: uv run --frozen python -c "import platform; assert platform.python_version() == '3.13.13'"
+      - name: Audit distributable Python dependency licenses
+        run: >-
+          uv run --frozen --all-extras python
+          scripts/check_dependency_licenses.py --python-only
+      - run: uv run --frozen python scripts/check_repository_hygiene.py --tracked
+      - run: git diff --check
       - run: uv run --frozen ruff check .
       - run: uv run --frozen ruff format --check .
       - run: uv run --frozen pyright
       - run: uv run --frozen python -m paper_harness.entrypoints.openapi
       - run: git diff --exit-code -- apps/api/openapi.json
+      - run: >-
+          uv run --frozen python scripts/check_repository_hygiene.py
+          --generated apps/api/openapi.json
       - run: uv run --frozen alembic upgrade head
       - run: uv run --frozen alembic check
       - run: uv run --frozen alembic current --check-heads
@@ -55,31 +67,45 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24.15.0
           package-manager-cache: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: 3.13.13
       - run: corepack enable
       - run: corepack prepare pnpm@11.0.9 --activate
       - run: pnpm install --frozen-lockfile
+      - name: Audit bundled frontend dependency licenses
+        run: python scripts/check_dependency_licenses.py --node-only
       - run: pnpm generate:api
       - run: git diff --exit-code -- apps/web/src/api/schema.d.ts
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - run: >-
+          python scripts/check_repository_hygiene.py
+          --generated apps/api/openapi.json
+          --generated apps/web/dist
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm exec playwright test --config tests/e2e/playwright.config.ts
 
   infrastructure:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: 1.15.8
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: 3.13.13
       - run: terraform fmt -check -recursive
         working-directory: infra/terraform
       - run: terraform init -backend=false -input=false
@@ -89,3 +115,4 @@ jobs:
       - run: docker compose config --quiet
       - run: docker build --file infra/docker/Dockerfile.api --tag paper-harness-api:ci .
       - run: docker build --file infra/docker/Dockerfile.daily --tag paper-harness-daily:ci .
+      - run: docker build --file infra/docker/Dockerfile.grobid --tag paper-harness-grobid:ci .

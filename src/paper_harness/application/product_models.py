@@ -19,7 +19,7 @@ from paper_harness.domain.knowledge import (
     TrendPaperRecord,
     TrendSnapshot,
 )
-from paper_harness.domain.models import RunItemStatus, RunOperation, RunStatus
+from paper_harness.domain.models import PaperStage, RunItemStatus, RunOperation, RunStatus
 from paper_harness.domain.reports import ReportEvidenceReference, ReportGraphChanges, ReportType
 
 
@@ -119,6 +119,27 @@ class ProductPublicationInput:
 
 
 @dataclass(frozen=True, slots=True)
+class ProductFailureInput:
+    """Frozen upstream item failure that must remain visible in product publication."""
+
+    paper_id: UUID
+    paper_version_id: UUID
+    stage: PaperStage
+    failed_stage: PaperStage
+    error_code: str
+    retryable: bool
+    error_detail: str
+
+    def __post_init__(self) -> None:
+        if not self.error_code.strip() or len(self.error_code) > 80:
+            raise DomainInvariantError("product failure code must be concise valid text")
+        if not self.error_detail.strip() or len(self.error_detail) > 1000:
+            raise DomainInvariantError("product failure detail must be concise valid text")
+        if "\x00" in self.error_code or "\x00" in self.error_detail:
+            raise DomainInvariantError("product failure metadata contains invalid text")
+
+
+@dataclass(frozen=True, slots=True)
 class GraphCorpusInput:
     topic_id: UUID
     papers: tuple[TrendPaperRecord, ...]
@@ -152,14 +173,10 @@ class GraphCorpusInput:
         edge_ids = {item.id for item in self.edges}
         if len(edge_ids) != len(self.edges):
             raise DomainInvariantError("graph corpus edges must be unique")
-        if set(self.mention_activity_dates) != mention_ids:
-            raise DomainInvariantError(
-                "graph corpus mention activity dates must exactly cover its mentions"
-            )
-        if set(self.edge_activity_dates) != edge_ids:
-            raise DomainInvariantError(
-                "graph corpus edge activity dates must exactly cover its edges"
-            )
+        if not mention_ids.issubset(self.mention_activity_dates):
+            raise DomainInvariantError("graph corpus is missing mention activity dates")
+        if not edge_ids.issubset(self.edge_activity_dates):
+            raise DomainInvariantError("graph corpus is missing edge activity dates")
         if any(type(value) is not date for value in self.mention_activity_dates.values()):
             raise DomainInvariantError("graph corpus mention activity dates must be dates")
         if any(type(value) is not date for value in self.edge_activity_dates.values()):
@@ -174,14 +191,14 @@ class GraphWriteResult:
     inferred_edge_ids: tuple[UUID, ...]
 
     def __post_init__(self) -> None:
-        for name, values in (
-            ("entity", self.entity_ids),
-            ("edge", self.edge_ids),
-            ("new entity", self.new_entity_ids),
-            ("inferred edge", self.inferred_edge_ids),
+        for field_name in (
+            "entity_ids",
+            "edge_ids",
+            "new_entity_ids",
+            "inferred_edge_ids",
         ):
-            if len(set(values)) != len(values) or values != tuple(sorted(values, key=str)):
-                raise DomainInvariantError(f"graph write {name} IDs must be sorted and unique")
+            values = getattr(self, field_name)
+            object.__setattr__(self, field_name, tuple(sorted(set(values), key=str)))
         if not set(self.new_entity_ids).issubset(self.entity_ids):
             raise DomainInvariantError("graph write new entities must belong to the write")
         if not set(self.inferred_edge_ids).issubset(self.edge_ids):
