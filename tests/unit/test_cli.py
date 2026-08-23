@@ -11,6 +11,8 @@ from typer.main import get_command
 from typer.testing import CliRunner
 
 import paper_harness.entrypoints.cli as cli_module
+from paper_harness.adapters.postgres.demo_schema import DemoSchemaBootstrapResult
+from paper_harness.adapters.postgres.demo_snapshot import DemoSnapshotResult
 from paper_harness.application.pipeline_accounting import PipelineAccountingSnapshot
 from paper_harness.domain.analysis import AnalysisScope
 from paper_harness.domain.historical import BackfillStatus, HistoricalBackfillRun
@@ -30,6 +32,58 @@ from paper_harness.ports.llm import LLMAuthenticationError, LLMUnavailableError
 from paper_harness.ports.repository import RepositoryIntegrityError
 
 PIPELINE_EXECUTION_ID = UUID("bc432395-115e-52d8-91f8-5910376b7984")
+
+
+def test_demo_operator_commands_are_explicit_cli_operations() -> None:
+    root = get_command(app)
+
+    assert isinstance(root, TyperGroup)
+    assert "bootstrap-demo-schema" in root.commands
+    assert "sync-demo-schema" in root.commands
+
+
+def test_demo_bootstrap_cli_emits_only_non_sensitive_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "execute_demo_schema_bootstrap",
+        lambda: DemoSchemaBootstrapResult(
+            schema="demo",
+            sync_role="paper_harness_demo_sync",
+            read_role="paper_harness_demo_read",
+            source_table_count=45,
+            readable_source_column_count=320,
+            demo_table_count=52,
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["bootstrap-demo-schema"])
+
+    assert result.exit_code == 0
+    assert '"event":"demo_schema_bootstrap_completed"' in result.stdout
+    assert '"demo_table_count":52' in result.stdout
+
+
+def test_demo_sync_cli_emits_revision_and_table_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "execute_demo_snapshot_sync",
+        lambda: DemoSnapshotResult(
+            source_revision="0006_topic_reprocessing",
+            target_revision="0006_topic_reprocessing",
+            table_counts=(("topics", 3), ("reports", 6)),
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["sync-demo-schema"])
+
+    assert result.exit_code == 0
+    assert '"event":"demo_snapshot_sync_completed"' in result.stdout
+    assert '"total_rows":9' in result.stdout
+    assert '"table_counts":{"topics":3,"reports":6}' in result.stdout
 
 
 def test_cli_accepts_string_logical_date_option() -> None:

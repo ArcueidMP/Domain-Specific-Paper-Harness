@@ -13,6 +13,8 @@ from uuid import UUID
 
 import typer
 
+from paper_harness.adapters.postgres.demo_schema import DemoSchemaBootstrapError
+from paper_harness.adapters.postgres.demo_snapshot import DemoSnapshotError
 from paper_harness.application.compare_papers import ComparisonInputMissingError
 from paper_harness.application.generate_periodic_report import (
     PeriodicReportInsufficientDataError,
@@ -32,6 +34,11 @@ from paper_harness.domain.errors import DomainInvariantError, DuplicateDailyRunE
 from paper_harness.domain.historical import SearchLimits, SelectionDecision
 from paper_harness.domain.models import PipelineExecutionMode, RunStatus
 from paper_harness.domain.reports import ReportNarrativeMode, ReportType
+from paper_harness.entrypoints.demo import (
+    DemoOperationError,
+    execute_demo_schema_bootstrap,
+    execute_demo_snapshot_sync,
+)
 from paper_harness.entrypoints.runtime import (
     DailyPipelineDeadlineExceededError,
     DailyPipelineFailure,
@@ -122,6 +129,76 @@ def _emit_external_dependency_exhaustion_events(
 @app.callback()
 def _root() -> None:
     """Operate Domain-Specific Paper Harness outside the read-only API."""
+
+
+@app.command("bootstrap-demo-schema")
+def bootstrap_demo_schema_command() -> None:
+    """Create and permission the isolated demo schema and roles."""
+
+    try:
+        result = execute_demo_schema_bootstrap()
+    except (DemoOperationError, DemoSchemaBootstrapError, DemoSnapshotError, ValueError) as error:
+        typer.echo(
+            json.dumps(
+                {
+                    "level": "ERROR",
+                    "event": "demo_schema_bootstrap_failed",
+                    "detail": str(error),
+                },
+                separators=(",", ":"),
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        json.dumps(
+            {
+                "level": "INFO",
+                "event": "demo_schema_bootstrap_completed",
+                "schema": result.schema,
+                "sync_role": result.sync_role,
+                "read_role": result.read_role,
+                "source_table_count": result.source_table_count,
+                "readable_source_column_count": result.readable_source_column_count,
+                "demo_table_count": result.demo_table_count,
+            },
+            separators=(",", ":"),
+        )
+    )
+
+
+@app.command("sync-demo-schema")
+def sync_demo_schema_command() -> None:
+    """Atomically refresh the public-demo snapshot from canonical publications."""
+
+    try:
+        result = execute_demo_snapshot_sync()
+    except (DemoOperationError, DemoSnapshotError, ValueError) as error:
+        typer.echo(
+            json.dumps(
+                {
+                    "level": "ERROR",
+                    "event": "demo_snapshot_sync_failed",
+                    "detail": str(error),
+                },
+                separators=(",", ":"),
+            ),
+            err=True,
+        )
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        json.dumps(
+            {
+                "level": "INFO",
+                "event": "demo_snapshot_sync_completed",
+                "source_revision": result.source_revision,
+                "target_revision": result.target_revision,
+                "total_rows": result.total_rows,
+                "table_counts": dict(result.table_counts),
+            },
+            separators=(",", ":"),
+        )
+    )
 
 
 @app.command("run-pipeline")

@@ -18,10 +18,20 @@ _EXPLICIT_OPERATIONS = frozenset(
         "generate-periodic-report",
     }
 )
+_OPERATOR_ONLY_OPERATIONS = frozenset(
+    {
+        "bootstrap-demo-schema",
+        "sync-demo-schema",
+    }
+)
 
 
 def main() -> None:
     arguments = sys.argv[1:]
+    if arguments and arguments[0] in _OPERATOR_ONLY_OPERATIONS:
+        raise SystemExit(
+            f"{arguments[0]} is an operator-only command and is unavailable to the Daily Job"
+        )
     if arguments and arguments[0] in _EXPLICIT_OPERATIONS:
         app(prog_name="paper-harness-daily", args=arguments)
     else:

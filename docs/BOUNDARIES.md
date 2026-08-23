@@ -153,8 +153,27 @@ constraints prevent evidence, relations, comparisons, and publication records
 from referring to missing owners.
 
 Alembic is explicit and never runs during API startup. Readiness requires the
-single database head to equal the application head. Existing merged migration
-files are immutable; schema changes add a new revision.
+configured schema's version table to equal the application head. Existing
+merged migration files are immutable; schema changes add a new revision.
+
+## Public Demo data boundary
+
+The optional Demo uses the same database instance but never the production
+runtime credential. `public` remains authoritative production state and `demo`
+is a replaceable read snapshot. The synchronization role has column-level
+production reads and Demo writes; the read role has Demo `SELECT` only. Neither
+role inherits production privileges, and neither can create or write in
+`public`.
+
+Every model table is explicitly classified as copied or excluded. Canonical
+publication artifacts and their reference closure are copied without per-item
+approval. Raw parsed content, embeddings, cursors, and backfill bookkeeping are
+excluded; free-form diagnostics are redacted. New unclassified model tables
+make verification fail rather than becoming public implicitly.
+
+Snapshot replacement is transactional. A migration mismatch or synchronization
+failure preserves the last committed Demo data and has no effect on production
+publication or deployment.
 
 ## Failure and publication boundary
 

@@ -11,13 +11,16 @@ import paper_harness.entrypoints.daily as daily_module
 from paper_harness.entrypoints.cli import app as cli_app
 
 
-def test_explicit_daily_operations_match_every_registered_cli_command() -> None:
+def test_daily_and_operator_operations_classify_every_registered_cli_command() -> None:
     registered_operations = frozenset(
         command.name for command in cli_app.registered_commands if command.name is not None
     )
 
     assert len(registered_operations) == len(cli_app.registered_commands)
-    assert registered_operations == daily_module._EXPLICIT_OPERATIONS
+    assert daily_module._EXPLICIT_OPERATIONS.isdisjoint(daily_module._OPERATOR_ONLY_OPERATIONS)
+    assert registered_operations == (
+        daily_module._EXPLICIT_OPERATIONS | daily_module._OPERATOR_ONLY_OPERATIONS
+    )
 
 
 @pytest.mark.parametrize("operation", sorted(daily_module._EXPLICIT_OPERATIONS))
@@ -51,3 +54,18 @@ def test_main_defaults_options_to_the_full_daily_pipeline(
         prog_name="paper-harness-daily",
         args=["run-pipeline", "--help"],
     )
+
+
+@pytest.mark.parametrize("operation", sorted(daily_module._OPERATOR_ONLY_OPERATIONS))
+def test_main_rejects_operator_only_database_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    invocation = Mock()
+    monkeypatch.setattr(daily_module, "app", invocation)
+    monkeypatch.setattr(sys, "argv", ["paper-harness-daily", operation])
+
+    with pytest.raises(SystemExit, match="operator-only"):
+        daily_module.main()
+
+    invocation.assert_not_called()
