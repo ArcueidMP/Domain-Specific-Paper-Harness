@@ -167,6 +167,12 @@ downgrades require an explicit backup, a distinct tested restore, and the
 revision's deliberate data-loss flag. The database must match the
 application-declared Alembic head.
 
+The optional Demo synchronizer verifies both `public` and `demo` revisions
+before deleting any target rows. Revision, permission, or copy failure rolls
+back the Demo transaction and leaves the preceding snapshot readable. Its
+independent workflow may fail visibly but never changes production CI, runtime
+deployment, Daily publication, or the authoritative `public` schema.
+
 ## Production deployment
 
 Deployment stops when:

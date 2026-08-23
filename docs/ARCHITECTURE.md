@@ -194,6 +194,34 @@ Public reads admit only terminal complete or partial owners. Failed staging data
 cannot leak into canonical product views. Deterministic 7/30/90-day aggregates
 come only from persisted structured data and expose insufficient-data windows.
 
+## Optional public Demo data boundary
+
+The optional public Demo reuses the same normalized PostgreSQL model without
+giving a public runtime access to production tables. Production remains in the
+default `public` schema. Demo data is materialized into a separately migrated
+`demo` schema with its own `alembic_version`.
+
+Two non-inheriting PostgreSQL roles enforce the boundary. The synchronization
+role owns `demo`, can read only explicit production columns required by the
+snapshot policy, and cannot write `public`. The read role can select `demo` and
+cannot select `public` or write either schema. Both use `demo,pg_catalog` as
+their runtime search path; Alembic temporarily includes `public` only to resolve
+the existing pgvector extension type.
+
+Synchronization starts from every topic/date's latest non-smoke complete or
+partial product publication and current periodic reports, then computes the
+referential closure for reports, papers, analyses, evidence, comparisons,
+related work, graph, trends, lineage, and required run provenance. Raw parsed
+content, embeddings, cursors, and historical backfill bookkeeping remain empty
+in `demo`. Free-form diagnostics are redacted while stable codes and structured
+usage metrics remain visible.
+
+The complete target replacement is one repeatable-read transaction using
+explicit server-side column projections. A revision mismatch or write failure
+rolls back and leaves the preceding Demo snapshot readable. The independent
+post-CI workflow may fail visibly but is not a production CI, deployment, or
+Daily publication dependency.
+
 ## Read API and web product
 
 FastAPI is online and read-oriented. It serves the required topics, daily

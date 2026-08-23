@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.engine import URL, make_url
@@ -14,6 +15,28 @@ DATABASE_POOL_TIMEOUT_SECONDS = 30
 
 _TLS_REQUIRED_MODES = frozenset({"require", "verify-ca", "verify-full"})
 _TRUTHY_QUERY_VALUES = frozenset({"1", "on", "true", "yes"})
+_POSTGRES_IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]*\Z")
+_POSTGRES_IDENTIFIER_MAX_LENGTH = 63
+
+
+def normalize_database_schema(database_schema: str | None = None) -> str:
+    """Return a safe unquoted PostgreSQL schema identifier."""
+
+    value = (
+        os.environ.get("DATABASE_SCHEMA", "public") if database_schema is None else database_schema
+    ).strip()
+    if (
+        not value
+        or len(value) > _POSTGRES_IDENTIFIER_MAX_LENGTH
+        or _POSTGRES_IDENTIFIER.fullmatch(value) is None
+        or value.startswith("pg_")
+        or value == "information_schema"
+    ):
+        raise ValueError(
+            "DATABASE_SCHEMA must be a non-system lowercase PostgreSQL identifier "
+            "containing only letters, digits, and underscores"
+        )
+    return value
 
 
 def _production_enabled(production: bool | None) -> bool:
@@ -81,12 +104,23 @@ def normalize_database_url(database_url: str, *, production: bool | None = None)
     return value
 
 
-def create_postgres_engine(database_url: str, *, production: bool | None = None) -> Engine:
+def create_postgres_engine(
+    database_url: str,
+    *,
+    production: bool | None = None,
+    database_schema: str | None = None,
+) -> Engine:
+    schema = normalize_database_schema(database_schema)
+    engine_options: dict[str, object] = {
+        "pool_pre_ping": True,
+        "pool_size": DATABASE_POOL_SIZE,
+        "max_overflow": DATABASE_MAX_OVERFLOW,
+        "pool_timeout": DATABASE_POOL_TIMEOUT_SECONDS,
+        "future": True,
+    }
+    if schema != "public":
+        engine_options["connect_args"] = {"options": f"-csearch_path={schema},pg_catalog"}
     return create_engine(
         normalize_database_url(database_url, production=production),
-        pool_pre_ping=True,
-        pool_size=DATABASE_POOL_SIZE,
-        max_overflow=DATABASE_MAX_OVERFLOW,
-        pool_timeout=DATABASE_POOL_TIMEOUT_SECONDS,
-        future=True,
+        **engine_options,
     )

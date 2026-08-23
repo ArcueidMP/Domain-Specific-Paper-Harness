@@ -39,6 +39,9 @@ and publisher PDFs are never scraped.
   run status, partial-state banners, and item-level failure display.
 - M5 pipeline accounting, bounded execution, dependency-license review,
   container hardening, Terraform resources, and production operator scripts.
+- Optional public-demo data isolation through a separately migrated PostgreSQL
+  `demo` schema, least-privilege sync/read roles, deterministic canonical
+  snapshots, and a non-blocking main-branch synchronization workflow.
 
 Migration `0006_topic_reprocessing` adds additive same-date publication
 revisions while preserving earlier analyses and reports. Existing merged
@@ -57,6 +60,8 @@ The code is a Ports-and-Adapters modular monolith with three deployable units:
 
 PostgreSQL 15 or newer with pgvector and `DATABASE_URL` is the only persistence
 contract. FastAPI is read-oriented and never starts the Daily pipeline.
+`DATABASE_SCHEMA` defaults to `public`; only the optional Demo runtimes set it
+to `demo`.
 
 ```text
 external system -> adapter -> port -> application use case -> domain
@@ -183,6 +188,9 @@ numeric versions.
 - `paper-harness-deepseek-api-key`: required only by the Daily Jobs.
 - `paper-harness-semantic-scholar-api-key`: a real non-empty API key required
   only by authenticated historical and related-work operations.
+- `paper-harness-demo-sync-database-url` and
+  `paper-harness-demo-read-database-url`: optional same-database credentials for
+  deterministic snapshot synchronization and a future read-only public Demo.
 
 The browser never accesses PostgreSQL or Secret Manager directly. Service
 accounts receive only the secret versions required by their runtime.
@@ -197,6 +205,10 @@ accounts receive only the secret versions required by their runtime.
   no implicit production substitutes.
 - Weekly and longer synthesis requires sufficient persisted source coverage;
   insufficient windows are reported honestly.
+- Demo schema roles, secret values, GitHub OIDC variables, and Cloudflare
+  hosting are not provisioned by default. The private production service remains
+  the only deployed Web/API until those optional resources are explicitly
+  configured.
 - arXiv PDFs above the configured 30 MiB ingestion bound remain item-level
   analysis failures. Their source metadata remains visible in honest `PARTIAL`
   reports, while unavailable related work, comparisons, graph, trends, and

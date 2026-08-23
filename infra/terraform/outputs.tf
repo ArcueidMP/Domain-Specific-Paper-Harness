@@ -9,7 +9,23 @@ output "secret_ids" {
     database_url     = google_secret_manager_secret.database_url.secret_id
     deepseek_api_key = google_secret_manager_secret.deepseek_api_key.secret_id
     semantic_scholar = google_secret_manager_secret.semantic_scholar_api_key.secret_id
+    demo_sync_database_url = (
+      var.deploy_demo_sync_automation ? google_secret_manager_secret.demo_sync_database_url[0].secret_id : null
+    )
+    demo_read_database_url = (
+      var.deploy_demo_sync_automation ? google_secret_manager_secret.demo_read_database_url[0].secret_id : null
+    )
   }
+}
+
+output "demo_sync_automation" {
+  description = "Non-secret GitHub OIDC and Secret IDs for the optional Demo sync; configure a fixed positive sync secret version as a repository variable."
+  value = var.deploy_demo_sync_automation ? {
+    service_account            = google_service_account.demo_sync[0].email
+    workload_identity_provider = google_iam_workload_identity_pool_provider.demo_sync[0].name
+    sync_database_secret_id    = google_secret_manager_secret.demo_sync_database_url[0].secret_id
+    read_database_secret_id    = google_secret_manager_secret.demo_read_database_url[0].secret_id
+  } : null
 }
 
 output "web_service_uri" {
@@ -105,6 +121,10 @@ output "deployment_topology" {
     }
     identity = {
       owner_email = var.owner_email
+    }
+    demo_sync = {
+      deployed          = var.deploy_demo_sync_automation
+      github_repository = var.deploy_demo_sync_automation ? var.github_repository : null
     }
   }
 }

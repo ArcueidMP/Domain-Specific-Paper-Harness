@@ -1,5 +1,5 @@
 locals {
-  required_services = toset([
+  core_required_services = toset([
     "artifactregistry.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "cloudscheduler.googleapis.com",
@@ -9,6 +9,10 @@ locals {
     "run.googleapis.com",
     "secretmanager.googleapis.com",
   ])
+  required_services = setunion(
+    local.core_required_services,
+    var.deploy_demo_sync_automation ? toset(["iamcredentials.googleapis.com"]) : toset([]),
+  )
 }
 
 resource "google_project_service" "required" {
@@ -72,6 +76,34 @@ resource "google_secret_manager_secret" "deepseek_api_key" {
 resource "google_secret_manager_secret" "semantic_scholar_api_key" {
   project             = var.project_id
   secret_id           = var.semantic_scholar_secret_id
+  deletion_protection = true
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required["secretmanager.googleapis.com"]]
+}
+
+resource "google_secret_manager_secret" "demo_sync_database_url" {
+  count = var.deploy_demo_sync_automation ? 1 : 0
+
+  project             = var.project_id
+  secret_id           = var.demo_sync_database_secret_id
+  deletion_protection = true
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required["secretmanager.googleapis.com"]]
+}
+
+resource "google_secret_manager_secret" "demo_read_database_url" {
+  count = var.deploy_demo_sync_automation ? 1 : 0
+
+  project             = var.project_id
+  secret_id           = var.demo_read_database_secret_id
   deletion_protection = true
 
   replication {

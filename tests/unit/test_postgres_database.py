@@ -9,6 +9,42 @@ import pytest
 from paper_harness.adapters.postgres import database
 
 
+def test_database_schema_defaults_to_public(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATABASE_SCHEMA", raising=False)
+
+    assert database.normalize_database_schema() == "public"
+
+
+def test_database_schema_uses_explicit_environment_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_SCHEMA", "demo")
+
+    assert database.normalize_database_schema() == "demo"
+
+
+@pytest.mark.parametrize(
+    "database_schema",
+    [
+        "",
+        "Demo",
+        "demo-data",
+        "demo,data",
+        "demo public",
+        "1demo",
+        "a" * 64,
+        "pg_catalog",
+        "pg_temp",
+        "information_schema",
+    ],
+)
+def test_database_schema_rejects_unsafe_or_ambiguous_identifiers(
+    database_schema: str,
+) -> None:
+    with pytest.raises(ValueError, match="DATABASE_SCHEMA"):
+        database.normalize_database_schema(database_schema)
+
+
 def test_local_postgres_url_is_normalized_without_production_tls_policy() -> None:
     assert (
         database.normalize_database_url(
@@ -85,6 +121,29 @@ def test_engine_has_small_non_bursting_bounded_pool(monkeypatch: pytest.MonkeyPa
         "pool_timeout": 30,
         "future": True,
     }
+
+
+def test_demo_engine_excludes_production_schema_from_search_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    sentinel = object()
+
+    def create_engine_stub(url: str, **kwargs: Any) -> object:
+        captured["url"] = url
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(database, "create_engine", create_engine_stub)
+
+    result = database.create_postgres_engine(
+        "postgresql+psycopg://user:password@localhost:5432/app",
+        production=False,
+        database_schema="demo",
+    )
+
+    assert result is sentinel
+    assert captured["connect_args"] == {"options": "-csearch_path=demo,pg_catalog"}
 
 
 @pytest.mark.parametrize(

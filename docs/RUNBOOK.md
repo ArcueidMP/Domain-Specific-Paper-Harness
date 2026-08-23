@@ -94,6 +94,75 @@ the provider reports it as complete. Test restoration only into a distinct
 non-production database using the provider's supported procedure. Never expose
 the production URL in command arguments or restore over production as a test.
 
+## Optional Demo schema bootstrap and synchronization
+
+The public Demo data boundary is optional and does not alter the production
+Web, Daily, Scheduler, IAP, or production database credential. It requires the
+current managed PostgreSQL account to support `CREATE SCHEMA`, `CREATEROLE`, and
+column-level grants, with the existing `vector` extension installed.
+
+The one-time, idempotent bootstrap reads credentials only from the environment:
+
+```powershell
+$env:DATABASE_URL = "<database-owner-url>"
+$env:DATABASE_SCHEMA = "public"
+$env:DEMO_SYNC_DB_PASSWORD = "<new-sync-role-password>"
+$env:DEMO_READ_DB_PASSWORD = "<new-read-role-password>"
+uv run --frozen paper-harness bootstrap-demo-schema
+Remove-Item Env:DEMO_SYNC_DB_PASSWORD
+Remove-Item Env:DEMO_READ_DB_PASSWORD
+Remove-Item Env:DATABASE_URL
+Remove-Item Env:DATABASE_SCHEMA
+```
+
+The command creates `paper_harness_demo_sync` and
+`paper_harness_demo_read`, migrates `demo` to the application head, applies the
+explicit production column grants, and verifies that the read role cannot read
+`public` or write `demo`. It has no prompt or per-paper approval step. If the
+provider rejects one of these real boundaries, stop; do not grant either Demo
+role a production-wide permission.
+
+Construct two TLS-required, direct/session-affine URLs for those roles using the
+same host and database. Set `DATABASE_SCHEMA=demo` for both consumers. After a
+reviewed Terraform apply creates the optional secret containers, add each URL
+through `scripts/add-secret-version.ps1`; never store either URL in source or a
+Terraform value.
+
+Run an initial synchronization with only the restricted sync URL:
+
+```powershell
+$env:APP_ENV = "production"
+$env:DATABASE_SCHEMA = "demo"
+$env:DATABASE_URL = "<demo-sync-url>"
+uv run --frozen paper-harness sync-demo-schema
+Remove-Item Env:DATABASE_URL
+Remove-Item Env:DATABASE_SCHEMA
+Remove-Item Env:APP_ENV
+```
+
+Synchronization copies all current canonical publication history and periodic
+reports with their paper/analysis/evidence/comparison/graph/trend/lineage
+closure. It does not copy raw parsed passages, embeddings, cursors, or backfill
+bookkeeping. A failed transaction or revision mismatch leaves the preceding
+Demo snapshot unchanged.
+
+When `deploy_demo_sync_automation=true`, configure these non-secret repository
+variables from the Terraform outputs:
+
+```text
+GCP_PROJECT_ID
+GCP_DEMO_SYNC_WORKLOAD_IDENTITY_PROVIDER
+GCP_DEMO_SYNC_SERVICE_ACCOUNT
+GCP_DEMO_SYNC_DATABASE_SECRET_ID
+GCP_DEMO_SYNC_DATABASE_SECRET_VERSION
+```
+
+The final value is the fixed enabled numeric sync-secret version. The separate
+post-CI workflow runs after a successful `main` push. Its status is visible but
+is not a production required check or deployment dependency. The read secret is
+reserved for the later public Demo runtime and is not accessible to the sync
+identity.
+
 ## Secret versions
 
 Terraform creates secret containers. Add values only through the bounded stdin

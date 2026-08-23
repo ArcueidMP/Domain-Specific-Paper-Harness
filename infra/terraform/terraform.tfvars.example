@@ -8,6 +8,7 @@ deploy_runtime_resources = false
 deploy_analysis_resources = false
 deploy_daily_resources = false
 deploy_scheduler = false
+deploy_demo_sync_automation = false
 scheduler_paused = true
 
 # migration_image = "asia-southeast1-docker.pkg.dev/PROJECT/REPOSITORY/web-api@sha256:..."
@@ -47,3 +48,12 @@ scheduler_paused = true
 # schedule = "0 5 * * *"
 # brain_computer_interfaces_schedule = "20 5 * * *"
 # world_models_schedule = "40 5 * * *"
+
+# Optional Demo snapshot automation is independent of all production runtimes.
+# Terraform creates empty secret containers and a GitHub OIDC identity restricted
+# to this repository's main-branch workflow; secret values are supplied outside
+# Terraform. A failed Demo sync does not gate CI, deployment, or Daily publication.
+# Configure the Terraform output values as GitHub repository variables together
+# with GCP_DEMO_SYNC_DATABASE_SECRET_VERSION set to one fixed positive version.
+# deploy_demo_sync_automation = true
+# github_repository = "OWNER/REPOSITORY"

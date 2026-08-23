@@ -59,6 +59,39 @@ variable "semantic_scholar_secret_id" {
   default     = "paper-harness-semantic-scholar-api-key"
 }
 
+variable "demo_sync_database_secret_id" {
+  description = "Secret Manager ID for the restricted Demo snapshot sync DATABASE_URL."
+  type        = string
+  default     = "paper-harness-demo-sync-database-url"
+}
+
+variable "demo_read_database_secret_id" {
+  description = "Secret Manager ID for the read-only Demo API DATABASE_URL."
+  type        = string
+  default     = "paper-harness-demo-read-database-url"
+}
+
+variable "deploy_demo_sync_automation" {
+  description = "Create the isolated GitHub OIDC identity and empty Demo database secret containers."
+  type        = bool
+  default     = false
+}
+
+variable "github_repository" {
+  description = "GitHub repository in owner/name form allowed to run the main-branch Demo sync workflow."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = !var.deploy_demo_sync_automation || (
+      var.github_repository != null &&
+      can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
+    )
+    error_message = "github_repository must use owner/name form when Demo sync automation is enabled."
+  }
+}
+
 variable "deploy_runtime_resources" {
   description = "Create the private IAP-protected Web/API service independently of the migration Job flag."
   type        = bool

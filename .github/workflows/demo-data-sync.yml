@@ -1,0 +1,145 @@
+name: Demo data sync
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: demo-data-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      vars.GCP_PROJECT_ID != '' &&
+      vars.GCP_DEMO_SYNC_WORKLOAD_IDENTITY_PROVIDER != '' &&
+      vars.GCP_DEMO_SYNC_SERVICE_ACCOUNT != '' &&
+      vars.GCP_DEMO_SYNC_DATABASE_SECRET_ID != '' &&
+      vars.GCP_DEMO_SYNC_DATABASE_SECRET_VERSION != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_DEMO_SYNC_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_DEMO_SYNC_SERVICE_ACCOUNT }}
+      GCP_DATABASE_SECRET_ID: ${{ vars.GCP_DEMO_SYNC_DATABASE_SECRET_ID }}
+      GCP_DATABASE_SECRET_VERSION: ${{ vars.GCP_DEMO_SYNC_DATABASE_SECRET_VERSION }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: 3.13.13
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: 0.12.3
+          enable-cache: true
+      - run: uv sync --frozen --python 3.13.13
+      - name: Synchronize the isolated Demo snapshot
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import re
+          import subprocess
+          import urllib.parse
+          import urllib.request
+
+
+          def request_json(url, *, headers=None, data=None):
+              request = urllib.request.Request(
+                  url,
+                  headers=headers or {},
+                  data=data,
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return json.load(response)
+
+
+          project_id = os.environ["GCP_PROJECT_ID"]
+          provider = os.environ["GCP_WORKLOAD_IDENTITY_PROVIDER"]
+          service_account = os.environ["GCP_SERVICE_ACCOUNT"]
+          secret_id = os.environ["GCP_DATABASE_SECRET_ID"]
+          secret_version = os.environ["GCP_DATABASE_SECRET_VERSION"]
+          if re.fullmatch(r"[1-9][0-9]*", secret_version) is None:
+              raise RuntimeError("the Demo sync database secret version must be a positive integer")
+          audience = f"//iam.googleapis.com/{provider}"
+
+          oidc_url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+          separator = "&" if "?" in oidc_url else "?"
+          oidc_response = request_json(
+              f"{oidc_url}{separator}audience={urllib.parse.quote(audience, safe='')}",
+              headers={
+                  "Authorization": f"Bearer {os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']}"
+              },
+          )
+          sts_payload = urllib.parse.urlencode(
+              {
+                  "audience": audience,
+                  "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                  "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+                  "scope": "https://www.googleapis.com/auth/cloud-platform",
+                  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                  "subject_token": oidc_response["value"],
+              }
+          ).encode()
+          federated_token = request_json(
+              "https://sts.googleapis.com/v1/token",
+              headers={"Content-Type": "application/x-www-form-urlencoded"},
+              data=sts_payload,
+          )["access_token"]
+
+          encoded_account = urllib.parse.quote(service_account, safe="")
+          impersonation_payload = json.dumps(
+              {
+                  "scope": ["https://www.googleapis.com/auth/cloud-platform"],
+                  "lifetime": "900s",
+              }
+          ).encode()
+          access_token = request_json(
+              "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"
+              f"{encoded_account}:generateAccessToken",
+              headers={
+                  "Authorization": f"Bearer {federated_token}",
+                  "Content-Type": "application/json",
+              },
+              data=impersonation_payload,
+          )["accessToken"]
+
+          secret_name = urllib.parse.quote(secret_id, safe="")
+          secret_response = request_json(
+              "https://secretmanager.googleapis.com/v1/projects/"
+              f"{project_id}/secrets/{secret_name}/versions/{secret_version}:access",
+              headers={"Authorization": f"Bearer {access_token}"},
+          )
+          database_url = base64.b64decode(secret_response["payload"]["data"]).decode()
+          if not database_url or "\n" in database_url or "\r" in database_url:
+              raise RuntimeError("the Demo sync DATABASE_URL secret must contain one non-empty line")
+
+          print(f"::add-mask::{database_url}")
+          command_environment = {
+              **os.environ,
+              "DATABASE_URL": database_url,
+              "DATABASE_SCHEMA": "demo",
+              "APP_ENV": "production",
+          }
+          subprocess.run(
+              ["uv", "run", "--frozen", "paper-harness", "sync-demo-schema"],
+              check=True,
+              env=command_environment,
+          )
+          PY
