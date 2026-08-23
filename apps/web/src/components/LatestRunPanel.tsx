@@ -14,6 +14,7 @@ export function LatestRunPanel({ run, items = [], heading = "Daily run" }: Lates
     (item) => item.status === "FAILED" || item.failed_stage !== null,
   );
   const pipelineOutcome = run.pipeline_status;
+  const noUpdate = run.publication_outcome === "NO_UPDATE";
   const executionModeLabel =
     run.pipeline_execution_mode === "SMOKE"
       ? "Deployment smoke"
@@ -45,6 +46,7 @@ export function LatestRunPanel({ run, items = [], heading = "Daily run" }: Lates
           <div>
             <span>Operation</span>
             <RunStatusBadge status={run.status} />
+            {noUpdate ? <RunStatusBadge status="NO_UPDATE" /> : null}
           </div>
           {pipelineOutcome ? (
             <div>
@@ -93,9 +95,15 @@ export function LatestRunPanel({ run, items = [], heading = "Daily run" }: Lates
           <strong>Partial daily run</strong>
           <span>
             {failedItems.length > 0
-              ? `${failedItems.length} selected paper${failedItems.length === 1 ? "" : "s"} did not complete every required stage.`
-              : "The full pipeline completed with one or more persisted failures."}
+              ? `${failedItems.length} selected paper${failedItems.length === 1 ? " has" : "s have"} unavailable core metadata or analysis; usable source metadata remains published.`
+              : "The publication contains one or more metadata or analysis failures."}
           </span>
+        </div>
+      ) : null}
+      {noUpdate ? (
+        <div className="no-update-banner" role="status">
+          <strong>No research updates today</strong>
+          <span>No relevant papers were found today.</span>
         </div>
       ) : null}
       {run.pipeline_status === "FAILED" ? (
@@ -111,13 +119,21 @@ export function LatestRunPanel({ run, items = [], heading = "Daily run" }: Lates
         </div>
       ) : null}
       {failedItems.length > 0 ? (
-        <section className="run-item-failures" aria-labelledby={`run-failures-${run.id}`}>
-          <h3 id={`run-failures-${run.id}`}>Item failures</h3>
+        <section
+          className={`run-item-failures${run.operation === "PRODUCT_PUBLICATION" ? " availability" : ""}`}
+          aria-labelledby={`run-failures-${run.id}`}
+        >
+          <h3 id={`run-failures-${run.id}`}>
+            {run.operation === "PRODUCT_PUBLICATION" ? "Paper availability" : "Item failures"}
+          </h3>
           <ul>
             {failedItems.map((item) => {
               const identifier = `arXiv:${item.canonical_arxiv_id}`;
               return (
                 <li key={item.id}>
+                  {item.analysis_status === "ANALYSIS_UNAVAILABLE" ? (
+                    <RunStatusBadge status={item.analysis_status} />
+                  ) : null}
                   <TopicLink to={`/papers/${item.paper_id}`}>
                     <strong>{item.paper_title}</strong>
                     <span>{identifier}</span>

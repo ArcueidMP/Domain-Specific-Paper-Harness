@@ -28,6 +28,9 @@ describe("DailyReportPage", () => {
     expect(screen.getByText("Loading daily publication")).toBeInTheDocument();
     expect((await screen.findAllByText("Broad LLM agents daily report")).length).toBeGreaterThan(0);
     expect(screen.getByText("Partial report")).toBeInTheDocument();
+    expect(screen.getAllByText("ANALYSIS UNAVAILABLE").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("COMPARISON UNAVAILABLE").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("INSUFFICIENT DATA").length).toBeGreaterThan(0);
     expect(screen.getAllByText("GROBID_INVALID_TEI").length).toBeGreaterThan(0);
     expect(screen.getByText("Scope and limitations")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open evidence in paper" })).toHaveAttribute(
@@ -68,5 +71,60 @@ describe("DailyReportPage", () => {
 
     expect(await screen.findByText("No report was published")).toBeInTheDocument();
     expect(screen.getByText("FAILED")).toBeInTheDocument();
+  });
+
+  it("shows a complete no-update publication for the current logical date", async () => {
+    const noUpdateReport = {
+      ...report,
+      logical_date: "2026-08-23",
+      period_start: "2026-08-23",
+      period_end: "2026-08-23",
+      status: "COMPLETE",
+      publication_outcome: "NO_UPDATE",
+      summary: "The daily run completed normally with no update.",
+      failures: [],
+      sections: [],
+      counts: { retrieved: 0, selected: 0, processed: 0, completed: 0, failed: 0 },
+      highlighted_papers: [],
+      major_entities: [],
+      notable_comparisons: [],
+      lineage_highlights: [],
+      evidence: [],
+    };
+    const noUpdateRun = {
+      ...dailyRun,
+      run: {
+        ...dailyRun.run,
+        logical_date: "2026-08-23",
+        status: "COMPLETE",
+        pipeline_status: "COMPLETE",
+        publication_outcome: "NO_UPDATE",
+        selected_count: 0,
+        completed_count: 0,
+        failed_count: 0,
+        error_code: null,
+        error_detail: null,
+      },
+      items: [],
+      report: noUpdateReport,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        requestPath(input) === "/api/v1/daily/latest"
+          ? Promise.resolve(jsonResponse(noUpdateRun))
+          : Promise.resolve(
+              jsonResponse({ items: [noUpdateReport], total: 1, limit: 20, offset: 0 }),
+            ),
+      ),
+    );
+
+    renderWithProviders(<DailyReportPage />);
+
+    expect((await screen.findAllByText("No research updates today")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("No relevant papers were found today.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("NO UPDATE").length).toBeGreaterThan(0);
+    expect(screen.queryByText("No report was published")).not.toBeInTheDocument();
+    expect(screen.getAllByText("2026-08-23").length).toBeGreaterThan(0);
   });
 });

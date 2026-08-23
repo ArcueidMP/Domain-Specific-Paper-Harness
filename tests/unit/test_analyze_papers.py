@@ -344,6 +344,32 @@ def _versioned_targets(
     return replace(first, paper=current.paper), current
 
 
+def test_pipeline_zero_selection_completes_without_analysis_calls(
+    topic_config: TopicConfig,
+) -> None:
+    repository = FakeRepository()
+    llm = FakeLLM()
+
+    run = AnalyzePapers(
+        arxiv=FakeArxiv(),
+        parser=None,
+        llm=llm,
+        repository=repository,
+        clock=lambda: datetime(2026, 8, 23, 5, tzinfo=UTC),
+    ).execute(
+        topic_config,
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        logical_date=date(2026, 8, 23),
+        pipeline_execution_mode=PipelineExecutionMode.NORMAL,
+        pipeline_selection_limit=10,
+        pipeline_execution_id=PIPELINE_EXECUTION_ID,
+    )
+
+    assert run.status is RunStatus.COMPLETE
+    assert run.selected_count == run.completed_count == run.failed_count == 0
+    assert llm.calls == []
+
+
 def test_abstract_only_scope_is_explicit_and_never_calls_pdf_or_parser(
     topic_config: TopicConfig, arxiv_record_v1: ArxivPaperRecord
 ) -> None:
@@ -841,7 +867,7 @@ def test_full_text_parser_failure_never_downgrades_or_calls_llm(
         logical_date=date(2026, 1, 10),
     )
 
-    assert run.status is RunStatus.FAILED
+    assert run.status is RunStatus.PARTIAL
     assert llm.calls == []
     assert repository.items[0].stage is PaperStage.PDF_DOWNLOADED
     assert repository.items[0].failed_stage is PaperStage.PARSED
@@ -1131,7 +1157,7 @@ def test_ungrounded_model_evidence_is_an_explicit_item_failure(
         analysis_scope=AnalysisScope.ABSTRACT_ONLY,
         logical_date=date(2026, 1, 10),
     )
-    assert run.status is RunStatus.FAILED
+    assert run.status is RunStatus.PARTIAL
     assert repository.items[0].failed_stage is PaperStage.EVIDENCE_EXTRACTED
     assert repository.items[0].error_code == "EVIDENCE_GROUNDING_INVALID"
 
@@ -1282,7 +1308,7 @@ def test_parser_authentication_failure_aborts_before_the_next_selected_paper(
     assert repository.run.status is RunStatus.FAILED
 
 
-def test_global_arxiv_pdf_unavailability_aborts_before_the_next_selected_paper(
+def test_arxiv_pdf_unavailability_is_item_scoped_after_metadata_selection(
     topic_config: TopicConfig, arxiv_record_v1: ArxivPaperRecord
 ) -> None:
     second_record = replace(
@@ -1296,25 +1322,24 @@ def test_global_arxiv_pdf_unavailability_aborts_before_the_next_selected_paper(
     repository.analysis_targets = (_target(arxiv_record_v1), _target(second_record))
     arxiv = FakeArxiv(pdf_error=ArxivUnavailableError("arXiv PDF timed out after bounded retries"))
 
-    with pytest.raises(ArxivUnavailableError):
-        AnalyzePapers(
-            arxiv=arxiv,
-            parser=FakeParser(),
-            llm=FakeLLM(),
-            repository=repository,
-            clock=lambda: datetime(2026, 1, 10, 5, tzinfo=UTC),
-        ).execute(
-            topic_config,
-            paper_ids=tuple(target.paper.id for target in repository.analysis_targets),
-            analysis_scope=AnalysisScope.FULL_TEXT,
-            logical_date=date(2026, 1, 10),
-        )
+    run = AnalyzePapers(
+        arxiv=arxiv,
+        parser=FakeParser(),
+        llm=FakeLLM(),
+        repository=repository,
+        clock=lambda: datetime(2026, 1, 10, 5, tzinfo=UTC),
+    ).execute(
+        topic_config,
+        paper_ids=tuple(target.paper.id for target in repository.analysis_targets),
+        analysis_scope=AnalysisScope.FULL_TEXT,
+        logical_date=date(2026, 1, 10),
+    )
 
-    assert len(arxiv.pdf_calls) == 1
+    assert len(arxiv.pdf_calls) == 2
     assert all(item.status.value == "FAILED" for item in repository.items)
     assert all(item.failed_stage is PaperStage.PDF_DOWNLOADED for item in repository.items)
-    assert repository.run is not None
-    assert repository.run.status is RunStatus.FAILED
+    assert run.status is RunStatus.PARTIAL
+    assert (run.completed_count, run.failed_count) == (0, 2)
 
 
 def test_duplicate_model_claim_references_are_rejected_before_persistence() -> None:

@@ -120,7 +120,7 @@ def test_daily_cli_passes_the_direct_reprocess_flag(
     ),
     [
         (
-            "COMPARISON_MISSING",
+            "COMPARISON_UNAVAILABLE",
             False,
             "WARNING",
             0,
@@ -317,7 +317,7 @@ def test_full_pipeline_cli_reports_complete_and_partial_results(
     if failure_code is not None:
         assert f'"error_code":"{failure_code}"' in result.output
     else:
-        assert '"error_code":"COMPARISON_MISSING"' not in result.output
+        assert '"error_code":"COMPARISON_UNAVAILABLE"' not in result.output
     exhausted_event_count = result.output.count('"event":"external_dependency_exhausted"')
     assert exhausted_event_count == expected_exhausted_events
     if expected_exhausted_events:
@@ -427,8 +427,8 @@ def test_full_pipeline_cli_preserves_exhaustion_from_failed_child_run(
         selected_count=1,
         completed_count=0,
         failed_count=1,
-        error_code="NO_SELECTED_PAPER_COMPLETED",
-        error_detail="No selected paper completed analysis.",
+        error_code="PUBLICATION_TRANSACTION_FAILED",
+        error_detail="Analysis failure metadata could not be committed.",
         schema_version=1,
         created_at=now,
         pipeline_execution_mode=PipelineExecutionMode.NORMAL,
@@ -543,7 +543,7 @@ def test_analysis_cli_exit_and_log_severity_follow_persisted_run_status(
         selected_count=selected_count,
         completed_count=completed_count,
         failed_count=failed_count,
-        error_code="NO_SELECTED_PAPER_COMPLETED" if status is RunStatus.FAILED else None,
+        error_code="PUBLICATION_TRANSACTION_FAILED" if status is RunStatus.FAILED else None,
         error_detail=(
             "No selected paper completed evidence extraction."
             if status is RunStatus.FAILED
@@ -613,7 +613,7 @@ def test_product_cli_exit_and_log_severity_follow_persisted_run_status(
         selected_count=1,
         completed_count=0 if status is RunStatus.FAILED else 1,
         failed_count=0 if status is RunStatus.COMPLETE else 1,
-        error_code="NO_SELECTED_PAPER_COMPLETED" if status is RunStatus.FAILED else None,
+        error_code="PUBLICATION_TRANSACTION_FAILED" if status is RunStatus.FAILED else None,
         error_detail="No selected paper completed graph construction."
         if status is RunStatus.FAILED
         else None,

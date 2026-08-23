@@ -21,6 +21,7 @@ from paper_harness.application.product_models import (
     ProductFailureInput,
     ProductPaperInput,
     ProductPublicationInput,
+    PublicationPaperCardInput,
 )
 from paper_harness.application.publish_product import PublishProduct
 from paper_harness.application.read_models import ReportDetail, RunDetail, RunItemDetail
@@ -396,6 +397,17 @@ def _publication_input(papers: tuple[ProductPaperInput, ...]) -> ProductPublicat
     return ProductPublicationInput(
         source_run=RunDetail(run=source_run, items=details),
         papers=papers,
+        cards=tuple(
+            PublicationPaperCardInput(
+                paper_id=item.paper_id,
+                paper_version_id=item.paper_version_id,
+                canonical_arxiv_id=f"2608.{slot + 1:05d}",
+                title=item.paper_title,
+                abstract=f"Persisted abstract for {item.paper_title}",
+                source_url=f"https://arxiv.org/abs/2608.{slot + 1:05d}v1",
+            )
+            for slot, item in enumerate(papers)
+        ),
     )
 
 
@@ -428,6 +440,17 @@ def _graph_corpus(papers: tuple[ProductPaperInput, ...]) -> GraphCorpusInput:
                 comparison.target_paper_title,
                 AS_OF - timedelta(days=14),
             )
+    if not bundles:
+        return GraphCorpusInput(
+            topic_id=TOPIC_ID,
+            papers=(),
+            lineage_papers=(),
+            entities=(),
+            mentions=(),
+            edges=(),
+            mention_activity_dates={},
+            edge_activity_dates={},
+        )
     merged = merge_knowledge_graph_bundles(bundles)
     paper_entities = {
         item.paper_id: item
@@ -478,8 +501,7 @@ def _graph_corpus(papers: tuple[ProductPaperInput, ...]) -> GraphCorpusInput:
 def _repository(papers: tuple[ProductPaperInput, ...]) -> FakeRepository:
     repository = FakeRepository()
     repository.product_input = _publication_input(papers)
-    if any(item.comparisons for item in papers):
-        repository.graph_corpus = _graph_corpus(papers)
+    repository.graph_corpus = _graph_corpus(papers)
     return repository
 
 
@@ -539,6 +561,137 @@ def test_complete_structured_publication_persists_graph_trends_lineage_and_repor
     assert report.source == "m4_structured_report"
     assert report.graph_changes.inferred_edge_count == 1
     assert len(report.trend_snapshot_ids) == 3
+
+
+def test_zero_selection_publishes_complete_no_update_report_without_llm_call() -> None:
+    repository = _repository(())
+    llm = _ReportLLM()
+
+    run = PublishProduct(
+        repository=repository,
+        llm=cast(LLMPort, llm),
+        clock=lambda: NOW,
+    ).execute(_topic(), narrative_mode=ReportNarrativeMode.DEEPSEEK, logical_date=AS_OF)
+
+    assert run.status is RunStatus.COMPLETE
+    assert run.selected_count == run.completed_count == run.failed_count == 0
+    assert llm.calls == []
+    assert repository.product_run is not None
+    report = repository.product_run.report
+    assert report is not None
+    assert report.report.counts == ReportCounts(0, 0, 0, 0, 0)
+    assert report.report.narrative_mode is ReportNarrativeMode.STRUCTURED_ONLY
+    assert "no update" in report.report.summary.lower()
+
+
+def test_missing_analysis_identity_is_an_item_failure_and_other_paper_publishes() -> None:
+    valid = _product_paper(1)
+    missing = _product_paper(2)
+    failure = ProductFailureInput(
+        paper_id=missing.paper_id,
+        paper_version_id=missing.paper_version_id,
+        stage=PaperStage.EVIDENCE_EXTRACTED,
+        failed_stage=PaperStage.ANALYZED,
+        error_code="ANALYSIS_IDENTITY_MISSING",
+        retryable=False,
+        error_detail="The selected analysis identity is unavailable for publication.",
+    )
+    source = replace(
+        _publication_input((valid, missing)),
+        papers=(valid,),
+        input_failures=(failure,),
+    )
+    repository = FakeRepository()
+    repository.product_input = source
+    repository.graph_corpus = _graph_corpus((valid,))
+
+    run = PublishProduct(repository=repository, llm=None, clock=lambda: NOW).execute(
+        _topic(),
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=AS_OF,
+    )
+
+    assert run.status is RunStatus.PARTIAL
+    assert (run.completed_count, run.failed_count) == (1, 1)
+    assert repository.product_run is not None
+    failed_item = next(
+        item.item
+        for item in repository.product_run.items
+        if item.item.paper_version_id == missing.paper_version_id
+    )
+    assert failed_item.error_code == "ANALYSIS_IDENTITY_MISSING"
+    assert repository.product_run.report is not None
+    report = repository.product_run.report.report
+    assert report.status is RunStatus.PARTIAL
+    assert {item.paper_version_id for item in report.highlighted_papers} == {
+        valid.paper_version_id,
+        missing.paper_version_id,
+    }
+    unavailable = next(
+        item
+        for item in report.highlighted_papers
+        if item.paper_version_id == missing.paper_version_id
+    )
+    assert unavailable.evidence_ids == ()
+
+
+def test_all_analysis_unavailable_still_publishes_every_metadata_card() -> None:
+    papers = (_product_paper(1), _product_paper(2))
+    source = _publication_input(papers)
+    failed_items = tuple(
+        replace(
+            detail.item,
+            stage=PaperStage.PARSED,
+            status=RunItemStatus.FAILED,
+            failed_stage=PaperStage.ANALYZED,
+            error_code="LLM_OUTPUT_INVALID",
+            retryable=False,
+            error_detail="Structured analysis output was unavailable.",
+        )
+        for detail in source.source_run.items
+    )
+    source = replace(
+        source,
+        source_run=replace(
+            source.source_run,
+            run=replace(
+                source.source_run.run,
+                status=RunStatus.PARTIAL,
+                completed_count=0,
+                failed_count=2,
+            ),
+            items=tuple(
+                replace(detail, item=failed)
+                for detail, failed in zip(source.source_run.items, failed_items, strict=True)
+            ),
+        ),
+        papers=(),
+    )
+    repository = FakeRepository()
+    repository.product_input = source
+    repository.graph_corpus = _graph_corpus(())
+
+    run = PublishProduct(repository=repository, llm=None, clock=lambda: NOW).execute(
+        _topic(),
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=AS_OF,
+    )
+
+    assert run.status is RunStatus.PARTIAL
+    assert (run.selected_count, run.completed_count, run.failed_count) == (2, 0, 2)
+    assert repository.product_run is not None
+    assert repository.product_run.report is not None
+    report = repository.product_run.report.report
+    assert {item.paper_version_id for item in report.highlighted_papers} == {
+        item.paper_version_id for item in papers
+    }
+    assert all(not item.evidence_ids for item in report.highlighted_papers)
+    assert all(
+        item.reason.startswith("Structured analysis is unavailable")
+        for item in report.highlighted_papers
+    )
+    assert all("Persisted abstract" not in item.reason for item in report.highlighted_papers)
+    assert any("ANALYSIS_UNAVAILABLE" in item for item in report.missing_sections)
 
 
 def test_daily_graph_change_counts_deduplicate_shared_stable_entities() -> None:
@@ -609,7 +762,7 @@ def test_daily_report_idempotency_rejects_a_different_narrative_mode(
         publisher.execute(_topic(), narrative_mode=second_mode, logical_date=AS_OF)
 
 
-def test_missing_comparison_produces_partial_report_with_visible_item_failure() -> None:
+def test_missing_comparison_is_optional_and_publishes_complete() -> None:
     completed = _product_paper(1)
     missing_comparison = _product_paper(2, with_comparison=False)
     repository = _repository((completed, missing_comparison))
@@ -620,55 +773,37 @@ def test_missing_comparison_produces_partial_report_with_visible_item_failure() 
         logical_date=AS_OF,
     )
 
-    assert run.status is RunStatus.PARTIAL
-    assert (run.completed_count, run.failed_count) == (1, 1)
-    failed = next(item for item in repository.items if item.status is RunItemStatus.FAILED)
-    assert failed.paper_version_id == missing_comparison.paper_version_id
-    assert failed.failed_stage is PaperStage.COMPARED
-    assert failed.error_code == "COMPARISON_MISSING"
+    assert run.status is RunStatus.COMPLETE
+    assert (run.completed_count, run.failed_count) == (2, 0)
+    assert all(item.status is RunItemStatus.COMPLETED for item in repository.items)
     assert repository.product_run is not None
     assert repository.product_run.report is not None
     report = repository.product_run.report.report
-    assert report.status is RunStatus.PARTIAL
-    assert report.failures[0].error_code == "COMPARISON_MISSING"
-    assert report.counts.completed == 1
-    assert report.counts.failed == 1
-    assert "missing from product publication" in report.missing_sections[0]
+    assert report.status is RunStatus.COMPLETE
+    assert report.failures == ()
+    assert report.counts.completed == 2
+    assert report.counts.failed == 0
+    assert any("COMPARISON_UNAVAILABLE" in item for item in report.missing_sections)
 
 
-def test_historical_analysis_failure_is_frozen_into_partial_publication() -> None:
+def test_optional_historical_analysis_failure_is_not_a_product_item() -> None:
     completed = _product_paper(1)
-    historical = _product_paper(2)
     repository = _repository((completed,))
-    failure = ProductFailureInput(
-        paper_id=historical.paper_id,
-        paper_version_id=historical.paper_version_id,
-        stage=PaperStage.PARSED,
-        failed_stage=PaperStage.ANALYZED,
-        error_code="ANALYSIS_MODEL_OUTPUT_INVALID",
-        retryable=False,
-        error_detail="Historical analysis output failed schema validation.",
-    )
     publisher = PublishProduct(repository=repository, llm=None, clock=lambda: NOW)
 
     run = publisher.execute(
         _topic(),
         narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
         logical_date=AS_OF,
-        upstream_failures=(failure,),
     )
 
-    assert run.status is RunStatus.PARTIAL
-    assert (run.selected_count, run.completed_count, run.failed_count) == (2, 1, 1)
+    assert run.status is RunStatus.COMPLETE
+    assert (run.selected_count, run.completed_count, run.failed_count) == (1, 1, 0)
     assert repository.product_run is not None
     assert repository.product_run.report is not None
     report = repository.product_run.report.report
-    assert report.status is RunStatus.PARTIAL
-    assert report.failures[0].paper_id == historical.paper_id
-    assert report.failures[0].paper_version_id == historical.paper_version_id
-    assert report.failures[0].failed_stage is PaperStage.ANALYZED
-    assert report.failures[0].error_code == "ANALYSIS_MODEL_OUTPUT_INVALID"
-    assert report.failures[0].error_detail == failure.error_detail
+    assert report.status is RunStatus.COMPLETE
+    assert report.failures == ()
 
     replay = publisher.execute(
         _topic(),
@@ -690,80 +825,19 @@ def test_stale_persisted_comparison_cannot_satisfy_current_pipeline_publication(
         comparison_ids=frozenset(),
     )
 
-    assert run.status is RunStatus.FAILED
-    assert run.error_code == "NO_SELECTED_PAPER_COMPLETED"
-    assert repository.items[0].failed_stage is PaperStage.COMPARED
-    assert repository.items[0].error_code == "COMPARISON_MISSING"
-    assert repository.product_graphs == {}
+    assert run.status is RunStatus.COMPLETE
+    assert (run.completed_count, run.failed_count) == (1, 0)
+    assert repository.items[0].status is RunItemStatus.COMPLETED
+    assert repository.product_graphs
     assert repository.product_run is not None
-    assert repository.product_run.report is None
-
-
-def test_failed_product_restart_uses_current_comparison_and_preserves_upstream_failure() -> None:
-    completed = _product_paper(1)
-    upstream_failed = _product_paper(2)
-    comparison_id = completed.comparisons[0].bundle.comparison.id
-    repository = _repository((completed,))
-    source = repository.product_input
-    assert source is not None
-    failed_source_item = RunItemDetail(
-        item=RunItem(
-            id=_id("source-upstream-failure"),
-            run_id=source.source_run.run.id,
-            paper_id=upstream_failed.paper_id,
-            paper_version_id=upstream_failed.paper_version_id,
-            stage=PaperStage.SELECTED,
-            status=RunItemStatus.FAILED,
-            failed_stage=PaperStage.ANALYZED,
-            error_code="ANALYSIS_MODEL_OUTPUT_INVALID",
-            retryable=False,
-            error_detail="Persisted upstream analysis failure.",
-            schema_version=1,
-            created_at=NOW - timedelta(minutes=5),
-            updated_at=NOW - timedelta(minutes=1),
-        ),
-        canonical_arxiv_id="2608.00002",
-        paper_title=upstream_failed.paper_title,
-    )
-    publisher = PublishProduct(repository=repository, llm=None, clock=lambda: NOW)
-
-    failed = publisher.execute(
-        _topic(),
-        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
-        logical_date=AS_OF,
-        comparison_ids=frozenset(),
-    )
-    assert failed.status is RunStatus.FAILED
-    repository.product_input = replace(
-        source,
-        source_run=replace(
-            source.source_run,
-            run=replace(
-                source.source_run.run,
-                status=RunStatus.PARTIAL,
-                selected_count=2,
-                completed_count=1,
-                failed_count=1,
-            ),
-            items=source.source_run.items + (failed_source_item,),
-        ),
-    )
-    retried = publisher.execute(
-        _topic(),
-        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
-        logical_date=AS_OF,
-        comparison_ids=frozenset((comparison_id,)),
+    assert repository.product_run.report is not None
+    assert any(
+        "COMPARISON_UNAVAILABLE" in item
+        for item in repository.product_run.report.report.missing_sections
     )
 
-    assert retried.id == failed.id
-    assert retried.status is RunStatus.PARTIAL
-    assert (retried.completed_count, retried.failed_count) == (1, 1)
-    preserved = next(item for item in repository.items if item.paper_id == upstream_failed.paper_id)
-    assert preserved.failed_stage is PaperStage.ANALYZED
-    assert preserved.error_code == "ANALYSIS_MODEL_OUTPUT_INVALID"
 
-
-def test_no_paper_completing_graph_construction_fails_without_a_report() -> None:
+def test_no_comparison_still_builds_analysis_graph_and_report() -> None:
     missing_comparison = _product_paper(1, with_comparison=False)
     repository = _repository((missing_comparison,))
 
@@ -773,13 +847,12 @@ def test_no_paper_completing_graph_construction_fails_without_a_report() -> None
         logical_date=AS_OF,
     )
 
-    assert run.status is RunStatus.FAILED
-    assert run.error_code == "NO_SELECTED_PAPER_COMPLETED"
-    assert repository.items[0].error_code == "COMPARISON_MISSING"
+    assert run.status is RunStatus.COMPLETE
+    assert repository.items[0].status is RunItemStatus.COMPLETED
     assert repository.product_run is not None
-    assert repository.product_run.report is None
-    assert repository.persisted_trends == ()
-    assert repository.reports == ()
+    assert repository.product_run.report is not None
+    assert repository.persisted_trends
+    assert repository.reports
 
 
 def test_deepseek_publication_uses_only_generated_sections_and_provenance() -> None:
@@ -890,30 +963,30 @@ def test_unsupported_generated_claim_never_enters_daily_report_input() -> None:
     assert unsupported_text not in repository.product_run.report.report.highlighted_papers[0].reason
 
 
-def test_deepseek_output_failure_fails_run_without_structured_fallback() -> None:
+def test_deepseek_output_failure_publishes_transparent_structured_report() -> None:
     repository = _repository((_product_paper(1),))
     llm = _ReportLLM(LLMOutputError("schema-invalid report output"))
 
-    with pytest.raises(LLMOutputError, match="schema-invalid"):
-        PublishProduct(
-            repository=repository,
-            llm=cast(LLMPort, llm),
-            clock=lambda: NOW,
-        ).execute(_topic(), narrative_mode=ReportNarrativeMode.DEEPSEEK, logical_date=AS_OF)
+    run = PublishProduct(
+        repository=repository,
+        llm=cast(LLMPort, llm),
+        clock=lambda: NOW,
+    ).execute(_topic(), narrative_mode=ReportNarrativeMode.DEEPSEEK, logical_date=AS_OF)
 
     assert len(llm.calls) == 1
-    assert repository.run is not None
-    assert repository.run.status is RunStatus.FAILED
-    assert repository.run.error_code == "LLM_OUTPUT_INVALID"
-    assert repository.reports == ()
-    assert repository.product_graphs == {}
-    assert repository.persisted_trends == ()
-    assert repository.persisted_lineages == ()
+    assert run.status is RunStatus.COMPLETE
+    assert repository.reports
+    assert repository.product_graphs
+    assert repository.persisted_trends
+    assert repository.persisted_lineages
     assert repository.product_run is not None
-    assert repository.product_run.report is None
+    assert repository.product_run.report is not None
+    report = repository.product_run.report.report
+    assert report.narrative_mode is ReportNarrativeMode.STRUCTURED_ONLY
+    assert any(value.startswith("NARRATIVE_UNAVAILABLE:") for value in report.missing_sections)
 
 
-def test_failed_product_publication_restarts_the_same_run_without_staged_artifacts() -> None:
+def test_degraded_structured_publication_replays_without_regeneration() -> None:
     repository = _repository((_product_paper(1),))
     llm = _ReportLLM(LLMOutputError("transient report request failed"))
     publisher = PublishProduct(
@@ -922,25 +995,25 @@ def test_failed_product_publication_restarts_the_same_run_without_staged_artifac
         clock=lambda: NOW,
     )
 
-    with pytest.raises(LLMOutputError, match="transient"):
-        publisher.execute(
-            _topic(),
-            narrative_mode=ReportNarrativeMode.DEEPSEEK,
-            logical_date=AS_OF,
-        )
+    first = publisher.execute(
+        _topic(),
+        narrative_mode=ReportNarrativeMode.DEEPSEEK,
+        logical_date=AS_OF,
+    )
     assert repository.run is not None
-    failed_run_id = repository.run.id
-    assert repository.product_graphs == {}
+    published_run_id = repository.run.id
+    assert repository.product_graphs
 
     llm.error = None
-    completed = publisher.execute(
+    replay = publisher.execute(
         _topic(),
         narrative_mode=ReportNarrativeMode.DEEPSEEK,
         logical_date=AS_OF,
     )
 
-    assert completed.id == failed_run_id
-    assert completed.status is RunStatus.COMPLETE
+    assert replay.id == published_run_id == first.id
+    assert replay.status is RunStatus.COMPLETE
+    assert len(llm.calls) == 1
     assert len(repository.reports) == 1
     assert len(repository.product_graphs) == 1
 

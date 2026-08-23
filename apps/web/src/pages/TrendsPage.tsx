@@ -14,6 +14,7 @@ import {
 
 import type { TrendSnapshot, TrendWindow } from "../api/client";
 import { trendsQuery } from "../api/queries";
+import { RunStatusBadge } from "../components/RunStatusBadge";
 import { StateNotice } from "../components/StateNotice";
 import { TopicLink } from "../components/TopicLink";
 import { useTopicSlug } from "../lib/topic";
@@ -151,9 +152,13 @@ export function TrendsPage() {
 
           {snapshot.data_sufficiency !== "SUFFICIENT" ? (
             <div className="insufficient-data-banner" role="status">
-              <strong>
-                {snapshot.data_sufficiency === "INSUFFICIENT" ? "Insufficient data" : "Limited data"}
-              </strong>
+              <RunStatusBadge
+                status={
+                  snapshot.data_sufficiency === "INSUFFICIENT"
+                    ? "INSUFFICIENT_DATA"
+                    : "LIMITED_DATA"
+                }
+              />
               <span>
                 This window contains {snapshot.included_paper_count} papers. The configured
                 thresholds are {snapshot.thresholds.limited_paper_count} for limited and{" "}

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { RelatedWork, RelatedWorkItem } from "../api/client";
 import { paperRelatedWorkQuery } from "../api/queries";
 import { formatDateTime } from "../lib/format";
+import { RunStatusBadge } from "./RunStatusBadge";
 import { StateNotice } from "./StateNotice";
 import { TopicLink } from "./TopicLink";
 
@@ -152,14 +153,21 @@ function CandidateCard({
       ) : null}
 
       {item.comparison_id ? (
-        <TopicLink
-          className="primary-button comparison-link"
-          to={`/comparisons/${item.comparison_id}`}
-        >
-          Open structured comparison
-        </TopicLink>
+        <div className="comparison-availability">
+          <RunStatusBadge status={item.comparison_status} />
+          {item.comparison_reason ? <span>{item.comparison_reason}</span> : null}
+          <TopicLink
+            className="primary-button comparison-link"
+            to={`/comparisons/${item.comparison_id}`}
+          >
+            Open structured comparison
+          </TopicLink>
+        </div>
       ) : (
-        <p className="comparison-unavailable">No persisted comparison is available.</p>
+        <div className="comparison-unavailable" role="status">
+          <RunStatusBadge status={item.comparison_status} />
+          <span>{item.comparison_reason ?? "NO_COMPATIBLE_HISTORICAL_ANALYSIS"}</span>
+        </div>
       )}
     </article>
   );
@@ -187,8 +195,8 @@ export function RelatedWorkPanel({ paperId, paperVersionId }: RelatedWorkPanelPr
     return (
       <StateNotice
         kind="empty"
-        title="Related work not available"
-        detail="No historical-search session has been persisted for this paper. No alternate provider or synthetic recommendations were substituted."
+        title={related.data.related_work_status}
+        detail={`${related.data.related_work_reason ?? "NO_RELATED_WORK_RESULT"}. No alternate provider or synthetic recommendations were substituted.`}
       />
     );
   }
@@ -202,9 +210,7 @@ export function RelatedWorkPanel({ paperId, paperVersionId }: RelatedWorkPanelPr
           <p className="eyebrow">Historical retrieval</p>
           <h2 id="related-work-title">Related work</h2>
         </div>
-        <span className={`status-badge ${session.status.toLocaleLowerCase()}`}>
-          {label(session.status)}
-        </span>
+        <RunStatusBadge status={related.data.related_work_status} />
       </div>
 
       <div className="search-session-summary card">

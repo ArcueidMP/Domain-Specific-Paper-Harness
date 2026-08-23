@@ -30,7 +30,6 @@ from paper_harness.adapters.postgres.models import (
 )
 from paper_harness.application.analyze_papers import AnalyzePapers
 from paper_harness.application.ingest_arxiv import IngestArxiv
-from paper_harness.application.product_models import ProductFailureInput
 from paper_harness.application.publish_product import PublishProduct
 from paper_harness.application.read_models import GraphView
 from paper_harness.domain.analysis import AnalysisScope, ModelUsage, VerificationStatus
@@ -452,6 +451,56 @@ def _prepare_future_reanalysis(
     )
 
 
+def test_zero_selection_publication_round_trips_as_complete_no_update(
+    postgres_repository: PostgresRepository,
+    topic_config: TopicConfig,
+) -> None:
+    logical_date = date(2026, 8, 23)
+    postgres_repository.upsert_topic(topic_config)
+    source = postgres_repository.start_analysis_run(
+        topic_id=topic_config.id,
+        logical_date=logical_date,
+        analysis_scope=AnalysisScope.FULL_TEXT,
+        started_at=NOW,
+        targets=(),
+    )
+    source = postgres_repository.finalize_analysis_run(
+        source.id,
+        completed_at=NOW + timedelta(seconds=1),
+    )
+
+    run = PublishProduct(
+        repository=postgres_repository,
+        llm=None,
+        clock=lambda: NOW + timedelta(seconds=2),
+    ).execute(
+        topic_config,
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=logical_date,
+    )
+
+    assert source.status is RunStatus.COMPLETE
+    assert run.status is RunStatus.COMPLETE
+    assert run.selected_count == run.completed_count == run.failed_count == 0
+    detail = postgres_repository.get_product_run(
+        logical_date=logical_date,
+        topic_slug=topic_config.slug,
+    )
+    assert detail is not None and detail.report is not None
+    assert detail.report.report.counts.selected == 0
+    assert "no update" in detail.report.report.summary.lower()
+
+    response = TestClient(create_app(postgres_repository)).get(
+        f"/api/v1/daily/{logical_date.isoformat()}",
+        params={"topic": topic_config.slug},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run"]["status"] == "COMPLETE"
+    assert payload["run"]["selected_count"] == 0
+    assert "no update" in payload["report"]["summary"].lower()
+
+
 def test_complete_product_publication_round_trips_graph_trends_lineage_and_report(
     postgres_repository: PostgresRepository,
     topic_config: TopicConfig,
@@ -800,6 +849,16 @@ def test_reprocess_publishes_the_latest_same_date_revision_without_deleting_hist
         )
     assert {row.revision_id for row in source_analyses} == {None, execution_id}
     assert len(persisted_reports) == 2
+    legacy_analysis = next(row for row in source_analyses if row.revision_id is None)
+    reusable = postgres_repository.get_comparison_paper_input(
+        legacy_analysis.paper_version_id,
+        analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+        provider="deepseek",
+        configured_model="deepseek-v4-flash",
+        prompt_version="m2-analysis-v1",
+    )
+    assert reusable is not None
+    assert reusable.analysis_id == legacy_analysis.id
 
     graph = postgres_repository.get_graph(
         topic_slug=topic_config.slug,
@@ -816,24 +875,15 @@ def test_reprocess_publishes_the_latest_same_date_revision_without_deleting_hist
     assert len(graph.edges) == 1
 
 
-def test_historical_analysis_failure_persists_exact_partial_daily_report(
+def test_optional_historical_analysis_failure_is_not_a_product_item(
     postgres_repository: PostgresRepository,
     topic_config: TopicConfig,
     arxiv_record_v1: ArxivPaperRecord,
 ) -> None:
-    target_record, logical_date = _prepare_complete_source(
+    _, logical_date = _prepare_complete_source(
         postgres_repository,
         topic_config,
         arxiv_record_v1,
-    )
-    failure = ProductFailureInput(
-        paper_id=stable_paper_id(target_record.canonical_arxiv_id),
-        paper_version_id=stable_paper_version_id(target_record.canonical_arxiv_id, 1),
-        stage=PaperStage.PARSED,
-        failed_stage=PaperStage.ANALYZED,
-        error_code="ANALYSIS_MODEL_OUTPUT_INVALID",
-        retryable=False,
-        error_detail="Historical analysis output failed schema validation.",
     )
 
     run = PublishProduct(
@@ -844,32 +894,84 @@ def test_historical_analysis_failure_persists_exact_partial_daily_report(
         topic_config,
         narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
         logical_date=logical_date,
-        upstream_failures=(failure,),
     )
 
-    assert run.status is RunStatus.PARTIAL
-    assert (run.selected_count, run.completed_count, run.failed_count) == (2, 1, 1)
+    assert run.status is RunStatus.COMPLETE
+    assert (run.selected_count, run.completed_count, run.failed_count) == (1, 1, 0)
     detail = postgres_repository.get_product_run(
         logical_date=logical_date,
         topic_slug=topic_config.slug,
     )
     assert detail is not None
     assert detail.report is not None
-    failed_item = next(
-        item.item for item in detail.items if item.item.status is RunItemStatus.FAILED
+    assert all(item.item.status is RunItemStatus.COMPLETED for item in detail.items)
+    assert detail.report.report.status is RunStatus.COMPLETE
+    assert detail.report.report.failures == ()
+
+
+def test_all_source_analysis_unavailable_publishes_metadata_only(
+    postgres_repository: PostgresRepository,
+    postgres_engine: Engine,
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    _, logical_date = _prepare_complete_source(
+        postgres_repository,
+        topic_config,
+        arxiv_record_v1,
     )
-    assert failed_item.paper_id == failure.paper_id
-    assert failed_item.paper_version_id == failure.paper_version_id
-    assert failed_item.stage is failure.stage
-    assert failed_item.failed_stage is failure.failed_stage
-    assert failed_item.error_code == failure.error_code
-    assert failed_item.retryable is failure.retryable
-    assert failed_item.error_detail == failure.error_detail
-    assert detail.report.report.status is RunStatus.PARTIAL
-    assert detail.report.report.failures[0].paper_version_id == failure.paper_version_id
-    assert detail.report.report.failures[0].failed_stage is failure.failed_stage
-    assert detail.report.report.failures[0].error_code == failure.error_code
-    assert detail.report.report.failures[0].error_detail == failure.error_detail
+    source = postgres_repository.get_product_publication_input(topic_config.id, logical_date)
+    assert source is not None
+    source_run_id = source.source_run.run.id
+    source_item = source.source_run.items[0].item
+    with postgres_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE daily_runs SET status = 'PARTIAL', completed_count = 0, "
+                "failed_count = 1 WHERE id = :run_id"
+            ),
+            {"run_id": source_run_id},
+        )
+        connection.execute(
+            text(
+                "UPDATE run_items SET stage = 'PARSED', status = 'FAILED', "
+                "failed_stage = 'ANALYZED', error_code = 'LLM_OUTPUT_INVALID', "
+                "retryable = false, error_detail = 'Structured analysis was unavailable.' "
+                "WHERE id = :item_id"
+            ),
+            {"item_id": source_item.id},
+        )
+
+    published = PublishProduct(
+        repository=postgres_repository,
+        llm=None,
+        clock=lambda: NOW + timedelta(days=1, minutes=10),
+    ).execute(
+        topic_config,
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=logical_date,
+    )
+
+    assert published.status is RunStatus.PARTIAL
+    assert (published.completed_count, published.failed_count) == (0, 1)
+    detail = postgres_repository.get_product_run(
+        logical_date=logical_date,
+        topic_slug=topic_config.slug,
+    )
+    assert detail is not None
+    assert detail.report is not None
+    assert len(detail.report.report.highlighted_papers) == 1
+    assert detail.report.report.highlighted_papers[0].evidence_ids == ()
+    assert detail.items[0].analysis_status == "ANALYSIS_UNAVAILABLE"
+    assert postgres_repository.get_published_paper(source_item.paper_id) is not None
+    assert (
+        postgres_repository.get_paper_analysis(
+            source_item.paper_id,
+            paper_version_id=source_item.paper_version_id,
+            canonical_only=True,
+        )
+        is None
+    )
 
 
 def test_graph_batch_rejects_orphan_evidence_and_failed_run_publishes_no_report(
@@ -1153,65 +1255,38 @@ def test_graph_data_error_is_mapped_without_leaving_partial_rows(
     )
 
 
-def test_report_generation_failure_removes_staged_artifacts(
+def test_report_generation_failure_publishes_structured_data(
     postgres_repository: PostgresRepository,
     topic_config: TopicConfig,
     arxiv_record_v1: ArxivPaperRecord,
 ) -> None:
     _, logical_date = _prepare_complete_source(postgres_repository, topic_config, arxiv_record_v1)
-    with pytest.raises(LLMOutputError, match="schema validation"):
-        PublishProduct(
-            repository=postgres_repository,
-            llm=FailingReportLLM(),
-            clock=lambda: NOW + timedelta(days=1, minutes=10),
-        ).execute(
-            topic_config,
-            narrative_mode=ReportNarrativeMode.DEEPSEEK,
-            logical_date=logical_date,
-        )
-    failed = postgres_repository.get_product_run(
+    run = PublishProduct(
+        repository=postgres_repository,
+        llm=FailingReportLLM(),
+        clock=lambda: NOW + timedelta(days=1, minutes=10),
+    ).execute(
+        topic_config,
+        narrative_mode=ReportNarrativeMode.DEEPSEEK,
+        logical_date=logical_date,
+    )
+    assert run.status is RunStatus.COMPLETE
+    published = postgres_repository.get_product_run(
         logical_date=logical_date,
         topic_slug=topic_config.slug,
     )
-    assert failed is not None
-    assert failed.run.status is RunStatus.FAILED
-    assert failed.report is None
-    assert (
-        postgres_repository.get_graph(
-            topic_slug=topic_config.slug,
-            as_of=logical_date,
-            paper_id=None,
-            entity_type=None,
-            relation_type=None,
-            provenance=None,
-            verification_status=None,
-            max_nodes=200,
-            max_edges=400,
-        )
-        is None
+    assert published is not None
+    assert published.report is not None
+    assert published.report.report.narrative_mode is ReportNarrativeMode.STRUCTURED_ONLY
+    assert any(
+        value.startswith("NARRATIVE_UNAVAILABLE:")
+        for value in published.report.report.missing_sections
     )
-    assert (
-        postgres_repository.list_trends(
-            topic_slug=topic_config.slug,
-            as_of=logical_date,
-            windows=tuple(TrendWindow),
-        )
-        == ()
+    assert postgres_repository.list_trends(
+        topic_slug=topic_config.slug,
+        as_of=logical_date,
+        windows=tuple(TrendWindow),
     )
-    assert (
-        postgres_repository.get_lineage(
-            stable_paper_id(arxiv_record_v1.canonical_arxiv_id),
-            topic_slug=topic_config.slug,
-            max_depth=5,
-            max_nodes=100,
-            max_edges=200,
-        )
-        is None
-    )
-    corpus = postgres_repository.get_graph_corpus(topic_config.id, as_of_date=logical_date)
-    assert corpus.entities == ()
-    assert corpus.mentions == ()
-    assert corpus.edges == ()
 
 
 def test_graph_as_of_uses_publication_logical_date_not_utc_generation_date(
@@ -1560,7 +1635,7 @@ def test_failed_product_retry_reuses_transactional_input_snapshot(
     assert restarted.status is RunStatus.RUNNING
 
 
-def test_failed_product_restart_uses_current_comparison_and_analysis_failure(
+def test_analysis_failure_and_missing_comparison_publish_without_restart(
     postgres_repository: PostgresRepository,
     postgres_engine: Engine,
     topic_config: TopicConfig,
@@ -1576,7 +1651,6 @@ def test_failed_product_restart_uses_current_comparison_and_analysis_failure(
         logical_date,
     )
     assert source is not None
-    valid_comparison_id = source.papers[0].comparisons[0].bundle.comparison.id
     target_paper_id = stable_paper_id(target_record.canonical_arxiv_id)
     target_version_id = stable_paper_version_id(target_record.canonical_arxiv_id, 1)
     with postgres_engine.begin() as connection:
@@ -1608,69 +1682,50 @@ def test_failed_product_restart_uses_current_comparison_and_analysis_failure(
         llm=None,
         clock=lambda: NOW + timedelta(days=1, minutes=10),
     )
-    failed = publisher.execute(
+    published = publisher.execute(
         topic_config,
         narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
         logical_date=logical_date,
         comparison_ids=frozenset(),
     )
-    assert failed.status is RunStatus.FAILED
+    assert published.status is RunStatus.PARTIAL
+    assert (published.completed_count, published.failed_count) == (1, 1)
     with postgres_engine.connect() as connection:
-        paper_input_before = connection.execute(
+        paper_input = connection.execute(
             text(
                 "SELECT topic_id, source_run_id, paper_id, paper_version_id, analysis_id, "
                 "analysis_scope, created_at FROM product_run_paper_inputs "
                 "WHERE run_id = :run_id"
             ),
-            {"run_id": failed.id},
+            {"run_id": published.id},
         ).one()
         assert (
             connection.execute(
                 text(
                     "SELECT comparison_id FROM product_run_comparison_inputs WHERE run_id = :run_id"
                 ),
-                {"run_id": failed.id},
+                {"run_id": published.id},
             ).all()
             == []
         )
-
-    retried = publisher.execute(
-        topic_config,
-        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+    assert paper_input is not None
+    detail = postgres_repository.get_product_run(
         logical_date=logical_date,
-        comparison_ids=frozenset((valid_comparison_id,)),
+        topic_slug=topic_config.slug,
     )
-
-    assert retried.id == failed.id
-    assert retried.status is RunStatus.PARTIAL
-    assert (retried.completed_count, retried.failed_count) == (1, 1)
-    with postgres_engine.connect() as connection:
-        paper_input_after = connection.execute(
-            text(
-                "SELECT topic_id, source_run_id, paper_id, paper_version_id, analysis_id, "
-                "analysis_scope, created_at FROM product_run_paper_inputs "
-                "WHERE run_id = :run_id"
-            ),
-            {"run_id": retried.id},
-        ).one()
-        comparison_ids = {
-            row.comparison_id
-            for row in connection.execute(
-                text(
-                    "SELECT comparison_id FROM product_run_comparison_inputs WHERE run_id = :run_id"
-                ),
-                {"run_id": retried.id},
-            )
-        }
-    assert paper_input_after == paper_input_before
-    assert comparison_ids == {valid_comparison_id}
-    detail = postgres_repository.get_run(retried.id)
     assert detail is not None
+    assert detail.report is not None
+    assert len(detail.report.report.highlighted_papers) == 2
+    assert any("COMPARISON_UNAVAILABLE" in value for value in detail.report.report.missing_sections)
     preserved = next(
         item.item for item in detail.items if item.item.paper_version_id == target_version_id
     )
     assert preserved.failed_stage is PaperStage.ANALYZED
     assert preserved.error_code == "ANALYSIS_MODEL_OUTPUT_INVALID"
+    assert postgres_repository.get_reprocessing_baseline_paper_version_ids(
+        topic_config.id,
+        logical_date,
+    ) == {item.item.paper_version_id for item in detail.items}
 
 
 def test_long_version_title_publishes_without_graph_key_truncation(

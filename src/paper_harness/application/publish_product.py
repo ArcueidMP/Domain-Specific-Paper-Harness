@@ -19,6 +19,7 @@ from paper_harness.domain.errors import DomainInvariantError, DuplicateDailyRunE
 from paper_harness.domain.identity import stable_report_id
 from paper_harness.domain.knowledge import (
     GraphEntityType,
+    LineageSnapshot,
     aggregate_trend_snapshots,
     build_lineage_snapshot,
     extract_analysis_graph,
@@ -40,7 +41,12 @@ from paper_harness.domain.reports import (
     ReportNarrativeMode,
     ReportNarrativeRequest,
 )
-from paper_harness.ports.llm import LLMPort, LLMPortError
+from paper_harness.ports.llm import (
+    LLMAuthenticationError,
+    LLMConfigurationError,
+    LLMPort,
+    LLMPortError,
+)
 from paper_harness.ports.repository import RepositoryError, RepositoryPort
 
 
@@ -49,8 +55,8 @@ class ProductInputMissingError(RuntimeError):
     retryable = False
 
 
-class ProductComparisonMissingError(RuntimeError):
-    error_code = "COMPARISON_MISSING"
+class ProductRelatedWorkUnavailableError(RuntimeError):
+    error_code = "RELATED_WORK_UNAVAILABLE"
     retryable = False
 
 
@@ -114,10 +120,21 @@ class PublishProduct:
                         raise RepositoryError(
                             "publishable product run is missing its persisted report"
                         )
-                    require_matching_narrative_mode(
-                        detail.report.report.narrative_mode,
-                        narrative_mode,
-                    )
+                    if detail.report.report.counts.selected > 0:
+                        degraded_narrative = (
+                            narrative_mode is ReportNarrativeMode.DEEPSEEK
+                            and detail.report.report.narrative_mode
+                            is ReportNarrativeMode.STRUCTURED_ONLY
+                            and any(
+                                value.startswith("NARRATIVE_UNAVAILABLE:")
+                                for value in detail.report.report.missing_sections
+                            )
+                        )
+                        if not degraded_narrative:
+                            require_matching_narrative_mode(
+                                detail.report.report.narrative_mode,
+                                narrative_mode,
+                            )
                     return existing
                 if existing.status is not RunStatus.FAILED:
                     raise DuplicateDailyRunError(
@@ -166,19 +183,11 @@ class PublishProduct:
             )
             graph_results: dict[UUID, GraphWriteResult] = {}
             materialized_types: set[GraphEntityType] = set()
-            upstream_failed_versions = {failure.paper_version_id for failure in upstream_failures}
+            upstream_failed_versions = {
+                failure.paper_version_id for failure in (*source.input_failures, *upstream_failures)
+            }
             for paper in source.papers:
                 if paper.paper_version_id in upstream_failed_versions:
-                    continue
-                if not paper.comparisons:
-                    self._fail_item(
-                        run.id,
-                        paper.paper_version_id,
-                        failed_stage=PaperStage.COMPARED,
-                        error=ProductComparisonMissingError(
-                            "no persisted M3 comparison is available for this source paper"
-                        ),
-                    )
                     continue
                 try:
                     self._repository.advance_product_item(
@@ -224,14 +233,14 @@ class PublishProduct:
                         expected_stage=PaperStage.COMPARED,
                         updated_at=self._aware_now(),
                     )
-                except DomainInvariantError as error:
-                    self._fail_item(
-                        run.id,
-                        paper.paper_version_id,
-                        failed_stage=PaperStage.GRAPH_UPDATED,
-                        error=ProductGraphError(_concise_detail(error)),
+                except DomainInvariantError:
+                    self._repository.advance_product_item(
+                        run_id=run.id,
+                        paper_version_id=paper.paper_version_id,
+                        expected_stage=PaperStage.COMPARED,
+                        next_stage=PaperStage.GRAPH_UPDATED,
+                        updated_at=self._aware_now(),
                     )
-                    continue
                 except RepositoryError as error:
                     self._fail_run_then_raise(
                         run.id,
@@ -246,21 +255,19 @@ class PublishProduct:
                         if entity.entity_type is not GraphEntityType.PAPER
                     )
 
-            if not graph_results:
-                return self._repository.fail_product_run(
-                    run.id,
-                    completed_at=self._aware_now(),
-                    failed_stage=PaperStage.GRAPH_UPDATED,
-                    error_code="NO_SELECTED_PAPER_COMPLETED",
-                    retryable=False,
-                    error_detail="No selected paper completed graph construction.",
-                )
             try:
                 corpus = self._repository.get_graph_corpus(
                     topic.id,
                     as_of_date=run_date,
                     current_publication_run_id=run.id,
                 )
+            except RepositoryError as error:
+                self._fail_run_then_raise(
+                    run.id,
+                    failed_stage=PaperStage.TREND_SNAPSHOTS_GENERATED,
+                    error=error,
+                )
+            try:
                 trends = aggregate_trend_snapshots(
                     topic.id,
                     as_of_date=run_date,
@@ -276,13 +283,15 @@ class PublishProduct:
                     trends = tuple(
                         namespace_trend_snapshot(item, pipeline_execution_id) for item in trends
                     )
-                completed_paper_ids = {
-                    paper.paper_id
-                    for paper in source.papers
-                    if paper.paper_version_id in graph_results
-                }
-                lineages = tuple(
-                    build_lineage_snapshot(
+            except DomainInvariantError:
+                trends = ()
+            completed_paper_ids = {
+                paper.paper_id for paper in source.papers if paper.paper_version_id in graph_results
+            }
+            lineage_values: list[LineageSnapshot] = []
+            for paper_id in sorted(completed_paper_ids, key=str):
+                try:
+                    lineage = build_lineage_snapshot(
                         topic.id,
                         paper_id,
                         as_of_date=run_date,
@@ -290,24 +299,15 @@ class PublishProduct:
                         edges=corpus.edges,
                         generated_at=started_at,
                     )
-                    for paper_id in sorted(completed_paper_ids, key=str)
-                )
+                except DomainInvariantError:
+                    continue
                 if pipeline_execution_id is not None:
-                    lineages = tuple(
-                        namespace_lineage_snapshot(item, pipeline_execution_id) for item in lineages
+                    lineage = namespace_lineage_snapshot(
+                        lineage,
+                        pipeline_execution_id,
                     )
-            except DomainInvariantError as error:
-                self._fail_run_then_raise(
-                    run.id,
-                    failed_stage=PaperStage.TREND_SNAPSHOTS_GENERATED,
-                    error=ProductTrendError(_concise_detail(error)),
-                )
-            except RepositoryError as error:
-                self._fail_run_then_raise(
-                    run.id,
-                    failed_stage=PaperStage.TREND_SNAPSHOTS_GENERATED,
-                    error=error,
-                )
+                lineage_values.append(lineage)
+            lineages = tuple(lineage_values)
             try:
                 run_detail = self._repository.persist_product_aggregates(
                     run_id=run.id,
@@ -341,18 +341,36 @@ class PublishProduct:
                         )
                     ),
                 )
-                generated = (
-                    None
-                    if narrative_mode is ReportNarrativeMode.STRUCTURED_ONLY
-                    else self._generate_report(plan.request)
+                no_update = run.selected_count == 0
+                effective_narrative_mode = (
+                    ReportNarrativeMode.STRUCTURED_ONLY if no_update else narrative_mode
                 )
+                generated = None
+                if effective_narrative_mode is ReportNarrativeMode.DEEPSEEK:
+                    try:
+                        generated = self._generate_report(plan.request)
+                    except (LLMAuthenticationError, LLMConfigurationError):
+                        raise
+                    except LLMPortError as error:
+                        effective_narrative_mode = ReportNarrativeMode.STRUCTURED_ONLY
+                        plan = replace(
+                            plan,
+                            request=replace(
+                                plan.request,
+                                missing_sections=(
+                                    *plan.request.missing_sections,
+                                    "NARRATIVE_UNAVAILABLE: generated synthesis was unavailable; "
+                                    f"structured data was published ({error.error_code}).",
+                                ),
+                            ),
+                        )
                 report = assemble_product_report(
                     plan.request,
                     report_id=stable_report_id(run.id),
                     run_id=run.id,
                     topic_id=topic.id,
                     logical_date=run_date,
-                    narrative_mode=narrative_mode,
+                    narrative_mode=effective_narrative_mode,
                     generated=generated,
                     trend_snapshot_ids=plan.trend_snapshot_ids,
                     created_at=self._aware_now(),
@@ -445,7 +463,7 @@ def _concise_detail(error: Exception) -> str:
 
 
 __all__ = [
-    "ProductComparisonMissingError",
+    "ProductRelatedWorkUnavailableError",
     "ProductGraphError",
     "ProductInputMissingError",
     "ProductReportError",

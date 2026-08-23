@@ -40,7 +40,9 @@ describe("TrendsPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "30 days" }));
 
-    expect(await screen.findByText("Insufficient data")).toBeInTheDocument();
+    const insufficient = await screen.findByText("INSUFFICIENT DATA");
+    expect(insufficient).toHaveClass("unavailable");
+    expect(insufficient).not.toHaveClass("failed");
     expect(
       screen.getByText("Not calculated: the preceding window has zero papers."),
     ).toBeInTheDocument();

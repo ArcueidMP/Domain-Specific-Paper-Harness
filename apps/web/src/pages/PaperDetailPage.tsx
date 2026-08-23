@@ -148,7 +148,7 @@ export function PaperDetailPage() {
         {analysis.isSuccess && analysis.data === null ? (
           <StateNotice
             kind="empty"
-            title="Analysis not available"
+            title="ANALYSIS_UNAVAILABLE"
             detail={`No structured analysis has been persisted for arXiv v${detail.current_version}. No alternate scope or model output has been substituted.`}
           />
         ) : null}

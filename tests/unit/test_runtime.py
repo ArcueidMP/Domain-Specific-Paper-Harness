@@ -360,6 +360,31 @@ def test_daily_pipeline_reuses_compatible_terminal_ingestion_and_analysis_runs(
     assert result.product_run is harness.product
 
 
+def test_daily_pipeline_zero_relevant_papers_publishes_complete_no_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _configure_reused_pipeline(
+        monkeypatch,
+        max_selected_papers=10,
+        candidates=(),
+        analysis_items=(),
+    )
+
+    result = _execute_pipeline(max_selected_papers=10)
+
+    assert result.status is RunStatus.COMPLETE
+    assert result.evaluated_count == result.relevant_count == result.selected_count == 0
+    assert result.failures == ()
+    assert harness.analyze_execute.call_count == 1
+    assert harness.analyze_execute.call_args.kwargs["paper_version_ids"] == ()
+    harness.backfill_execute.assert_not_called()
+    harness.search_execute.assert_not_called()
+    harness.compare_execute.assert_not_called()
+    harness.publication_execute.assert_called_once()
+    assert harness.publication_execute.call_args.kwargs["comparison_ids"] == frozenset()
+    assert result.historical_backfill is None
+
+
 def test_daily_reprocess_creates_a_fresh_revision_and_regenerates_source_analysis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -368,6 +393,13 @@ def test_daily_reprocess_creates_a_fresh_revision_and_regenerates_source_analysi
         monkeypatch,
         execution_mode=PipelineExecutionMode.REPROCESS,
         pipeline_execution_id=REPROCESS_EXECUTION_ID,
+    )
+    candidate = harness.candidates[0]
+    harness.repository.get_reprocessing_baseline_paper_version_ids.return_value = frozenset(
+        {candidate.paper_version_id}
+    )
+    harness.repository.get_canonically_published_paper_version_ids.return_value = frozenset(
+        {candidate.paper_version_id}
     )
 
     result = _execute_pipeline(max_selected_papers=1, reprocess=True)
@@ -382,6 +414,14 @@ def test_daily_reprocess_creates_a_fresh_revision_and_regenerates_source_analysi
         PipelineExecutionMode.REPROCESS
     )
     assert harness.analyze_execute.call_args.kwargs["reuse_contract"] is None
+    assert harness.analyze_execute.call_args.kwargs["paper_version_ids"] == (
+        candidate.paper_version_id,
+    )
+    harness.repository.get_canonically_published_paper_version_ids.assert_not_called()
+    harness.repository.get_reprocessing_baseline_paper_version_ids.assert_called_once_with(
+        harness.analysis.topic_id,
+        date(2026, 8, 10),
+    )
     assert result.product_run.pipeline_execution_id == REPROCESS_EXECUTION_ID
 
 
@@ -436,12 +476,12 @@ def test_daily_pipeline_reuses_terminal_product_without_new_search_or_comparison
         item=SimpleNamespace(
             paper_id=harness.candidates[0].paper_id,
             paper_version_id=harness.candidates[0].paper_version_id,
-            stage=PaperStage.COMPARED,
+            stage=PaperStage.PARSED,
             status=RunItemStatus.FAILED,
-            failed_stage=PaperStage.COMPARED,
-            error_code="COMPARISON_MISSING",
+            failed_stage=PaperStage.ANALYZED,
+            error_code="ANALYSIS_MODEL_OUTPUT_INVALID",
             retryable=False,
-            error_detail="no current comparison was available",
+            error_detail="source analysis output was unavailable",
         )
     )
 
@@ -484,7 +524,7 @@ def test_daily_pipeline_reuses_terminal_product_without_new_search_or_comparison
     assert result.accounting is not None
     assert result.accounting.external_call_count_lower_bound == 0
     assert tuple(failure.error_code for failure in result.failures) == (
-        () if product_status is RunStatus.COMPLETE else ("COMPARISON_MISSING",)
+        () if product_status is RunStatus.COMPLETE else ("ANALYSIS_MODEL_OUTPUT_INVALID",)
     )
 
 
@@ -610,7 +650,7 @@ def test_terminal_pipeline_execution_replays_after_its_deadline_without_external
     result = _execute_pipeline(max_selected_papers=2)
 
     assert execution_lookup_count == 2
-    assert result.status is execution_status
+    assert result.status is RunStatus.COMPLETE
     assert result.product_run.status is RunStatus.COMPLETE
     assert result.search_session_count == 0
     assert result.comparison_count == 0
@@ -729,8 +769,8 @@ def test_failed_product_marks_the_parent_execution_failed_instead_of_partial(
         status=RunStatus.FAILED,
         completed_count=0,
         failed_count=1,
-        error_code="NO_SELECTED_PAPER_COMPLETED",
-        error_detail="No selected paper completed graph construction.",
+        error_code="PUBLICATION_TRANSACTION_FAILED",
+        error_detail="The atomic product publication transaction failed.",
     )
     execution_state: dict[str, PipelineExecution] = {}
 
@@ -773,14 +813,14 @@ def test_failed_product_marks_the_parent_execution_failed_instead_of_partial(
 
     parent = execution_state["execution"]
     assert parent.status is RunStatus.FAILED
-    assert parent.error_code == "NO_SELECTED_PAPER_COMPLETED"
+    assert parent.error_code == "PUBLICATION_TRANSACTION_FAILED"
     harness.repository.complete_pipeline_execution.assert_not_called()
     harness.repository.fail_pipeline_execution.assert_called_once_with(
         PIPELINE_EXECUTION_ID,
         completed_at=ANY,
-        error_code="NO_SELECTED_PAPER_COMPLETED",
+        error_code="PUBLICATION_TRANSACTION_FAILED",
         error_detail=(
-            "PRODUCT_PUBLICATION finished FAILED for 2026-08-10: NO_SELECTED_PAPER_COMPLETED"
+            "PRODUCT_PUBLICATION finished FAILED for 2026-08-10: PUBLICATION_TRANSACTION_FAILED"
         ),
     )
 
@@ -804,8 +844,8 @@ def _with_failed_analysis(run: DailyRun) -> DailyRun:
         status=RunStatus.FAILED,
         completed_count=0,
         failed_count=1,
-        error_code="ANALYSIS_FAILED",
-        error_detail="no selected paper completed",
+        error_code="LLM_AUTHENTICATION_FAILED",
+        error_detail="DeepSeek authentication failed for the requested operation",
     )
 
 
@@ -982,13 +1022,14 @@ def test_daily_pipeline_preserves_search_and_comparison_failures_after_publicati
 
     assert result.product_run is harness.product
     assert result.product_run.status is RunStatus.COMPLETE
+    assert result.status is RunStatus.COMPLETE
     assert result.search_session_count == 1
     assert result.comparison_count == 0
     assert {
         (failure.paper_id, failure.stage, failure.error_code) for failure in result.failures
     } == {
         (paper_id, "PRIOR_WORK_RETRIEVED", "RELATED_WORK_INPUT_INVALID"),
-        (second_paper_id, "COMPARED", "COMPARISON_INPUT_MISSING"),
+        (second_paper_id, "COMPARED", "COMPARISON_UNAVAILABLE"),
     }
     harness.publication_execute.assert_called_once()
     assert harness.publication_execute.call_args.kwargs["comparison_ids"] == frozenset()
@@ -1109,7 +1150,7 @@ def test_comparison_failure_preserves_other_current_comparisons_for_that_source(
     assert result.search_session_count == 2
     assert result.comparison_count == 2
     assert tuple((failure.paper_id, failure.error_code) for failure in result.failures) == (
-        (failed_source_id, "COMPARISON_INPUT_MISSING"),
+        (failed_source_id, "COMPARISON_UNAVAILABLE"),
     )
     assert harness.publication_execute.call_args.kwargs["comparison_ids"] == frozenset(
         {recovered_comparison_id, healthy_comparison_id}
@@ -1275,19 +1316,9 @@ def test_failed_historical_target_is_attributed_to_its_daily_source(
 
     assert result.historical_analysis_run is historical_run
     assert tuple((failure.paper_id, failure.error_code) for failure in result.failures) == (
-        (source.paper_id, "COMPARISON_INPUT_MISSING"),
+        (source.paper_id, "COMPARISON_UNAVAILABLE"),
     )
-    upstream_failures = harness.publication_execute.call_args.kwargs["upstream_failures"]
-    assert tuple(
-        (failure.paper_id, failure.paper_version_id, failure.error_code)
-        for failure in upstream_failures
-    ) == (
-        (
-            source.paper_id,
-            source.paper_version_id,
-            "COMPARISON_INPUT_MISSING",
-        ),
-    )
+    assert harness.publication_execute.call_args.kwargs["upstream_failures"] == ()
     harness.compare_execute.assert_not_called()
 
 
@@ -1505,17 +1536,20 @@ def _configure_reused_pipeline(
     now = datetime(2026, 8, 10, 5, tzinfo=UTC)
     topic = _pipeline_topic()
     expected_pipeline_execution_id = pipeline_execution_id
-    candidates = candidates or (
-        _selection_candidate(
-            UUID("d8fdbf73-cf9a-487f-9b6a-237e13272d55"),
-            UUID("1c27b53f-e172-469e-808f-33d0495968c0"),
-            "2608.00001",
-            now,
-        ),
-    )
-    analysis_items = analysis_items or tuple(
-        _completed_item(candidate.paper_id, candidate.paper_version_id) for candidate in candidates
-    )
+    if candidates is None:
+        candidates = (
+            _selection_candidate(
+                UUID("d8fdbf73-cf9a-487f-9b6a-237e13272d55"),
+                UUID("1c27b53f-e172-469e-808f-33d0495968c0"),
+                "2608.00001",
+                now,
+            ),
+        )
+    if analysis_items is None:
+        analysis_items = tuple(
+            _completed_item(candidate.paper_id, candidate.paper_version_id)
+            for candidate in candidates
+        )
     ingestion = _pipeline_run(
         run_id=UUID("04a6195a-4267-4d72-b882-16fa95acbc12"),
         topic_id=topic.id,
@@ -1585,6 +1619,7 @@ def _configure_reused_pipeline(
     repository.get_reusable_analyzed_paper_version_ids.return_value = frozenset()
     repository.list_historical_representative_arxiv_ids.return_value = ()
     repository.list_historical_representative_version_ids.return_value = ()
+    repository.get_reprocessing_baseline_paper_version_ids.return_value = frozenset()
     details = {
         ingestion.id: SimpleNamespace(
             run=ingestion,
@@ -1616,7 +1651,9 @@ def _configure_reused_pipeline(
         for index, candidate in enumerate(candidates)
     )
     repository.get_product_publication_input.return_value = SimpleNamespace(
-        papers=publication_papers
+        papers=publication_papers,
+        cards=tuple(SimpleNamespace(paper_version_id=item.paper_version_id) for item in candidates),
+        input_failures=(),
     )
     empty_related = SimpleNamespace(
         session=SimpleNamespace(id=UUID("cdd83223-d4c2-477f-b62f-c5d1e5675889")),

@@ -16,6 +16,7 @@ from paper_harness.application.read_models import (
     SearchSessionDetail,
 )
 from paper_harness.application.related_work import (
+    RelatedWorkAnalysisIdentityMissingError,
     RelatedWorkSearch,
     allowed_search_tools,
     build_related_work_objective,
@@ -173,10 +174,15 @@ class _Repository:
         paper_id: UUID,
         *,
         paper_version_id: UUID | None,
+        analysis_id: UUID | None = None,
         analysis_scope: AnalysisScope | None = None,
     ) -> AnalysisDetail | None:
         del paper_version_id, analysis_scope
-        return self.analysis_detail if paper_id == SOURCE_PAPER_ID else None
+        if paper_id != SOURCE_PAPER_ID:
+            return None
+        if analysis_id is not None and analysis_id != self.analysis_detail.analysis.id:
+            return None
+        return self.analysis_detail
 
     def start_search_session(self, session: SearchSession) -> SearchSession:
         self.session = session
@@ -1511,3 +1517,24 @@ def test_exact_source_analysis_uses_its_version_text_when_global_paper_is_newer(
     source_embedding = next(item for item in embeddings.inputs if item.title == source_v1.title)
     assert source_embedding.abstract == source_v1.abstract
     assert all(item.title != source_v2.title for item in embeddings.inputs)
+
+
+def test_exact_source_analysis_identity_missing_is_an_item_level_error(
+    topic_config: TopicConfig,
+) -> None:
+    repository = _Repository()
+
+    with pytest.raises(RelatedWorkAnalysisIdentityMissingError) as raised:
+        _service(repository, _ScholarlySearch(_paper()), _LLM()).execute(
+            topic=topic_config,
+            source_paper_id=SOURCE_PAPER_ID,
+            source_paper_version_id=SOURCE_VERSION_ID,
+            source_analysis_id=UUID("08a2b43f-253b-4e4b-bd4a-d2396fc01f0a"),
+            source_analysis_scope=AnalysisScope.ABSTRACT_ONLY,
+            objective="Find methodologically relevant prior work.",
+            year_from=2025,
+            year_to=2026,
+            limits=SearchLimits(max_steps=2, max_queries=1, max_selected_candidates=1),
+        )
+
+    assert raised.value.error_code == "ANALYSIS_IDENTITY_MISSING"

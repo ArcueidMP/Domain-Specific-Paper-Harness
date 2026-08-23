@@ -153,6 +153,16 @@ class RunItemResponse(ApiModel):
     paper_version_id: UUID
     canonical_arxiv_id: str
     paper_title: str
+    paper_abstract: str | None = None
+    source_url: str | None = None
+    analysis_status: Literal["AVAILABLE", "ANALYSIS_UNAVAILABLE"] | None = None
+    related_work_status: Literal["AVAILABLE", "RELATED_WORK_UNAVAILABLE"] | None = None
+    related_work_reason: str | None = None
+    comparison_status: (
+        Literal["AVAILABLE", "LIMITED_COMPARABILITY", "COMPARISON_UNAVAILABLE"] | None
+    ) = None
+    comparison_reason: str | None = None
+    trend_status: Literal["AVAILABLE", "INSUFFICIENT_DATA"] | None = None
     stage: PaperStage
     status: RunItemStatus
     failed_stage: PaperStage | None
@@ -179,6 +189,7 @@ class RunSummary(ApiModel):
     pipeline_completed_at: datetime | None = None
     pipeline_error_code: str | None = None
     pipeline_error_detail: str | None = None
+    publication_outcome: Literal["UPDATE", "NO_UPDATE"] | None = None
     status: RunStatus
     started_at: datetime
     completed_at: datetime | None
@@ -290,6 +301,7 @@ class ReportResponse(ApiModel):
     topic_id: UUID
     logical_date: date
     status: RunStatus
+    publication_outcome: Literal["UPDATE", "NO_UPDATE"] | None = None
     title: str
     summary: str
     source: str
@@ -782,10 +794,14 @@ class RelatedWorkItemResponse(ApiModel):
     discoveries: list[CandidateDiscoveryResponse]
     relations: list[PaperRelationResponse]
     comparison_id: UUID | None
+    comparison_status: Literal["AVAILABLE", "LIMITED_COMPARABILITY", "COMPARISON_UNAVAILABLE"]
+    comparison_reason: str | None
 
 
 class RelatedWorkResponse(ApiModel):
     paper_id: UUID
+    related_work_status: Literal["AVAILABLE", "RELATED_WORK_UNAVAILABLE"]
+    related_work_reason: str | None
     session: SearchSessionResponse | None
     actions: list[SearchActionResponse]
     items: list[RelatedWorkItemResponse]

@@ -9,7 +9,7 @@ from datetime import date, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4, uuid5
 
-from sqlalchemy import Engine, case, func, select, text, update
+from sqlalchemy import Engine, case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DataError, IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.orm import Session, sessionmaker
@@ -99,6 +99,7 @@ from .models import (
     PipelineExecutionRow,
     ProductRunPaperInputRow,
     ReportFailureRow,
+    ReportPaperHighlightRow,
     ReportRow,
     RunItemRow,
     SearchCandidateRow,
@@ -1404,13 +1405,40 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
     ) -> tuple[AnalysisTarget, ...]:
         if not paper_version_ids:
             return ()
-        statement = (
-            select(PaperRow, PaperVersionRow)
-            .join(TopicPaperRow, TopicPaperRow.paper_id == PaperRow.id)
-            .join(PaperVersionRow, PaperVersionRow.paper_id == PaperRow.id)
+        topic_paper_exists = (
+            select(TopicPaperRow.paper_id)
             .where(
                 TopicPaperRow.topic_id == topic_id,
+                TopicPaperRow.paper_id == PaperRow.id,
+            )
+            .exists()
+        )
+        historical_version_exists = (
+            select(HistoricalCorpusEntryRow.id)
+            .where(
+                HistoricalCorpusEntryRow.topic_id == topic_id,
+                HistoricalCorpusEntryRow.local_paper_id == PaperRow.id,
+                HistoricalCorpusEntryRow.local_paper_version_id == PaperVersionRow.id,
+            )
+            .exists()
+        )
+        comparison_target_exists = (
+            select(SearchCandidateRow.id)
+            .join(SearchSessionRow, SearchSessionRow.id == SearchCandidateRow.session_id)
+            .where(
+                SearchSessionRow.topic_id == topic_id,
+                SearchCandidateRow.local_paper_version_id == PaperVersionRow.id,
+                SearchCandidateRow.comparison_target_decision
+                == ComparisonTargetDecision.TARGET.value,
+            )
+            .exists()
+        )
+        statement = (
+            select(PaperRow, PaperVersionRow)
+            .join(PaperVersionRow, PaperVersionRow.paper_id == PaperRow.id)
+            .where(
                 PaperVersionRow.id.in_(paper_version_ids),
+                or_(topic_paper_exists, historical_version_exists, comparison_target_exists),
             )
         )
         try:
@@ -1472,6 +1500,7 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
             PaperAnalysisRow.provider == provider,
             PaperAnalysisRow.configured_model == configured_model,
             PaperAnalysisRow.prompt_version == prompt_version,
+            PaperAnalysisRow.revision_id.is_(None),
         )
         if analysis_scope is AnalysisScope.FULL_TEXT:
             if parser_name is None or parser_version is None:
@@ -1521,6 +1550,42 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
         except OperationalError as error:
             raise RepositoryUnavailableError(
                 "PostgreSQL canonical publication lookup is unavailable"
+            ) from error
+
+    def get_reprocessing_baseline_paper_version_ids(
+        self,
+        topic_id: UUID,
+        logical_date: date,
+    ) -> frozenset[UUID]:
+        run_statement = (
+            select(DailyRunRow.id)
+            .where(
+                DailyRunRow.topic_id == topic_id,
+                DailyRunRow.logical_date == logical_date,
+                DailyRunRow.operation == RunOperation.PRODUCT_PUBLICATION.value,
+                DailyRunRow.status.in_((RunStatus.COMPLETE.value, RunStatus.PARTIAL.value)),
+                DailyRunRow.pipeline_execution_mode != PipelineExecutionMode.SMOKE.value,
+            )
+            .order_by(
+                DailyRunRow.selected_count.desc(),
+                DailyRunRow.started_at.desc(),
+                DailyRunRow.id.desc(),
+            )
+            .limit(1)
+        )
+        try:
+            with self._sessions() as session:
+                run_id = session.scalar(run_statement)
+                if run_id is None:
+                    return frozenset()
+                return frozenset(
+                    session.scalars(
+                        select(RunItemRow.paper_version_id).where(RunItemRow.run_id == run_id)
+                    )
+                )
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL reprocessing baseline lookup is unavailable"
             ) from error
 
     def attach_existing_analysis_to_run(
@@ -1594,6 +1659,7 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
                         PaperAnalysisRow.provider == provider,
                         PaperAnalysisRow.configured_model == configured_model,
                         PaperAnalysisRow.prompt_version == prompt_version,
+                        PaperAnalysisRow.revision_id.is_(None),
                     )
                     .order_by(PaperAnalysisRow.generated_at.desc(), PaperAnalysisRow.id.desc())
                     .limit(1)
@@ -1659,13 +1725,13 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
         pipeline_execution_id: UUID | None = None,
         operation: RunOperation = RunOperation.STRUCTURED_ANALYSIS,
     ) -> DailyRun:
-        if not targets:
-            raise RepositoryError("analysis run requires selected targets")
         if operation not in (
             RunOperation.STRUCTURED_ANALYSIS,
             RunOperation.HISTORICAL_ANALYSIS,
         ):
             raise RepositoryError("analysis run operation is unsupported")
+        if not targets and operation is RunOperation.HISTORICAL_ANALYSIS:
+            raise RepositoryError("historical analysis run requires selected targets")
         run_id = uuid4()
         try:
             with self._sessions.begin() as session:
@@ -1733,8 +1799,6 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
         started_at: datetime,
         pipeline_selection_limit: int | None,
     ) -> DailyRun:
-        if not targets:
-            raise RepositoryError("analysis-run restart requires selected targets")
         requested = {target.version.id: target.paper.id for target in targets}
         if len(requested) != len(targets):
             raise RepositoryError("analysis-run restart targets must be unique")
@@ -1757,6 +1821,8 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
                     )
                 ):
                     raise RepositoryError("analysis run is missing or cannot resume")
+                if not targets and run_row.operation == RunOperation.HISTORICAL_ANALYSIS.value:
+                    raise RepositoryError("historical analysis-run restart requires targets")
                 if session.scalar(
                     select(func.count(ReportRow.id)).where(ReportRow.run_id == run_id)
                 ):
@@ -2037,10 +2103,10 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
                 failed_items = tuple(
                     item for item in item_rows if item.status == RunItemStatus.FAILED.value
                 )
-                if completed_count == 0:
-                    status = RunStatus.FAILED
-                    error_code = "NO_SELECTED_PAPER_COMPLETED"
-                    error_detail = "No selected paper completed evidence extraction."
+                if run_row.selected_count == 0:
+                    status = RunStatus.COMPLETE
+                    error_code = None
+                    error_detail = None
                 elif failed_items:
                     status = RunStatus.PARTIAL
                     error_code = None
@@ -2145,6 +2211,7 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
         paper_id: UUID,
         *,
         paper_version_id: UUID | None,
+        analysis_id: UUID | None = None,
         analysis_scope: AnalysisScope | None = None,
         canonical_only: bool = False,
     ) -> AnalysisDetail | None:
@@ -2165,6 +2232,8 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
             )
         elif paper_version_id is not None:
             statement = statement.where(PaperAnalysisRow.paper_version_id == paper_version_id)
+        if analysis_id is not None:
+            statement = statement.where(PaperAnalysisRow.id == analysis_id)
         if analysis_scope is not None:
             statement = statement.where(PaperAnalysisRow.analysis_scope == analysis_scope.value)
         if canonical_only:
@@ -2645,12 +2714,26 @@ def _pipeline_advisory_key(execution_id: UUID) -> int:
 
 
 def _canonical_publication_item_predicates() -> tuple[Any, ...]:
+    metadata_card_published = (
+        select(ReportPaperHighlightRow.id)
+        .join(ReportRow, ReportRow.id == ReportPaperHighlightRow.report_id)
+        .where(
+            ReportRow.run_id == DailyRunRow.id,
+            ReportPaperHighlightRow.paper_version_id == RunItemRow.paper_version_id,
+        )
+        .exists()
+    )
     return (
         DailyRunRow.operation == RunOperation.PRODUCT_PUBLICATION.value,
         DailyRunRow.status.in_((RunStatus.COMPLETE.value, RunStatus.PARTIAL.value)),
         DailyRunRow.pipeline_execution_mode != PipelineExecutionMode.SMOKE.value,
-        RunItemRow.status == RunItemStatus.COMPLETED.value,
-        RunItemRow.stage == PaperStage.PUBLISHED.value,
+        or_(
+            (
+                (RunItemRow.status == RunItemStatus.COMPLETED.value)
+                & (RunItemRow.stage == PaperStage.PUBLISHED.value)
+            ),
+            metadata_card_published,
+        ),
     )
 
 

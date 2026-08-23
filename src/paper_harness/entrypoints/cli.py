@@ -36,7 +36,6 @@ from paper_harness.entrypoints.runtime import (
     DailyPipelineDeadlineExceededError,
     DailyPipelineFailure,
     DailyPipelineRunFailedError,
-    DailyPipelineSelectionError,
     execute_arxiv_ingestion,
     execute_daily_pipeline,
     execute_historical_backfill,
@@ -278,7 +277,6 @@ def run_pipeline(
         ValueError,
         OSError,
         DomainInvariantError,
-        DailyPipelineSelectionError,
         DailyPipelineRunFailedError,
         DailyPipelineDeadlineExceededError,
         HistoricalBackfillTimeoutError,
@@ -322,7 +320,7 @@ def run_pipeline(
         "ERROR"
         if result.status is RunStatus.FAILED
         else "WARNING"
-        if result.status is RunStatus.PARTIAL
+        if result.status is RunStatus.PARTIAL or result.failures
         else "INFO"
     )
     typer.echo(
@@ -338,6 +336,9 @@ def run_pipeline(
                 "execution_mode": result.product_run.pipeline_execution_mode.value,
                 "status": result.status.value,
                 "publication_status": result.product_run.status.value,
+                "publication_outcome": (
+                    "NO_UPDATE" if result.selected_count == 0 else result.product_run.status.value
+                ),
                 "level": level,
                 "event": "daily_job_finished",
                 "ingestion_run_id": str(result.ingestion_run.id),
@@ -347,7 +348,11 @@ def run_pipeline(
                     if result.historical_analysis_run is None
                     else str(result.historical_analysis_run.id)
                 ),
-                "historical_backfill_id": str(result.historical_backfill.id),
+                "historical_backfill_id": (
+                    None
+                    if result.historical_backfill is None
+                    else str(result.historical_backfill.id)
+                ),
                 "evaluated_count": result.evaluated_count,
                 "relevant_count": result.relevant_count,
                 "selected_count": result.selected_count,
@@ -395,7 +400,7 @@ def run_pipeline(
                 "duration_ms": result.duration_ms,
                 "item_failures": [
                     {
-                        "paper_id": str(failure.paper_id),
+                        "paper_id": (None if failure.paper_id is None else str(failure.paper_id)),
                         "stage": failure.stage,
                         "error_code": failure.error_code,
                         "retryable": failure.retryable,

@@ -6,7 +6,7 @@ import math
 import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import Literal, Self, TypeVar
@@ -384,7 +384,7 @@ class SemanticScholarClient:
                 payload_model=_SearchPaperPayload,
             )
             if len(papers) >= limit or page.next_offset is None:
-                return tuple(papers[:limit])
+                return _stable_papers(papers)[:limit]
             offset = page.next_offset
         raise ScholarlySearchLimitError(
             "Semantic Scholar search exceeded the bounded pagination depth"
@@ -463,9 +463,11 @@ class SemanticScholarClient:
             operation_deadline=self._operation_deadline(timeout_seconds),
             schema_operation="recommendations",
         )
-        return _convert_unique(
-            response.recommended_papers,
-            payload_model=_PaperPayload,
+        return _stable_papers(
+            _convert_unique(
+                response.recommended_papers,
+                payload_model=_PaperPayload,
+            )
         )[: self._recommendation_limit]
 
     def _get_relations(
@@ -530,7 +532,7 @@ class SemanticScholarClient:
                 payload_model=_PaperPayload,
             )
             if len(papers) >= self._max_relation_results or page.next_offset is None:
-                return tuple(papers[: self._max_relation_results])
+                return _stable_papers(papers)[: self._max_relation_results]
             offset = page.next_offset
         raise ScholarlySearchLimitError(
             f"Semantic Scholar {relation} exceeded the bounded pagination depth"
@@ -777,6 +779,10 @@ def _convert_unique(
     paper_ids: set[str] = set()
     _append_unique(papers, paper_ids, values, payload_model=payload_model)
     return tuple(papers)
+
+
+def _stable_papers(values: Iterable[ScholarlyPaper]) -> tuple[ScholarlyPaper, ...]:
+    return tuple(sorted(values, key=lambda item: item.semantic_scholar_id))
 
 
 def _relation_paper_values(

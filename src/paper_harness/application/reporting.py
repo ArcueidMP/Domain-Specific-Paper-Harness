@@ -57,9 +57,14 @@ def build_structured_report_sections(
         )
     )
     overview = (
-        f"The reporting period includes {counts.retrieved} retrieved papers and "
-        f"{counts.selected} selected papers. {counts.completed} completed publication; "
-        f"{counts.failed} failed."
+        "No relevant new arXiv paper was selected for this topic on this logical date. "
+        "The daily publication completed normally with no update."
+        if counts.selected == 0
+        else (
+            f"The reporting period includes {counts.retrieved} retrieved papers and "
+            f"{counts.selected} selected papers. {counts.completed} completed publication; "
+            f"{counts.failed} failed."
+        )
     )
     trends = (
         " ".join(request.trend_summaries)
@@ -210,6 +215,11 @@ def assemble_product_report(
 
 def _structured_summary(request: ReportNarrativeRequest) -> str:
     counts = request.counts
+    if request.report_type is ReportType.DAILY and counts.selected == 0:
+        return (
+            "No relevant new arXiv paper was selected for this topic today; "
+            "the daily run completed normally with no update."
+        )
     qualifier = "complete" if request.status is RunStatus.COMPLETE else "partial"
     return (
         f"This {request.report_type.value.lower()} report is {qualifier}: "

@@ -34,10 +34,9 @@ export function DailyReportPage() {
           <p className="eyebrow">Daily and historical reports</p>
           <h1>Research report</h1>
           <p className="lede">
-            Published evidence, comparison, graph, and trend results for one logical day. Failed
-            product runs remain visible even when no report was published. Delayed publication
-            freezes the inputs available when it first starts; it is not a reconstructed
-            historical end-of-day corpus.
+            Available papers for one logical day, with structured analysis and optional evidence,
+            comparison, graph, trend, and lineage enrichment shown when present. Missing
+            enrichment remains explicit without hiding usable source metadata.
           </p>
         </div>
         <form className="date-navigation" onSubmit={selectDate}>
@@ -83,12 +82,12 @@ export function DailyReportPage() {
             heading="Product publication run"
           />
           {publication.data.report ? (
-            <ReportDetail report={publication.data.report} />
+            <ReportDetail report={publication.data.report} items={publication.data.items} />
           ) : (
             <StateNotice
               kind="empty"
               title="No report was published"
-              detail="This run is still inspectable, but its state did not permit an atomic report publication. Review the run status and item errors above."
+              detail="This run is still inspectable, but a system-level or publication transaction failure prevented an atomic report. Review the run status above."
             />
           )}
         </div>

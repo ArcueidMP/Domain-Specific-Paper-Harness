@@ -40,19 +40,22 @@ describe("RunsPage", () => {
     expect(screen.queryByRole("button", { name: /run|retry|start/i })).not.toBeInTheDocument();
   });
 
-  it("shows the failed pipeline outcome when an ingestion child completed with no selection", async () => {
+  it("shows a complete no-update outcome when no paper is selected", async () => {
     const emptySelectionRun = {
       ...runDetail,
       status: "COMPLETE" as const,
       pipeline_execution_id: "05baa0ee-9bb2-5e06-ab74-ee77bca475f6",
       pipeline_execution_mode: "NORMAL" as const,
       pipeline_selection_limit: 1,
-      pipeline_status: "FAILED" as const,
+      pipeline_status: "COMPLETE" as const,
       pipeline_deadline_at: "2026-08-08T13:03:00+08:00",
       pipeline_completed_at: "2026-08-08T05:04:00+08:00",
-      pipeline_error_code: "NO_RELEVANT_PAPER_SELECTED",
-      pipeline_error_detail:
-        "arXiv ingestion completed but no paper passed the deterministic relevance filter",
+      pipeline_error_code: null,
+      pipeline_error_detail: null,
+      publication_outcome: "NO_UPDATE" as const,
+      selected_count: 0,
+      completed_count: 0,
+      failed_count: 0,
       items: [],
       report: null,
     };
@@ -79,13 +82,9 @@ describe("RunsPage", () => {
       `/runs/${runId}`,
     );
 
-    expect(await screen.findByText("NO_RELEVANT_PAPER_SELECTED")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "arXiv ingestion completed but no paper passed the deterministic relevance filter",
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText("FAILED").length).toBeGreaterThan(0);
+    expect(await screen.findByText("No relevant papers were found today.")).toBeInTheDocument();
+    expect(screen.getByText("NO UPDATE")).toBeInTheDocument();
+    expect(screen.queryByText("FAILED")).not.toBeInTheDocument();
     expect(screen.getAllByText("COMPLETE").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Operation").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Pipeline").length).toBeGreaterThan(0);

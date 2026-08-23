@@ -8,9 +8,10 @@ Retry means repeating the same operation within its configured bound; it is not
 fallback.
 
 Validate at configuration, HTTP input, external response, model output, PDF/TEI
-input, and persistence boundaries. Do not broadly catch domain or schema errors,
-return silent empty results, repair malformed JSON, or mark a required stage
-complete after skipping it.
+input, and persistence boundaries. Validation may identify incomplete data, but
+it does not suppress independently usable persisted metadata. Do not return
+silent empty results, repair malformed JSON, or present unavailable enrichment
+as successful or grounded.
 
 Normalize provider payloads once at the owning adapter boundary before domain
 use. Missing, null, empty, and whitespace-only optional text is absent; valid
@@ -31,21 +32,25 @@ Each item failure records:
 
 Run outcomes are:
 
-- `COMPLETE`: every selected priority paper completed every required stage.
-- `PARTIAL`: at least one selected paper completed and one or more item stages
-  failed. Publication must show the partial state, missing papers, stages, and
-  error codes.
-- `FAILED`: configuration is invalid, the database or migration is unavailable,
-  global arXiv failed, a required secret/dependency is absent, no selected paper
-  completed, or publication failed.
+- `COMPLETE`: the pipeline published the day's usable source metadata. Optional
+  analysis-adjacent enrichment may be unavailable. A day with zero relevant
+  selections is a normal `NO_UPDATE` outcome and publishes a zero-count daily
+  report for that logical date.
+- `PARTIAL`: at least one source metadata card published while one or more
+  selected papers failed core metadata or source-analysis processing. The
+  report preserves the failed stages and stable error codes alongside the
+  available cards.
+- `FAILED`: only invalid global configuration or authentication, unavailable or
+  incompatible database/migration state, global arXiv failure before any usable
+  candidate input exists, inability to persist any usable metadata, or an
+  atomic publication transaction failure.
 
-An item failure does not stop independent valid items. Continue within the
-configured bounds and publish an honest `PARTIAL` report whenever at least one
-selected paper completes the required product stages. Each owning run derives
-its status from its own contract: an upstream historical/search child may be
-partial while product publication succeeds from valid persisted inputs. The
-report state must match its product-publication owner and retain relevant item
-errors; cross-stage status equality is not required.
+An item failure does not stop independent valid items. A source paper with a
+valid identity, title, source URL, and persisted metadata remains publishable as
+an `ANALYSIS_UNAVAILABLE` card. Related work, comparison, evidence enrichment,
+graph relations, trend classification, lineage, benchmark alignment, and
+historical targets are not publication prerequisites. Their absence is exposed
+as an availability state and does not by itself make the product `PARTIAL`.
 
 ## Configuration and authentication
 
@@ -87,9 +92,10 @@ prevents concurrent logical Daily runs; lock contention fails clearly.
 ## Structured analysis
 
 Parser failure never becomes abstract-only analysis. Empty, malformed,
-schema-invalid, or domain-invalid DeepSeek output fails its paper before any
-analysis, claim, or evidence row for that paper is persisted; it does not stop
-other valid papers.
+schema-invalid, or domain-invalid DeepSeek output makes that paper's analysis
+unavailable before any analysis, claim, or evidence row is persisted; it does
+not stop other papers or remove the paper's metadata card. An all-item analysis
+failure is `PARTIAL`, not a run-fatal substitute for missing enrichment.
 
 Evidence must point to the selected exact version and a valid claim/relation.
 An atomic per-paper write prevents half-written analyses. If some selected
@@ -111,21 +117,26 @@ arXiv version when available. Required identity and field types remain strict. A
 non-arXiv result remains a stub and cannot enter full-text analysis.
 
 SPECTER2 requires the pinned offline artifact and exact contract. Missing,
-wrong-revision, wrong-dimension, non-finite, or zero output fails the embedding
-operation; it does not switch to another embedding provider.
+wrong-revision, wrong-dimension, non-finite, or zero output makes the owning
+historical enrichment unavailable; it does not switch provider or prevent
+publication of already usable Daily metadata.
 
 ## Comparison, graph, and reports
 
 A comparison persists only when its source ownership, search session,
 historical target, evidence links, and comparability values validate together.
-A failed comparison bundle rolls back.
+A failed comparison bundle rolls back, and the source paper publishes with
+`COMPARISON_UNAVAILABLE` and reason `NO_COMPATIBLE_HISTORICAL_ANALYSIS`.
 
 Graph relations cannot reference missing entities or evidence. Inferred
 relations require their model, prompt, verification, confidence, and evidence
 provenance. A score cannot be presented as certainty.
 
 Trend and lineage computation uses persisted structured data only. Insufficient
-windows remain insufficient; narrative generation cannot fill missing values.
+windows remain `INSUFFICIENT_DATA`; narrative generation cannot fill missing
+values. Graph, trend, lineage, and generated report narrative validation may
+omit the affected enrichment but cannot discard safe source metadata or
+grounded analysis already available for publication.
 
 Each product-publication attempt selects current valid persisted analyses,
 comparisons, and evidence for its declared logical date and scope, then stages
@@ -137,7 +148,10 @@ A failed unpublished run may start a clean attempt and replan from the current
 valid persisted inputs. It is not bound to a stale candidate or comparison
 snapshot. It still cannot cross source ownership or scope, mutate upstream
 records, or mutate a terminal complete/partial artifact. Explicit reprocessing
-creates a separate publication revision instead.
+creates a separate publication revision instead. When a terminal same-date
+publication already exists, reprocessing uses the widest terminal revision's
+selected paper-version set so a later retry cannot hide previously successful
+cards. Normal scheduled selection continues to exclude canonical versions.
 
 ## Database and migrations
 
@@ -163,8 +177,8 @@ Deployment stops when:
 - a required runtime secret is absent or disabled;
 - migration did not complete at the application head;
 - Web/API IAP, owner allowlist, GROBID invoker, or public-access checks fail;
-- the direct Daily execution is not terminal or produces no completed selected
-  paper; or
+- the direct Daily execution is not terminal or does not publish the day's
+  usable metadata/`NO_UPDATE` outcome; or
 - a topic Scheduler does not invoke its corresponding Daily Job.
 
 No deployment error permits a public endpoint, alternate database, temporary

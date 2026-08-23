@@ -1120,6 +1120,8 @@ class HistoricalRepositoryMixin:
                 PaperAnalysisRow.configured_model == configured_model,
                 PaperAnalysisRow.prompt_version == prompt_version,
             )
+            if analysis_id is None:
+                statement = statement.where(PaperAnalysisRow.revision_id.is_(None))
         if (parser_name is None) != (parser_version is None):
             raise RepositoryIntegrityError(
                 "comparison analysis parser provenance must be supplied together"
@@ -1138,12 +1140,12 @@ class HistoricalRepositoryMixin:
             statement = statement.order_by(
                 case((PaperAnalysisRow.analysis_scope == "FULL_TEXT", 1), else_=0).desc(),
                 PaperAnalysisRow.generated_at.desc(),
-                PaperAnalysisRow.id,
+                PaperAnalysisRow.id.desc(),
             )
         else:
             statement = statement.order_by(
                 PaperAnalysisRow.generated_at.desc(),
-                PaperAnalysisRow.id,
+                PaperAnalysisRow.id.desc(),
             )
         statement = statement.limit(1)
         try:

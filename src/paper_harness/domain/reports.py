@@ -222,7 +222,15 @@ class ReportNarrativeRequest:
             raise DomainInvariantError("complete narrative input cannot contain failures")
         if self.status is RunStatus.PARTIAL and not self.failures:
             raise DomainInvariantError("partial narrative input requires visible failures")
-        if self.counts.completed < 1:
+        if self.counts.completed < 1 and not (
+            _is_no_update_report(self.report_type, self.status, self.counts)
+            or _is_metadata_only_partial_report(
+                self.report_type,
+                self.status,
+                self.counts,
+                highlighted_paper_count=len(self.highlighted_papers),
+            )
+        ):
             raise DomainInvariantError("publishable report input requires a completed paper")
         for value in self.trend_summaries:
             _require_text(value, "trend summary", maximum=4000)
@@ -456,7 +464,15 @@ class Report:
             if self.sections:
                 raise DomainInvariantError("legacy analysis reports cannot carry M4 sections")
         else:
-            if self.counts.completed < 1:
+            if self.counts.completed < 1 and not (
+                _is_no_update_report(self.report_type, self.status, self.counts)
+                or _is_metadata_only_partial_report(
+                    self.report_type,
+                    self.status,
+                    self.counts,
+                    highlighted_paper_count=len(self.highlighted_papers),
+                )
+            ):
                 raise DomainInvariantError("product report requires a completed paper")
             section_kinds = tuple(section.kind for section in self.sections)
             if len(set(section_kinds)) != len(section_kinds) or section_kinds != tuple(
@@ -508,6 +524,34 @@ class Report:
                 raise DomainInvariantError("DeepSeek report requires complete model provenance")
         elif any(value is not None for value in model_values):
             raise DomainInvariantError("structured-only report cannot carry model provenance")
+
+
+def _is_no_update_report(
+    report_type: ReportType,
+    status: RunStatus,
+    counts: ReportCounts,
+) -> bool:
+    return (
+        report_type is ReportType.DAILY
+        and status is RunStatus.COMPLETE
+        and counts == ReportCounts(0, 0, 0, 0, 0)
+    )
+
+
+def _is_metadata_only_partial_report(
+    report_type: ReportType,
+    status: RunStatus,
+    counts: ReportCounts,
+    *,
+    highlighted_paper_count: int,
+) -> bool:
+    return (
+        report_type is ReportType.DAILY
+        and status is RunStatus.PARTIAL
+        and counts.selected > 0
+        and counts.processed == counts.failed == counts.selected
+        and highlighted_paper_count == counts.selected
+    )
 
 
 def aggregate_report_eligible(

@@ -167,13 +167,23 @@ set. Each terminal publication revision remains immutable; same-date
 reprocessing creates a new revision and public reads select the latest
 successful one.
 
+Normal Daily selection excludes canonically published paper versions. An
+explicit same-date `REPROCESS` instead uses the widest terminal publication for
+that topic/date as its version baseline, including both completed and failed
+items. This prevents a retry revision from shrinking to only the previously
+failed remainder while preserving normal scheduled deduplication.
+
 Publication states are:
 
-- `COMPLETE`: every selected priority paper completed all required stages.
-- `PARTIAL`: at least one completed and at least one failed; the report names
-  missing papers, failed stages, and stable error codes.
-- `FAILED`: a required global dependency/configuration failed, no selected paper
-  completed, or publication failed.
+- `COMPLETE`: the Daily product published all usable source metadata; optional
+  related work, comparison, evidence enrichment, graph, trend, or lineage data
+  may be unavailable. When no relevant paper is selected, it publishes a
+  zero-count report with product outcome `NO_UPDATE`.
+- `PARTIAL`: source metadata published but one or more selected papers have
+  unavailable core metadata or source analysis; the report retains their cards,
+  failed stages, and stable error codes.
+- `FAILED`: a required global dependency/configuration failed, no usable metadata
+  could be persisted, or the publication transaction failed.
 
 Independent valid items continue after an item failure. Upstream child statuses
 remain observable but do not have to equal the product-publication status; the

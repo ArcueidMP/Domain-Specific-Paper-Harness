@@ -5,12 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from paper_harness.application.read_models import ReportDetail, RunDetail
 from paper_harness.domain.analysis import AnalysisBundle, VerificationStatus
 from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.domain.historical import ComparisonBundle
+from paper_harness.domain.identity import validate_canonical_arxiv_id
 from paper_harness.domain.knowledge import (
     GraphEdge,
     GraphEntity,
@@ -35,6 +37,41 @@ class ComparisonGraphInput:
 
 
 @dataclass(frozen=True, slots=True)
+class PublicationPaperCardInput:
+    """Persisted source metadata that remains publishable without analysis enrichment."""
+
+    paper_id: UUID
+    paper_version_id: UUID
+    canonical_arxiv_id: str
+    title: str
+    abstract: str | None
+    source_url: str
+
+    def __post_init__(self) -> None:
+        validate_canonical_arxiv_id(self.canonical_arxiv_id)
+        if not self.title.strip() or self.title != self.title.strip():
+            raise DomainInvariantError("publication paper card requires a normalized title")
+        if self.abstract is not None and (
+            not self.abstract.strip() or self.abstract != self.abstract.strip()
+        ):
+            raise DomainInvariantError("publication paper card abstract must be normalized")
+        parsed = urlsplit(self.source_url)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "arxiv.org"
+            or parsed.port is not None
+            or parsed.username is not None
+            or parsed.password is not None
+            or not parsed.path.startswith("/abs/")
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise DomainInvariantError(
+                "publication paper card requires an approved arXiv source URL"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class ProductPaperInput:
     paper_id: UUID
     paper_version_id: UUID
@@ -43,6 +80,8 @@ class ProductPaperInput:
     comparisons: tuple[ComparisonGraphInput, ...]
     evidence: tuple[ReportEvidenceReference, ...]
     retrieved_candidate_count: int
+    related_work_available: bool | None = None
+    related_work_reason: str | None = None
 
     def __post_init__(self) -> None:
         if not self.paper_title.strip():
@@ -92,30 +131,12 @@ class ProductPaperInput:
             for item in self.comparisons
         ):
             raise DomainInvariantError("product comparison input has the wrong source analysis")
-
-
-@dataclass(frozen=True, slots=True)
-class ProductPublicationInput:
-    source_run: RunDetail
-    papers: tuple[ProductPaperInput, ...]
-
-    def __post_init__(self) -> None:
-        if self.source_run.run.operation is not RunOperation.STRUCTURED_ANALYSIS:
-            raise DomainInvariantError("product publication requires a structured-analysis run")
-        if self.source_run.run.status not in (RunStatus.COMPLETE, RunStatus.PARTIAL):
-            raise DomainInvariantError("product publication requires a publishable source run")
-        successful_version_ids = {
-            item.item.paper_version_id
-            for item in self.source_run.items
-            if item.item.status is RunItemStatus.COMPLETED
-        }
-        projected_version_ids = {item.paper_version_id for item in self.papers}
-        if successful_version_ids != projected_version_ids or len(projected_version_ids) != len(
-            self.papers
+        if self.related_work_available is True and self.related_work_reason is not None:
+            raise DomainInvariantError("available related work cannot carry an unavailable reason")
+        if self.related_work_available is False and (
+            self.related_work_reason is None or not self.related_work_reason.strip()
         ):
-            raise DomainInvariantError(
-                "product input must project every completed source item exactly once"
-            )
+            raise DomainInvariantError("unavailable related work requires a concise reason")
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +158,47 @@ class ProductFailureInput:
             raise DomainInvariantError("product failure detail must be concise valid text")
         if "\x00" in self.error_code or "\x00" in self.error_detail:
             raise DomainInvariantError("product failure metadata contains invalid text")
+
+
+@dataclass(frozen=True, slots=True)
+class ProductPublicationInput:
+    source_run: RunDetail
+    papers: tuple[ProductPaperInput, ...]
+    cards: tuple[PublicationPaperCardInput, ...]
+    input_failures: tuple[ProductFailureInput, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.source_run.run.operation is not RunOperation.STRUCTURED_ANALYSIS:
+            raise DomainInvariantError("product publication requires a structured-analysis run")
+        if self.source_run.run.status not in (RunStatus.COMPLETE, RunStatus.PARTIAL):
+            raise DomainInvariantError("product publication requires a publishable source run")
+        successful_version_ids = {
+            item.item.paper_version_id
+            for item in self.source_run.items
+            if item.item.status is RunItemStatus.COMPLETED
+        }
+        selected_version_ids = {item.item.paper_version_id for item in self.source_run.items}
+        projected_version_ids = {item.paper_version_id for item in self.papers}
+        card_version_ids = {item.paper_version_id for item in self.cards}
+        failed_version_ids = {item.paper_version_id for item in self.input_failures}
+        if (
+            len(projected_version_ids) != len(self.papers)
+            or len(card_version_ids) != len(self.cards)
+            or len(failed_version_ids) != len(self.input_failures)
+            or projected_version_ids & failed_version_ids
+            or successful_version_ids != projected_version_ids | failed_version_ids
+            or selected_version_ids != card_version_ids
+        ):
+            raise DomainInvariantError(
+                "product input must card every selected item and project or fail each analysis"
+            )
+        cards_by_version = {item.paper_version_id: item for item in self.cards}
+        if any(
+            cards_by_version[item.paper_version_id].paper_id != item.paper_id
+            or cards_by_version[item.paper_version_id].title != item.paper_title
+            for item in self.papers
+        ):
+            raise DomainInvariantError("product paper analysis does not match its metadata card")
 
 
 @dataclass(frozen=True, slots=True)

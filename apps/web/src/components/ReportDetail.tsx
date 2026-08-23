@@ -1,14 +1,18 @@
-import type { Report } from "../api/client";
+import type { Report, RunItem } from "../api/client";
 import { formatDateTime } from "../lib/format";
 import { RunStatusBadge } from "./RunStatusBadge";
 import { TopicLink } from "./TopicLink";
 
 type ReportDetailProps = {
   report: Report;
+  items?: RunItem[];
   compact?: boolean;
 };
 
-export function ReportDetail({ report, compact = false }: ReportDetailProps) {
+export function ReportDetail({ report, items = [], compact = false }: ReportDetailProps) {
+  const noUpdate = report.publication_outcome === "NO_UPDATE";
+  const itemsByVersion = new Map(items.map((item) => [item.paper_version_id, item]));
+
   return (
     <article className={`report-detail${compact ? " compact" : ""}`}>
       <header className="report-header card">
@@ -19,6 +23,7 @@ export function ReportDetail({ report, compact = false }: ReportDetailProps) {
         </div>
         <div className="report-header-status">
           <RunStatusBadge status={report.status} />
+          {noUpdate ? <RunStatusBadge status="NO_UPDATE" /> : null}
           <span>{report.period_start === report.period_end ? report.period_start : `${report.period_start} to ${report.period_end}`}</span>
         </div>
       </header>
@@ -28,9 +33,16 @@ export function ReportDetail({ report, compact = false }: ReportDetailProps) {
           <strong>Partial report</strong>
           <span>
             {report.failures.length} selected paper{report.failures.length === 1 ? "" : "s"} did
-            not complete every required stage. Missing work is listed below and is not treated as
-            evidence.
+            not complete core metadata or analysis processing. Their source metadata remains
+            published, and unavailable work is not treated as evidence.
           </span>
+        </div>
+      ) : null}
+
+      {noUpdate ? (
+        <div className="no-update-banner" role="status">
+          <strong>No research updates today</strong>
+          <span>No relevant papers were found today.</span>
         </div>
       ) : null}
 
@@ -91,19 +103,50 @@ export function ReportDetail({ report, compact = false }: ReportDetailProps) {
       {report.highlighted_papers.length > 0 ? (
         <section className="report-block" aria-labelledby={`papers-${report.id}`}>
           <div className="section-title-row">
-            <h2 id={`papers-${report.id}`}>Paper highlights</h2>
+            <h2 id={`papers-${report.id}`}>Daily papers</h2>
             <span>{report.highlighted_papers.length} persisted selections</span>
           </div>
           <div className="report-highlight-grid">
-            {report.highlighted_papers.map((paper) => (
-              <article className="report-highlight card" key={paper.paper_version_id}>
-                <h3>
-                  <TopicLink to={`/papers/${paper.paper_id}`}>{paper.title}</TopicLink>
-                </h3>
-                <p>{paper.reason}</p>
-                <small>{paper.evidence_ids.length} evidence references</small>
-              </article>
-            ))}
+            {report.highlighted_papers.map((paper) => {
+              const item = itemsByVersion.get(paper.paper_version_id);
+              const statuses = Array.from(
+                new Set(
+                  [
+                    item?.analysis_status,
+                    item?.related_work_status,
+                    item?.comparison_status,
+                    item?.trend_status,
+                  ].flatMap((status) => (status ? [status] : [])),
+                ),
+              );
+              return (
+                <article className="report-highlight card" key={paper.paper_version_id}>
+                  <h3>
+                    <TopicLink to={`/papers/${paper.paper_id}`}>{paper.title}</TopicLink>
+                  </h3>
+                  {statuses.length > 0 ? (
+                    <div className="publication-availability" aria-label="Paper availability">
+                      {statuses.map((status) => (
+                        <RunStatusBadge key={status} status={status} />
+                      ))}
+                    </div>
+                  ) : null}
+                  <p>{paper.reason}</p>
+                  {item?.paper_abstract && item.paper_abstract !== paper.reason ? (
+                    <p className="publication-abstract">{item.paper_abstract}</p>
+                  ) : null}
+                  <div className="publication-card-meta">
+                    <small>{paper.evidence_ids.length} evidence references</small>
+                    {item?.source_url ? (
+                      <a href={item.source_url} rel="noreferrer" target="_blank">
+                        Open arXiv source
+                      </a>
+                    ) : null}
+                  </div>
+                  {item?.comparison_reason ? <small>{item.comparison_reason}</small> : null}
+                </article>
+              );
+            })}
           </div>
         </section>
       ) : null}
@@ -197,9 +240,12 @@ export function ReportDetail({ report, compact = false }: ReportDetailProps) {
       ) : null}
 
       {!compact && report.failures.length > 0 ? (
-        <section className="report-block report-failures" aria-labelledby={`failures-${report.id}`}>
+        <section
+          className="report-block report-failures availability"
+          aria-labelledby={`failures-${report.id}`}
+        >
           <div className="section-title-row">
-            <h2 id={`failures-${report.id}`}>Item failures</h2>
+            <h2 id={`failures-${report.id}`}>Unavailable analysis</h2>
           </div>
           <ul>
             {report.failures.map((failure) => (

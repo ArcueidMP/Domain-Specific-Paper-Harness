@@ -40,7 +40,7 @@ from paper_harness.domain.models import (
     RunStatus,
     TopicConfig,
 )
-from paper_harness.ports.arxiv import ArxivPort, ArxivPortError, ArxivUnavailableError
+from paper_harness.ports.arxiv import ArxivPort, ArxivPortError
 from paper_harness.ports.llm import (
     LLMAuthenticationError,
     LLMConfigurationError,
@@ -119,8 +119,8 @@ class AnalyzePapers:
         resume_existing: bool = False,
         reuse_contract: AnalysisReuseContract | None = None,
     ) -> DailyRun:
-        if bool(paper_ids) == bool(paper_version_ids):
-            raise ValueError("structured analysis requires at least one selected paper")
+        if paper_ids and paper_version_ids:
+            raise ValueError("structured analysis accepts one selected identity form")
         if run_operation not in (
             RunOperation.STRUCTURED_ANALYSIS,
             RunOperation.HISTORICAL_ANALYSIS,
@@ -129,6 +129,8 @@ class AnalyzePapers:
         if run_operation is RunOperation.HISTORICAL_ANALYSIS and not paper_version_ids:
             raise ValueError("historical analysis requires exact paper-version IDs")
         selected_ids = paper_ids or paper_version_ids
+        if not selected_ids and pipeline_execution_mode is PipelineExecutionMode.STANDALONE:
+            raise ValueError("standalone structured analysis requires a selected paper")
         if len(set(selected_ids)) != len(selected_ids):
             raise ValueError("selected analysis identities must be unique")
         if len(selected_ids) > topic.representative_full_text_count:
@@ -240,11 +242,8 @@ class AnalyzePapers:
                     LLMConfigurationError,
                     PdfParserAuthenticationError,
                     PdfParserConfigurationError,
-                    ArxivUnavailableError,
                 ) as error:
-                    if isinstance(error, ArxivUnavailableError):
-                        failed_stage = PaperStage.PDF_DOWNLOADED
-                    elif isinstance(
+                    if isinstance(
                         error,
                         (PdfParserAuthenticationError, PdfParserConfigurationError),
                     ):
@@ -303,8 +302,6 @@ class AnalyzePapers:
                     version=target.version.version,
                     pdf_url=target.version.pdf_url,
                 )
-            except ArxivUnavailableError:
-                raise
             except ArxivPortError as error:
                 self._record_item_failure(
                     run_id=run_id,

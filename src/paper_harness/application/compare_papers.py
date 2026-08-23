@@ -33,7 +33,8 @@ from paper_harness.ports.repository import RepositoryPort
 
 
 class ComparisonInputMissingError(RuntimeError):
-    error_code = "COMPARISON_INPUT_MISSING"
+    error_code = "COMPARISON_UNAVAILABLE"
+    reason = "NO_COMPATIBLE_HISTORICAL_ANALYSIS"
     retryable = False
 
 

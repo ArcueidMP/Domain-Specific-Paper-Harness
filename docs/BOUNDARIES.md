@@ -78,8 +78,10 @@ It does not repair malformed output, expose reasoning, switch models, or create
 mock production results.
 
 An analysis failure belongs to its paper and does not stop independent valid
-papers. If at least one selected paper completes the required product stages,
-publication proceeds with an honest partial result and retained item errors.
+papers. Its valid source metadata remains publishable as an
+`ANALYSIS_UNAVAILABLE` card. Publication is `PARTIAL` for core metadata or
+source-analysis failures, while missing optional enrichment does not change a
+successful publication to `PARTIAL`.
 
 Paper-analysis calls receive no tools, shell, arbitrary network, code execution,
 or filesystem-write capability. Inputs and outputs are bounded in size and
@@ -95,6 +97,11 @@ available. Confidence is stored only where its meaning is defined.
 Comparisons require explicit dimensions and comparability. Claims of priority,
 superiority, contradiction, improvement, or direct comparability are not made
 without persisted support.
+
+Evidence, related work, comparison, graph, trend, and lineage enrichment remain
+optional at publication time. Validation may remove an unsupported claim or
+unsafe enrichment artifact, but it cannot remove independently usable source
+metadata from the Daily report.
 
 Graph relations distinguish metadata-explicit, text-explicit,
 deterministically derived, LLM-inferred, and human-verified provenance.

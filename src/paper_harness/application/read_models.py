@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from paper_harness.domain.analysis import (
@@ -46,6 +47,13 @@ from paper_harness.domain.models import (
     TopicConfig,
 )
 from paper_harness.domain.reports import Report, ReportEvidenceReference
+
+AnalysisAvailabilityStatus = Literal["AVAILABLE", "ANALYSIS_UNAVAILABLE"]
+RelatedWorkAvailabilityStatus = Literal["AVAILABLE", "RELATED_WORK_UNAVAILABLE"]
+ComparisonAvailabilityStatus = Literal[
+    "AVAILABLE", "LIMITED_COMPARABILITY", "COMPARISON_UNAVAILABLE"
+]
+TrendAvailabilityStatus = Literal["AVAILABLE", "INSUFFICIENT_DATA"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +103,14 @@ class RunItemDetail:
     item: RunItem
     canonical_arxiv_id: str
     paper_title: str
+    paper_abstract: str | None = None
+    source_url: str | None = None
+    analysis_status: AnalysisAvailabilityStatus | None = None
+    related_work_status: RelatedWorkAvailabilityStatus | None = None
+    related_work_reason: str | None = None
+    comparison_status: ComparisonAvailabilityStatus | None = None
+    comparison_reason: str | None = None
+    trend_status: TrendAvailabilityStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)

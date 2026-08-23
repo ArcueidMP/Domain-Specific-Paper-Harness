@@ -411,6 +411,21 @@ a {
   color: #276078;
 }
 
+.status-badge.no_update {
+  background: #e6ece8;
+  color: #405348;
+}
+
+.status-badge.unavailable {
+  background: #ece9df;
+  color: #625c49;
+}
+
+.status-badge.available {
+  background: #dbece2;
+  color: var(--success);
+}
+
 .site-footer {
   display: flex;
   justify-content: space-between;
@@ -791,6 +806,20 @@ a {
   line-height: 1.45;
 }
 
+.no-update-banner {
+  display: grid;
+  gap: 5px;
+  margin-top: 20px;
+  padding: 15px;
+  border: 1px solid rgba(63, 91, 73, 0.24);
+  border-left: 4px solid var(--forest-light);
+  border-radius: 5px;
+  background: #edf3ee;
+  color: #405348;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .run-item-failures {
   margin-top: 22px;
 }
@@ -859,6 +888,20 @@ a {
   color: #72413c;
   font-size: 10px;
   line-height: 1.5;
+}
+
+.run-item-failures.availability h3,
+.run-item-failures.availability a {
+  color: #625c49;
+}
+
+.run-item-failures.availability > ul > li {
+  border-color: rgba(98, 92, 73, 0.2);
+  background: #f7f5ee;
+}
+
+.run-item-failures.availability p {
+  color: var(--muted);
 }
 
 .back-link {
@@ -1363,9 +1406,9 @@ a {
   display: grid;
   gap: 5px;
   padding: 12px 14px;
-  border-left: 3px solid var(--danger);
-  background: #fcf2ef;
-  color: var(--danger);
+  border-left: 3px solid #8a8166;
+  background: #f7f5ee;
+  color: #625c49;
   font-size: 10px;
 }
 
@@ -1636,7 +1679,20 @@ a {
 }
 
 .comparison-unavailable {
+  display: grid;
+  gap: 7px;
   margin: 18px 0 0;
+}
+
+.comparison-availability {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+  margin-top: 18px;
+}
+
+.comparison-availability .comparison-link {
+  margin-top: 5px;
 }
 
 .comparison-header {
@@ -2134,6 +2190,37 @@ a {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.65;
+}
+
+.publication-availability {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.publication-abstract {
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.publication-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.publication-card-meta a {
+  color: var(--forest-light);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.report-failures.availability li {
+  border-color: rgba(98, 92, 73, 0.2);
+  background: #f7f5ee;
 }
 
 .report-header-status {

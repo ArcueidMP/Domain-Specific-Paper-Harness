@@ -158,6 +158,8 @@ function installFixtures(
           options.related ??
             jsonResponse({
               paper_id: paperId,
+              related_work_status: "RELATED_WORK_UNAVAILABLE",
+              related_work_reason: "NO_RELATED_WORK_RESULT",
               session: null,
               actions: [],
               items: [],
@@ -230,7 +232,7 @@ describe("PaperDetailPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("Analysis not available")).toBeInTheDocument();
+    expect(await screen.findByText("ANALYSIS_UNAVAILABLE")).toBeInTheDocument();
     expect(screen.getByText(/No alternate scope or model output has been substituted/)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Evidence viewer" })).not.toBeInTheDocument();
     expect(
@@ -252,7 +254,7 @@ describe("PaperDetailPage", () => {
 
     expect(await screen.findByText("Unable to load the analysis")).toBeInTheDocument();
     expect(screen.getByText(/The paper was removed/)).toBeInTheDocument();
-    expect(screen.queryByText("Analysis not available")).not.toBeInTheDocument();
+    expect(screen.queryByText("ANALYSIS_UNAVAILABLE")).not.toBeInTheDocument();
   });
 
   it("keeps the analysis visible when no evidence records exist", async () => {
@@ -278,13 +280,15 @@ describe("PaperDetailPage", () => {
     expect(await screen.findByText("Unable to load the analysis")).toBeInTheDocument();
     expect(screen.getByText(/Analysis storage is unavailable/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
-    expect(screen.queryByText("Analysis not available")).not.toBeInTheDocument();
+    expect(screen.queryByText("ANALYSIS_UNAVAILABLE")).not.toBeInTheDocument();
   });
 
   it("shows bounded related-work decisions, component scores, and comparison links", async () => {
     installFixtures({
       related: jsonResponse({
         paper_id: paperId,
+        related_work_status: "AVAILABLE",
+        related_work_reason: null,
         session: {
           id: "741e66ad-c55f-4b15-a847-0fd81e13a87a",
           topic_id: "155d96bf-c1d8-4f1f-a33b-4369390b63a5",
@@ -443,6 +447,8 @@ describe("PaperDetailPage", () => {
               },
             ],
             comparison_id: comparisonId,
+            comparison_status: "LIMITED_COMPARABILITY",
+            comparison_reason: "The evaluation scopes differ.",
           },
         ],
         comparisons: [],
@@ -484,7 +490,7 @@ describe("PaperDetailPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("Related work not available")).toBeInTheDocument();
+    expect(await screen.findByText("RELATED_WORK_UNAVAILABLE")).toBeInTheDocument();
     expect(screen.getByText(/No alternate provider or synthetic recommendations/)).toBeInTheDocument();
   });
 
@@ -505,6 +511,6 @@ describe("PaperDetailPage", () => {
 
     expect(await screen.findByText("Unable to load related work")).toBeInTheDocument();
     expect(screen.getByText(/Related-work storage is unavailable/)).toBeInTheDocument();
-    expect(screen.queryByText("Related work not available")).not.toBeInTheDocument();
+    expect(screen.queryByText("RELATED_WORK_UNAVAILABLE")).not.toBeInTheDocument();
   });
 });
