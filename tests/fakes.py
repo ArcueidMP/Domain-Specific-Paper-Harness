@@ -254,6 +254,7 @@ class FakeRepository:
         self.pipeline_locked = False
         self.pipeline_executions: dict[UUID, PipelineExecution] = {}
         self.canonically_published_version_ids: frozenset[UUID] = frozenset()
+        self.reprocessing_baseline_version_ids: frozenset[UUID] = frozenset()
         self.enforce_published_visibility = False
 
     @contextmanager
@@ -856,8 +857,9 @@ class FakeRepository:
         started_at: datetime,
         pipeline_execution_id: UUID | None = None,
     ) -> DailyRun:
-        failures_by_version = {failure.paper_version_id: failure for failure in upstream_failures}
-        if len(failures_by_version) != len(upstream_failures):
+        failures = (*source.input_failures, *upstream_failures)
+        failures_by_version = {failure.paper_version_id: failure for failure in failures}
+        if len(failures_by_version) != len(failures):
             raise RepositoryError("product upstream failures must identify unique paper versions")
         source_items = {
             detail.item.paper_version_id: detail.item for detail in source.source_run.items
@@ -1358,15 +1360,57 @@ class FakeRepository:
         return report
 
     def _run_item_details(self) -> tuple[RunItemDetail, ...]:
-        titles = {
-            item.paper_version_id: item.paper_title
+        cards = {
+            item.paper_version_id: item
+            for item in (() if self.product_input is None else self.product_input.cards)
+        }
+        papers = {
+            item.paper_version_id: item
             for item in (() if self.product_input is None else self.product_input.papers)
         }
         return tuple(
             RunItemDetail(
                 item=item,
-                canonical_arxiv_id="2601.01234",
-                paper_title=titles.get(item.paper_version_id, "A Reliable LLM Agent"),
+                canonical_arxiv_id=(
+                    cards[item.paper_version_id].canonical_arxiv_id
+                    if item.paper_version_id in cards
+                    else "2601.01234"
+                ),
+                paper_title=(
+                    cards[item.paper_version_id].title
+                    if item.paper_version_id in cards
+                    else "A Reliable LLM Agent"
+                ),
+                paper_abstract=(
+                    cards[item.paper_version_id].abstract
+                    if item.paper_version_id in cards
+                    else None
+                ),
+                source_url=(
+                    cards[item.paper_version_id].source_url
+                    if item.paper_version_id in cards
+                    else None
+                ),
+                analysis_status=(
+                    "AVAILABLE" if item.paper_version_id in papers else "ANALYSIS_UNAVAILABLE"
+                ),
+                related_work_status=(
+                    "AVAILABLE"
+                    if item.paper_version_id in papers
+                    and papers[item.paper_version_id].related_work_available is True
+                    else "RELATED_WORK_UNAVAILABLE"
+                ),
+                comparison_status=(
+                    "AVAILABLE"
+                    if item.paper_version_id in papers and papers[item.paper_version_id].comparisons
+                    else "COMPARISON_UNAVAILABLE"
+                ),
+                comparison_reason=(
+                    None
+                    if item.paper_version_id in papers and papers[item.paper_version_id].comparisons
+                    else "NO_COMPATIBLE_HISTORICAL_ANALYSIS"
+                ),
+                trend_status=("AVAILABLE" if self.persisted_trends else "INSUFFICIENT_DATA"),
             )
             for item in self.items
         )
@@ -1462,6 +1506,14 @@ class FakeRepository:
         paper_version_ids: tuple[UUID, ...],
     ) -> frozenset[UUID]:
         return frozenset(paper_version_ids).intersection(self.canonically_published_version_ids)
+
+    def get_reprocessing_baseline_paper_version_ids(
+        self,
+        topic_id: UUID,
+        logical_date: date,
+    ) -> frozenset[UUID]:
+        del topic_id, logical_date
+        return self.reprocessing_baseline_version_ids
 
     def attach_existing_analysis_to_run(
         self,
@@ -1757,19 +1809,16 @@ class FakeRepository:
             raise AssertionError("run was not started")
         completed = sum(item.status is RunItemStatus.COMPLETED for item in self.items)
         failed = sum(item.status is RunItemStatus.FAILED for item in self.items)
-        status = (
-            RunStatus.COMPLETE
-            if failed == 0
-            else (RunStatus.PARTIAL if completed else RunStatus.FAILED)
-        )
+        no_update = self.run.selected_count == 0
+        status = RunStatus.COMPLETE if no_update or failed == 0 else RunStatus.PARTIAL
         self.run = replace(
             self.run,
             status=status,
             completed_at=completed_at,
             completed_count=completed,
             failed_count=failed,
-            error_code=None if completed else "NO_SELECTED_PAPER_COMPLETED",
-            error_detail=None if completed else "No selected paper completed evidence extraction.",
+            error_code=None,
+            error_detail=None,
         )
         return self.run
 
@@ -1817,6 +1866,7 @@ class FakeRepository:
         paper_id: UUID,
         *,
         paper_version_id: UUID | None,
+        analysis_id: UUID | None = None,
         analysis_scope: AnalysisScope | None = None,
         canonical_only: bool = False,
     ) -> AnalysisDetail | None:
@@ -1830,6 +1880,8 @@ class FakeRepository:
         ):
             return None
         if self.analysis_detail.analysis.paper_id != paper_id:
+            return None
+        if analysis_id is not None and self.analysis_detail.analysis.id != analysis_id:
             return None
         if (
             paper_version_id is not None

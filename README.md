@@ -198,5 +198,6 @@ accounts receive only the secret versions required by their runtime.
 - Weekly and longer synthesis requires sufficient persisted source coverage;
   insufficient windows are reported honestly.
 - arXiv PDFs above the configured 30 MiB ingestion bound remain item-level
-  failures, and schema-invalid DeepSeek output remains visible in honest
-  `PARTIAL` reports.
+  analysis failures. Their source metadata remains visible in honest `PARTIAL`
+  reports, while unavailable related work, comparisons, graph, trends, and
+  lineage are labeled without blocking Daily publication.

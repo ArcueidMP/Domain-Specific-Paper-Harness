@@ -1331,7 +1331,7 @@ def test_full_text_analysis_persists_exact_parser_provenance_and_reuses_canonica
         logical_date=now.date(),
     )
 
-    assert first_run.status is RunStatus.FAILED
+    assert first_run.status is RunStatus.PARTIAL
     assert (
         postgres_repository.get_paper_analysis(
             paper.id,

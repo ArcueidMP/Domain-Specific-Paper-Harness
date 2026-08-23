@@ -20,7 +20,9 @@ from starlette.types import Scope
 
 from paper_harness.adapters.postgres import PostgresRepository, create_postgres_engine
 from paper_harness.application.read_models import (
+    AnalysisAvailabilityStatus,
     AnalysisDetail,
+    ComparisonAvailabilityStatus,
     ComparisonDetail,
     ComparisonEvidenceReference,
     GraphEdgeDetail,
@@ -30,10 +32,12 @@ from paper_harness.application.read_models import (
     LineageDetail,
     PaperDetail,
     ProductRunDetail,
+    RelatedWorkAvailabilityStatus,
     RelatedWorkDetail,
     ReportDetail,
     RunDetail,
     StoredTopic,
+    TrendAvailabilityStatus,
     TrendDetail,
 )
 from paper_harness.domain.analysis import (
@@ -44,6 +48,7 @@ from paper_harness.domain.analysis import (
     VerificationStatus,
 )
 from paper_harness.domain.historical import (
+    ComparabilityStatus,
     ComparisonDimension,
     ExternalPaperStub,
     PaperRelation,
@@ -52,6 +57,7 @@ from paper_harness.domain.historical import (
     SearchCandidate,
     SearchCandidateDiscovery,
     SearchSession,
+    SearchSessionStatus,
 )
 from paper_harness.domain.knowledge import (
     GRAPH_CONFIDENCE_MEANING,
@@ -69,6 +75,8 @@ from paper_harness.domain.models import (
     PaperVersion,
     PipelineExecution,
     RunItem,
+    RunOperation,
+    RunStatus,
 )
 from paper_harness.domain.reports import (
     Report,
@@ -346,6 +354,8 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
         if detail is None:
             return RelatedWorkResponse(
                 paper_id=paper_id,
+                related_work_status="RELATED_WORK_UNAVAILABLE",
+                related_work_reason="NO_RELATED_WORK_RESULT",
                 session=None,
                 actions=[],
                 items=[],
@@ -900,6 +910,14 @@ def _run_response(
         pipeline_completed_at=None if execution is None else execution.completed_at,
         pipeline_error_code=None if execution is None else execution.error_code,
         pipeline_error_detail=None if execution is None else execution.error_detail,
+        publication_outcome=(
+            None
+            if run.operation is not RunOperation.PRODUCT_PUBLICATION
+            or run.status not in (RunStatus.COMPLETE, RunStatus.PARTIAL)
+            else "NO_UPDATE"
+            if run.selected_count == 0
+            else "UPDATE"
+        ),
         status=run.status,
         started_at=run.started_at,
         completed_at=run.completed_at,
@@ -917,7 +935,20 @@ def _run_response(
     )
 
 
-def _item_response(item: RunItem, *, canonical_arxiv_id: str, paper_title: str) -> RunItemResponse:
+def _item_response(
+    item: RunItem,
+    *,
+    canonical_arxiv_id: str,
+    paper_title: str,
+    paper_abstract: str | None = None,
+    source_url: str | None = None,
+    analysis_status: AnalysisAvailabilityStatus | None = None,
+    related_work_status: RelatedWorkAvailabilityStatus | None = None,
+    related_work_reason: str | None = None,
+    comparison_status: ComparisonAvailabilityStatus | None = None,
+    comparison_reason: str | None = None,
+    trend_status: TrendAvailabilityStatus | None = None,
+) -> RunItemResponse:
     return RunItemResponse(
         id=item.id,
         run_id=item.run_id,
@@ -925,6 +956,14 @@ def _item_response(item: RunItem, *, canonical_arxiv_id: str, paper_title: str) 
         paper_version_id=item.paper_version_id,
         canonical_arxiv_id=canonical_arxiv_id,
         paper_title=paper_title,
+        paper_abstract=paper_abstract,
+        source_url=source_url,
+        analysis_status=analysis_status,
+        related_work_status=related_work_status,
+        related_work_reason=related_work_reason,
+        comparison_status=comparison_status,
+        comparison_reason=comparison_reason,
+        trend_status=trend_status,
         stage=item.stage,
         status=item.status,
         failed_stage=item.failed_stage,
@@ -949,6 +988,8 @@ def _run_detail_response(
                 item.item,
                 canonical_arxiv_id=item.canonical_arxiv_id,
                 paper_title=item.paper_title,
+                paper_abstract=item.paper_abstract,
+                source_url=item.source_url,
             )
             for item in detail.items
         ],
@@ -967,6 +1008,14 @@ def _product_run_response(
                 item.item,
                 canonical_arxiv_id=item.canonical_arxiv_id,
                 paper_title=item.paper_title,
+                paper_abstract=item.paper_abstract,
+                source_url=item.source_url,
+                analysis_status=item.analysis_status,
+                related_work_status=item.related_work_status,
+                related_work_reason=item.related_work_reason,
+                comparison_status=item.comparison_status,
+                comparison_reason=item.comparison_reason,
+                trend_status=item.trend_status,
             )
             for item in detail.items
         ],
@@ -1333,8 +1382,16 @@ def _comparison_response(detail: ComparisonDetail) -> ComparisonResponse:
 
 
 def _related_work_response(paper_id: UUID, detail: RelatedWorkDetail) -> RelatedWorkResponse:
+    comparisons_by_id = {item.comparison.id: item.comparison for item in detail.comparisons}
+    related_work_available = detail.session.status is SearchSessionStatus.COMPLETE
     return RelatedWorkResponse(
         paper_id=paper_id,
+        related_work_status=("AVAILABLE" if related_work_available else "RELATED_WORK_UNAVAILABLE"),
+        related_work_reason=(
+            None
+            if related_work_available
+            else detail.session.error_code or "RELATED_WORK_UNAVAILABLE"
+        ),
         session=_search_session_response(detail.session),
         actions=[_search_action_response(item) for item in detail.actions],
         items=[
@@ -1344,6 +1401,22 @@ def _related_work_response(paper_id: UUID, detail: RelatedWorkDetail) -> Related
                 discoveries=[_discovery_response(value) for value in item.discoveries],
                 relations=[_relation_response(value) for value in item.relations],
                 comparison_id=item.comparison_id,
+                comparison_status=(
+                    "COMPARISON_UNAVAILABLE"
+                    if item.comparison_id is None
+                    else "LIMITED_COMPARABILITY"
+                    if comparisons_by_id[item.comparison_id].comparability_status
+                    is not ComparabilityStatus.DIRECTLY_COMPARABLE
+                    else "AVAILABLE"
+                ),
+                comparison_reason=(
+                    "NO_COMPATIBLE_HISTORICAL_ANALYSIS"
+                    if item.comparison_id is None
+                    else comparisons_by_id[item.comparison_id].comparability_reason
+                    if comparisons_by_id[item.comparison_id].comparability_status
+                    is not ComparabilityStatus.DIRECTLY_COMPARABLE
+                    else None
+                ),
             )
             for item in detail.items
         ],
@@ -1629,6 +1702,13 @@ def _report_response(
         topic_id=report.topic_id,
         logical_date=report.logical_date,
         status=report.status,
+        publication_outcome=(
+            None
+            if report.report_type is not ReportType.DAILY
+            else "NO_UPDATE"
+            if report.counts.selected == 0
+            else "UPDATE"
+        ),
         title=report.title,
         summary=report.summary,
         source=report.source,

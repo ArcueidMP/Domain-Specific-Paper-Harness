@@ -90,6 +90,10 @@ class RelatedWorkInputError(RuntimeError):
     retryable = False
 
 
+class RelatedWorkAnalysisIdentityMissingError(RelatedWorkInputError):
+    error_code = "ANALYSIS_IDENTITY_MISSING"
+
+
 class _OverallSearchTimeout(RuntimeError):
     error_code = "RELATED_WORK_OVERALL_TIMEOUT"
     retryable = True
@@ -179,9 +183,14 @@ class RelatedWorkSearch:
         analysis_detail = self._repository.get_paper_analysis(
             source_paper_id,
             paper_version_id=source_paper_version_id,
+            analysis_id=source_analysis_id,
             analysis_scope=source_analysis_scope,
         )
         if analysis_detail is None:
+            if source_analysis_id is not None:
+                raise RelatedWorkAnalysisIdentityMissingError(
+                    "related-work search could not load the selected source analysis identity"
+                )
             raise RelatedWorkInputError(
                 "related-work search requires a persisted source-paper analysis"
             )
@@ -190,7 +199,7 @@ class RelatedWorkSearch:
             or analysis_detail.analysis.paper_version_id != source_paper_version_id
             or analysis_detail.analysis.analysis_scope is not source_analysis_scope
         ):
-            raise RelatedWorkInputError(
+            raise RelatedWorkAnalysisIdentityMissingError(
                 "related-work source analysis does not match the requested exact provenance"
             )
         source_version_id = analysis_detail.analysis.paper_version_id

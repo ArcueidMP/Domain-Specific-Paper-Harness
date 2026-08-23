@@ -270,11 +270,16 @@ scripts/run-production-daily.ps1 -ProjectId $Project -Region $Region `
 For BCI or World Models, replace `-JobName` with the corresponding exact name
 shown above. A successful revision becomes the public result for that
 topic/date; prior revisions remain available for audit.
+The reprocess baseline is the widest terminal revision for that same topic and
+date, so retrying failed analyses does not replace a full report with only the
+previously failed remainder.
 
 Verify all of the following from database and API reads:
 
 - one terminal Daily pipeline execution exists;
-- at least one selected paper completed every required stage;
+- every selected paper with usable source metadata appears in the Daily report;
+- source-analysis failures are marked `ANALYSIS_UNAVAILABLE` and optional
+  enrichment gaps use their explicit neutral availability states;
 - the report state matches item outcomes;
 - report, graph, trend, and lineage records exist where the corpus supports
   them;
@@ -283,10 +288,12 @@ Verify all of the following from database and API reads:
 - the private Web/API returns the same persisted result; and
 - logs contain no secrets, paper text, full prompts, or full model responses.
 
-If the result is `PARTIAL`, confirm the report honestly lists each failed item.
-An item-level failure does not block Scheduler after publication succeeds and
-global dependencies are healthy. If no selected paper completes, the run must
-remain `FAILED`.
+If the result is `PARTIAL`, confirm the report honestly lists each core
+metadata/analysis failure and still includes its usable metadata card. Optional
+enrichment failures do not block Scheduler or change a publication to
+`PARTIAL`. If no relevant paper exists, confirm `COMPLETE / NO_UPDATE` for the
+current logical date. `FAILED` is reserved for the documented system-level
+fatal boundaries or an atomic publication transaction failure.
 
 ## Scheduler
 

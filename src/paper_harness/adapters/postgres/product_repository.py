@@ -21,6 +21,7 @@ from paper_harness.application.product_models import (
     ProductFailureInput,
     ProductPaperInput,
     ProductPublicationInput,
+    PublicationPaperCardInput,
 )
 from paper_harness.application.read_models import (
     GraphEdgeDetail,
@@ -35,6 +36,7 @@ from paper_harness.application.read_models import (
     ReportDetail,
     RunDetail,
     RunItemDetail,
+    TrendAvailabilityStatus,
     TrendDetail,
 )
 from paper_harness.domain.analysis import (
@@ -50,7 +52,11 @@ from paper_harness.domain.analysis import (
     VerificationStatus,
 )
 from paper_harness.domain.errors import DomainInvariantError
-from paper_harness.domain.historical import RelationProvenance
+from paper_harness.domain.historical import (
+    ComparabilityStatus,
+    RelationProvenance,
+    SearchSessionStatus,
+)
 from paper_harness.domain.identity import stable_lineage_snapshot_id
 from paper_harness.domain.knowledge import (
     GraphEdge,
@@ -124,6 +130,8 @@ from .models import (
     PaperRelationRow,
     PaperRow,
     PaperVersionRow,
+    ParsedPaperRow,
+    PipelineExecutionRow,
     ProductRunComparisonInputRow,
     ProductRunPaperInputRow,
     RelationEvidenceLinkRow,
@@ -138,6 +146,7 @@ from .models import (
     ReportTrendLinkRow,
     RunItemRow,
     SearchCandidateRow,
+    SearchSessionRow,
     TopicRow,
     TrendMetricRow,
     TrendRepresentativePaperRow,
@@ -901,6 +910,45 @@ class ProductRepositoryMixin:
                 if run_row is None:
                     return None
                 source_run = _run_detail_from_session(session, run_row)
+                source_version_ids = {item.item.paper_version_id for item in source_run.items}
+                source_versions = {
+                    row.id: row
+                    for row in session.scalars(
+                        select(PaperVersionRow).where(PaperVersionRow.id.in_(source_version_ids))
+                    )
+                }
+                if set(source_versions) != source_version_ids:
+                    raise RepositoryIntegrityError(
+                        "product publication source references missing paper metadata"
+                    )
+                cards = tuple(
+                    PublicationPaperCardInput(
+                        paper_id=item.item.paper_id,
+                        paper_version_id=item.item.paper_version_id,
+                        canonical_arxiv_id=item.canonical_arxiv_id,
+                        title=item.paper_title,
+                        abstract=source_versions[item.item.paper_version_id].abstract or None,
+                        source_url=source_versions[item.item.paper_version_id].source_url,
+                    )
+                    for item in source_run.items
+                )
+                search_sessions_by_version: dict[UUID, SearchSessionRow] = {}
+                for search_row in session.scalars(
+                    select(SearchSessionRow)
+                    .where(
+                        SearchSessionRow.topic_id == topic_id,
+                        SearchSessionRow.source_paper_version_id.in_(source_version_ids),
+                        SearchSessionRow.pipeline_execution_id == pipeline_execution_id,
+                    )
+                    .order_by(
+                        SearchSessionRow.started_at.desc(),
+                        SearchSessionRow.id.desc(),
+                    )
+                ):
+                    search_sessions_by_version.setdefault(
+                        search_row.source_paper_version_id,
+                        search_row,
+                    )
                 completed_version_ids = {
                     item.item.paper_version_id
                     for item in source_run.items
@@ -916,6 +964,7 @@ class ProductRepositoryMixin:
                 ).one_or_none()
                 snapshot_by_version: dict[UUID, ProductRunPaperInputRow] | None = None
                 snapshot_comparison_ids: dict[UUID, set[UUID]] = {}
+                input_failures_by_version: dict[UUID, ProductFailureInput] = {}
                 if product_run_row is not None and product_run_row.status in (
                     RunStatus.COMPLETE.value,
                     RunStatus.PARTIAL.value,
@@ -928,7 +977,19 @@ class ProductRepositoryMixin:
                             )
                         )
                     }
-                    if set(snapshot_by_version) != completed_version_ids:
+                    for row in session.scalars(
+                        select(RunItemRow).where(RunItemRow.run_id == product_run_row.id)
+                    ):
+                        if (
+                            row.error_code == "ANALYSIS_IDENTITY_MISSING"
+                            and row.failed_stage == PaperStage.ANALYZED.value
+                        ):
+                            input_failures_by_version[row.paper_version_id] = (
+                                _product_failure_from_item_row(row)
+                            )
+                    if set(snapshot_by_version) != completed_version_ids - set(
+                        input_failures_by_version
+                    ):
                         raise RepositoryIntegrityError(
                             "product run input snapshot does not match its source items"
                         )
@@ -945,27 +1006,23 @@ class ProductRepositoryMixin:
                     item = item_detail.item
                     if item.status is not RunItemStatus.COMPLETED:
                         continue
+                    if item.paper_version_id in input_failures_by_version:
+                        continue
                     snapshot = (
                         None
                         if snapshot_by_version is None
-                        else snapshot_by_version[item.paper_version_id]
+                        else snapshot_by_version.get(item.paper_version_id)
                     )
-                    if snapshot is None:
-                        if run_row.completed_at is None:
-                            raise RepositoryIntegrityError(
-                                "publishable source run has no completion boundary"
-                            )
-                        analysis_row = session.scalars(
-                            select(PaperAnalysisRow)
-                            .where(
-                                PaperAnalysisRow.paper_version_id == item.paper_version_id,
-                                PaperAnalysisRow.analysis_scope == run_row.analysis_scope,
-                                PaperAnalysisRow.generated_at <= run_row.completed_at,
-                                PaperAnalysisRow.created_at <= run_row.completed_at,
-                            )
-                            .order_by(PaperAnalysisRow.generated_at.desc(), PaperAnalysisRow.id)
-                            .limit(1)
-                        ).one_or_none()
+                    if snapshot_by_version is None:
+                        analysis_row = _select_publication_analysis(
+                            session,
+                            run_row=run_row,
+                            paper_version_id=item.paper_version_id,
+                        )
+                    elif snapshot is None:
+                        raise RepositoryIntegrityError(
+                            "product run analysis snapshot is missing a source item"
+                        )
                     else:
                         analysis_row = session.get(PaperAnalysisRow, snapshot.analysis_id)
                         if (
@@ -978,9 +1035,19 @@ class ProductRepositoryMixin:
                                 "product run analysis snapshot has invalid ownership"
                             )
                     if analysis_row is None:
-                        raise RepositoryIntegrityError(
-                            "completed source item has no persisted structured analysis"
+                        input_failures_by_version[item.paper_version_id] = ProductFailureInput(
+                            paper_id=item.paper_id,
+                            paper_version_id=item.paper_version_id,
+                            stage=PaperStage.EVIDENCE_EXTRACTED,
+                            failed_stage=PaperStage.ANALYZED,
+                            error_code="ANALYSIS_IDENTITY_MISSING",
+                            retryable=False,
+                            error_detail=(
+                                "The completed analysis item has no compatible persisted analysis "
+                                "identity for product publication."
+                            ),
                         )
+                        continue
                     analysis = _analysis_bundle_from_session(session, analysis_row)
                     comparison_statement = select(ComparisonRow).where(
                         ComparisonRow.source_paper_version_id == item.paper_version_id,
@@ -1066,6 +1133,11 @@ class ProductRepositoryMixin:
                             or 0
                         )
                     )
+                    search_row = search_sessions_by_version.get(item.paper_version_id)
+                    related_work_available = (
+                        search_row is not None
+                        and search_row.status == SearchSessionStatus.COMPLETE.value
+                    )
                     papers.append(
                         ProductPaperInput(
                             paper_id=item.paper_id,
@@ -1075,9 +1147,28 @@ class ProductRepositoryMixin:
                             comparisons=comparisons,
                             evidence=tuple(_report_evidence_from_row(row) for row in evidence_rows),
                             retrieved_candidate_count=max(retrieved_count, len(comparisons)),
+                            related_work_available=related_work_available,
+                            related_work_reason=(
+                                None
+                                if related_work_available
+                                else (
+                                    "NO_RELATED_WORK_SESSION"
+                                    if search_row is None
+                                    else search_row.error_code or "RELATED_WORK_UNAVAILABLE"
+                                )
+                            ),
                         )
                     )
-                return ProductPublicationInput(source_run=source_run, papers=tuple(papers))
+                return ProductPublicationInput(
+                    source_run=source_run,
+                    papers=tuple(papers),
+                    cards=cards,
+                    input_failures=tuple(
+                        input_failures_by_version[item.item.paper_version_id]
+                        for item in source_run.items
+                        if item.item.paper_version_id in input_failures_by_version
+                    ),
+                )
         except OperationalError as error:
             raise RepositoryUnavailableError(
                 "PostgreSQL product publication input query is unavailable"
@@ -1098,7 +1189,9 @@ class ProductRepositoryMixin:
         pipeline_execution_id: UUID | None = None,
     ) -> DailyRun:
         run_id = uuid4()
-        failures_by_version = _product_failures_by_version(upstream_failures)
+        failures_by_version = _product_failures_by_version(
+            (*source.input_failures, *upstream_failures)
+        )
         try:
             with self._sessions.begin() as session:
                 source_row = session.scalars(
@@ -1241,7 +1334,9 @@ class ProductRepositoryMixin:
                     for row in source_item_rows
                     if row.status == RunItemStatus.COMPLETED.value
                 }
-                if set(source_papers) != completed_source_versions:
+                if set(source_papers) != completed_source_versions - {
+                    failure.paper_version_id for failure in source.input_failures
+                }:
                     raise RepositoryError(
                         "product publication payload changed before input snapshot"
                     )
@@ -1310,7 +1405,9 @@ class ProductRepositoryMixin:
         upstream_failures: tuple[ProductFailureInput, ...] = (),
         started_at: datetime,
     ) -> DailyRun:
-        failures_by_version = _product_failures_by_version(upstream_failures)
+        failures_by_version = _product_failures_by_version(
+            (*source.input_failures, *upstream_failures)
+        )
         try:
             with self._sessions.begin() as session:
                 run_row = session.scalars(
@@ -1377,11 +1474,14 @@ class ProductRepositoryMixin:
                     for version_id, item in source_items.items()
                     if item.status == RunItemStatus.COMPLETED.value
                 }
-                if set(source_papers) != completed_source_versions:
+                projected_source_versions = completed_source_versions - {
+                    failure.paper_version_id for failure in source.input_failures
+                }
+                if set(source_papers) != projected_source_versions:
                     raise RepositoryError(
                         "product input papers do not match completed analysis items"
                     )
-                if set(paper_inputs) != completed_source_versions:
+                if set(paper_inputs) != projected_source_versions:
                     raise RepositoryError(
                         "product paper input snapshot does not match completed analysis items"
                     )
@@ -1537,9 +1637,9 @@ class ProductRepositoryMixin:
         next_stage: PaperStage,
         updated_at: datetime,
     ) -> None:
-        if (expected_stage, next_stage) != (
-            PaperStage.EVIDENCE_EXTRACTED,
-            PaperStage.COMPARED,
+        if (expected_stage, next_stage) not in (
+            (PaperStage.EVIDENCE_EXTRACTED, PaperStage.COMPARED),
+            (PaperStage.COMPARED, PaperStage.GRAPH_UPDATED),
         ):
             raise RepositoryIntegrityError("unsupported product item transition")
         try:
@@ -1950,9 +2050,13 @@ class ProductRepositoryMixin:
                     if row.status == RunItemStatus.IN_PROGRESS.value
                     and row.stage == PaperStage.TREND_SNAPSHOTS_GENERATED.value
                 )
-                if not graph_items and not already_advanced:
+                no_update = not item_rows and run_row.selected_count == 0
+                metadata_only = bool(item_rows) and all(
+                    row.status == RunItemStatus.FAILED.value for row in item_rows
+                )
+                if not graph_items and not already_advanced and not no_update and not metadata_only:
                     raise RepositoryError("product run has no graph-complete items")
-                if (
+                if trends and (
                     len(trends) != 3
                     or {item.window for item in trends} != set(TrendWindow)
                     or any(
@@ -2057,7 +2161,15 @@ class ProductRepositoryMixin:
                     and row.stage == PaperStage.TREND_SNAPSHOTS_GENERATED.value
                 )
                 failed = tuple(row for row in item_rows if row.status == RunItemStatus.FAILED.value)
-                if not ready or len(ready) + len(failed) != len(item_rows):
+                no_update = (
+                    not item_rows
+                    and run_row.selected_count == 0
+                    and report.counts == ReportCounts(0, 0, 0, 0, 0)
+                )
+                metadata_only = not ready and bool(failed) and len(failed) == len(item_rows)
+                if (not ready and not no_update and not metadata_only) or len(ready) + len(
+                    failed
+                ) != len(item_rows):
                     raise RepositoryError("product items are not ready for atomic publication")
                 expected_status = RunStatus.PARTIAL if failed else RunStatus.COMPLETE
                 if report.status is not expected_status:
@@ -2066,6 +2178,10 @@ class ProductRepositoryMixin:
                     item.paper_version_id for item in failed
                 }:
                     raise RepositoryError("daily report failures do not match failed product items")
+                if {item.paper_version_id for item in report.highlighted_papers} != {
+                    item.paper_version_id for item in item_rows
+                }:
+                    raise RepositoryError("daily report cards do not match selected product items")
                 for item in ready:
                     item.stage = PaperStage.REPORT_GENERATED.value
                     item.updated_at = completed_at
@@ -2372,15 +2488,141 @@ def _run_detail_from_session(session: Session, row: DailyRunRow) -> RunDetail:
             .order_by(RunItemRow.created_at, RunItemRow.id)
         )
     )
+    analysis_versions: set[UUID] = set()
+    search_sessions_by_version: dict[UUID, SearchSessionRow] = {}
+    comparisons_by_version: dict[UUID, list[ComparisonRow]] = {}
+    trend_status: TrendAvailabilityStatus | None = None
+    if row.operation == RunOperation.PRODUCT_PUBLICATION.value:
+        analysis_versions = set(
+            session.scalars(
+                select(ProductRunPaperInputRow.paper_version_id).where(
+                    ProductRunPaperInputRow.run_id == row.id
+                )
+            )
+        )
+        item_version_ids = {item_row.paper_version_id for item_row, _paper, _version in item_rows}
+        for search_row in session.scalars(
+            select(SearchSessionRow)
+            .where(
+                SearchSessionRow.topic_id == row.topic_id,
+                SearchSessionRow.source_paper_version_id.in_(item_version_ids),
+                SearchSessionRow.pipeline_execution_id == row.pipeline_execution_id,
+            )
+            .order_by(SearchSessionRow.started_at.desc(), SearchSessionRow.id.desc())
+        ):
+            search_sessions_by_version.setdefault(search_row.source_paper_version_id, search_row)
+        comparison_input_rows = tuple(
+            session.scalars(
+                select(ProductRunComparisonInputRow).where(
+                    ProductRunComparisonInputRow.run_id == row.id
+                )
+            )
+        )
+        comparison_rows = {
+            comparison.id: comparison
+            for comparison in session.scalars(
+                select(ComparisonRow).where(
+                    ComparisonRow.id.in_(
+                        tuple(item.comparison_id for item in comparison_input_rows)
+                    )
+                )
+            )
+        }
+        for item in comparison_input_rows:
+            comparison = comparison_rows.get(item.comparison_id)
+            if comparison is None:
+                raise RepositoryError("product comparison availability references missing data")
+            comparisons_by_version.setdefault(item.paper_version_id, []).append(comparison)
+        trend_rows = tuple(
+            session.scalars(
+                select(TrendSnapshotRow).where(TrendSnapshotRow.publication_run_id == row.id)
+            )
+        )
+        trend_status = (
+            "AVAILABLE"
+            if len(trend_rows) == len(TrendWindow)
+            and all(
+                item.data_sufficiency == TrendDataSufficiency.SUFFICIENT.value
+                for item in trend_rows
+            )
+            else "INSUFFICIENT_DATA"
+        )
     report_detail = _report_detail_for_run(session, row.id)
-    return RunDetail(
-        run=_run_from_row(row),
-        items=tuple(
-            RunItemDetail(
+
+    def item_detail(
+        item_row: RunItemRow,
+        paper_row: PaperRow,
+        version_row: PaperVersionRow,
+    ) -> RunItemDetail:
+        if row.operation != RunOperation.PRODUCT_PUBLICATION.value:
+            return RunItemDetail(
                 item=_item_from_row(item_row),
                 canonical_arxiv_id=paper_row.canonical_arxiv_id,
                 paper_title=version_row.title,
+                paper_abstract=version_row.abstract or None,
+                source_url=version_row.source_url,
             )
+        analysis_available = item_row.paper_version_id in analysis_versions
+        search_row = search_sessions_by_version.get(item_row.paper_version_id)
+        related_work_available = (
+            analysis_available
+            and search_row is not None
+            and search_row.status == SearchSessionStatus.COMPLETE.value
+        )
+        comparisons = comparisons_by_version.get(item_row.paper_version_id, [])
+        limited_comparison = any(
+            item.comparability_status != ComparabilityStatus.DIRECTLY_COMPARABLE.value
+            for item in comparisons
+        )
+        comparison_status = (
+            "COMPARISON_UNAVAILABLE"
+            if not comparisons
+            else "LIMITED_COMPARABILITY"
+            if limited_comparison
+            else "AVAILABLE"
+        )
+        comparison_reason = (
+            "NO_COMPATIBLE_HISTORICAL_ANALYSIS"
+            if not comparisons
+            else next(
+                (
+                    item.comparability_reason
+                    for item in comparisons
+                    if item.comparability_status != ComparabilityStatus.DIRECTLY_COMPARABLE.value
+                ),
+                None,
+            )
+        )
+        return RunItemDetail(
+            item=_item_from_row(item_row),
+            canonical_arxiv_id=paper_row.canonical_arxiv_id,
+            paper_title=version_row.title,
+            paper_abstract=version_row.abstract or None,
+            source_url=version_row.source_url,
+            analysis_status=("AVAILABLE" if analysis_available else "ANALYSIS_UNAVAILABLE"),
+            related_work_status=(
+                "AVAILABLE" if related_work_available else "RELATED_WORK_UNAVAILABLE"
+            ),
+            related_work_reason=(
+                None
+                if related_work_available
+                else "ANALYSIS_UNAVAILABLE"
+                if not analysis_available
+                else (
+                    "NO_RELATED_WORK_RESULT"
+                    if search_row is None
+                    else search_row.error_code or "RELATED_WORK_UNAVAILABLE"
+                )
+            ),
+            comparison_status=comparison_status,
+            comparison_reason=comparison_reason,
+            trend_status=trend_status,
+        )
+
+    return RunDetail(
+        run=_run_from_row(row),
+        items=tuple(
+            item_detail(item_row, paper_row, version_row)
             for item_row, paper_row, version_row in item_rows
         ),
         report=None if report_detail is None else report_detail.report,
@@ -4304,6 +4546,79 @@ def _upsert_lineage_snapshot(
                 created_at=snapshot.generated_at,
             )
         )
+
+
+def _select_publication_analysis(
+    session: Session,
+    *,
+    run_row: DailyRunRow,
+    paper_version_id: UUID,
+) -> PaperAnalysisRow | None:
+    if run_row.completed_at is None:
+        raise RepositoryIntegrityError("publishable source run has no completion boundary")
+    statement = select(PaperAnalysisRow).where(
+        PaperAnalysisRow.paper_version_id == paper_version_id,
+        PaperAnalysisRow.analysis_scope == run_row.analysis_scope,
+        PaperAnalysisRow.generated_at <= run_row.completed_at,
+        PaperAnalysisRow.created_at <= run_row.completed_at,
+    )
+    if run_row.pipeline_execution_id is not None:
+        execution = session.get(PipelineExecutionRow, run_row.pipeline_execution_id)
+        if execution is None:
+            raise RepositoryIntegrityError("analysis run has no owning pipeline execution")
+        contract = execution.execution_contract
+        try:
+            provider = contract["llm_provider"]
+            configured_model = contract["llm_configured_model"]
+            prompt_version = contract["analysis_prompt_version"]
+            parser_name = contract["parser_name"]
+            parser_version = contract["parser_version"]
+        except KeyError as error:
+            raise RepositoryIntegrityError(
+                "pipeline execution is missing its analysis selection contract"
+            ) from error
+        statement = statement.where(
+            PaperAnalysisRow.provider == provider,
+            PaperAnalysisRow.configured_model == configured_model,
+            PaperAnalysisRow.prompt_version == prompt_version,
+            (
+                PaperAnalysisRow.revision_id == run_row.pipeline_execution_id
+                if run_row.pipeline_execution_mode == PipelineExecutionMode.REPROCESS.value
+                else PaperAnalysisRow.revision_id.is_(None)
+            ),
+        )
+        if run_row.analysis_scope == AnalysisScope.FULL_TEXT.value:
+            statement = statement.join(
+                ParsedPaperRow,
+                ParsedPaperRow.id == PaperAnalysisRow.parsed_paper_id,
+            ).where(
+                ParsedPaperRow.parser_name == parser_name,
+                ParsedPaperRow.parser_version == parser_version,
+            )
+    return session.scalars(
+        statement.order_by(PaperAnalysisRow.generated_at.desc(), PaperAnalysisRow.id.desc()).limit(
+            1
+        )
+    ).one_or_none()
+
+
+def _product_failure_from_item_row(row: RunItemRow) -> ProductFailureInput:
+    if (
+        row.failed_stage is None
+        or row.error_code is None
+        or row.retryable is None
+        or row.error_detail is None
+    ):
+        raise RepositoryIntegrityError("failed product item lacks failure metadata")
+    return ProductFailureInput(
+        paper_id=row.paper_id,
+        paper_version_id=row.paper_version_id,
+        stage=PaperStage(row.stage),
+        failed_stage=PaperStage(row.failed_stage),
+        error_code=row.error_code,
+        retryable=row.retryable,
+        error_detail=row.error_detail,
+    )
 
 
 def _product_failures_by_version(

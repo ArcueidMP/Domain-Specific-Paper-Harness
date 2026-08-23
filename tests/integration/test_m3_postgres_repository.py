@@ -538,6 +538,102 @@ def test_backfill_page_atomically_persists_identity_embedding_and_cursor(
     )
 
 
+def test_historical_version_reuse_is_visible_only_to_owning_topics(
+    postgres_repository: PostgresRepository,
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    world_topic = replace(
+        topic_config,
+        id=UUID("8ca3f011-3871-47ff-8e5c-bc6807ac8497"),
+        slug="world-models",
+        name="World Models",
+    )
+    unrelated_topic = replace(
+        topic_config,
+        id=UUID("230624df-acde-47ef-9ce1-55d5cd087f2c"),
+        slug="brain-computer-interfaces",
+        name="Brain-Computer Interfaces",
+    )
+    IngestArxiv(
+        arxiv=FakeArxiv((arxiv_record_v1,)),
+        repository=postgres_repository,
+        clock=lambda: NOW,
+    ).execute(world_topic, logical_date=NOW.date())
+    postgres_repository.upsert_topic(topic_config)
+    postgres_repository.upsert_topic(unrelated_topic)
+
+    external = _external_stub(arxiv_record_v1, semantic_scholar_id="9" * 40)
+    entry = HistoricalCorpusEntry(
+        id=stable_historical_corpus_entry_id(topic_config.id, external.id),
+        topic_id=topic_config.id,
+        external_paper_id=external.id,
+        local_paper_id=None,
+        local_paper_version_id=None,
+        representative_rank=None,
+        first_seen_at=NOW,
+        last_seen_at=NOW,
+        schema_version=1,
+    )
+    backfill = HistoricalBackfillRun(
+        id=UUID("73e166c2-a7c4-4ea8-befa-5dcb556ee41c"),
+        topic_id=topic_config.id,
+        window_from=date(2025, 7, 10),
+        window_to=date(2026, 1, 10),
+        query_plan=("LLM agent",),
+        max_results_per_query=100,
+        overall_timeout_seconds=300.0,
+        embedding_model_identifier=SPECTER2_MODEL_IDENTIFIER,
+        embedding_model_revision=SPECTER2_MODEL_REVISION,
+        embedding_tokenizer_identifier=SPECTER2_TOKENIZER_IDENTIFIER,
+        embedding_tokenizer_revision=SPECTER2_TOKENIZER_REVISION,
+        embedding_dimension=SPECTER2_DIMENSION,
+        embedding_preprocessing_contract=SPECTER2_PREPROCESSING_CONTRACT,
+        embedding_model_provenance=SPECTER2_MODEL_PROVENANCE,
+        embedding_source=SPECTER2_EMBEDDING_SOURCE,
+        status=BackfillStatus.RUNNING,
+        next_query_index=0,
+        discovered_count=0,
+        persisted_count=0,
+        representative_count=0,
+        started_at=NOW,
+        completed_at=None,
+        error_code=None,
+        error_detail=None,
+        schema_version=1,
+        created_at=NOW,
+    )
+    postgres_repository.start_historical_backfill(backfill)
+    postgres_repository.persist_historical_backfill_page(
+        backfill.id,
+        expected_query_index=0,
+        next_query_index=1,
+        papers=(external,),
+        entries=(entry,),
+        embeddings=(),
+        discovered_count=1,
+        persisted_count=1,
+        persisted_at=NOW + timedelta(seconds=1),
+    )
+
+    version_id = stable_paper_version_id(
+        arxiv_record_v1.canonical_arxiv_id,
+        arxiv_record_v1.version,
+    )
+    broad_targets = postgres_repository.get_analysis_targets_by_version_ids(
+        topic_config.id,
+        (version_id,),
+    )
+    assert tuple(item.version.id for item in broad_targets) == (version_id,)
+    assert (
+        postgres_repository.get_analysis_targets_by_version_ids(
+            unrelated_topic.id,
+            (version_id,),
+        )
+        == ()
+    )
+
+
 def test_ranked_historical_arxiv_materialization_preserves_exact_versions(
     postgres_repository: PostgresRepository,
     postgres_engine: Engine,

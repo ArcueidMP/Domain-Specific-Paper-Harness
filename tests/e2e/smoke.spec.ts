@@ -163,6 +163,8 @@ const evidence = {
 
 const relatedWork = {
   paper_id: paper.id,
+  related_work_status: "AVAILABLE",
+  related_work_reason: null,
   session: {
     id: "741e66ad-c55f-4b15-a847-0fd81e13a87a",
     topic_id: "cc6caeba-3832-42c4-8fbf-607a183490f8",
@@ -321,6 +323,8 @@ const relatedWork = {
         },
       ],
       comparison_id: comparisonId,
+      comparison_status: "LIMITED_COMPARABILITY",
+      comparison_reason: "The papers share a task but report different benchmark subsets.",
     },
   ],
   comparisons: [],

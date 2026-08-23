@@ -43,7 +43,7 @@ from paper_harness.domain.reports import (
     aggregate_report_eligible,
 )
 
-MAX_REPORT_HIGHLIGHTED_PAPERS = 10
+MAX_REPORT_HIGHLIGHTED_PAPERS = 200
 MAX_REPORT_COMPARISONS = 10
 MAX_REPORT_ENTITY_HIGHLIGHTS = 12
 MAX_REPORT_EVIDENCE = 100
@@ -87,9 +87,17 @@ def build_daily_report_plan(
     failed_items = tuple(
         item for item in run_detail.items if item.item.status is RunItemStatus.FAILED
     )
+    no_update = (
+        not run_detail.items
+        and run.selected_count == 0
+        and not publication_input.papers
+        and not publication_input.cards
+        and not publication_input.input_failures
+    )
     if len(ready_items) + len(failed_items) != len(run_detail.items):
         raise DomainInvariantError("daily report input contains nonterminal product stages")
-    if not ready_items:
+    metadata_only = bool(failed_items) and len(failed_items) == len(run_detail.items)
+    if not ready_items and not no_update and not metadata_only:
         raise DomainInvariantError("failed product run cannot assemble a report")
     status = RunStatus.PARTIAL if failed_items else RunStatus.COMPLETE
     failures = tuple(
@@ -106,20 +114,31 @@ def build_daily_report_plan(
     }
     highlighted_papers = tuple(
         ReportPaperHighlight(
-            paper_id=item.paper_id,
-            paper_version_id=item.paper_version_id,
-            title=item.paper_title,
-            reason=_concise(item.analysis.analysis.summary, 2000),
-            evidence_ids=tuple(
-                evidence.id
-                for evidence in item.analysis.evidence
-                if evidence.verification_status is not VerificationStatus.REJECTED
-                and evidence.id in usable_evidence_ids
-            )[:3],
+            paper_id=card.paper_id,
+            paper_version_id=card.paper_version_id,
+            title=card.title,
+            reason=(
+                _concise(analysis.analysis.analysis.summary, 2000)
+                if (analysis := inputs_by_version.get(card.paper_version_id)) is not None
+                else (
+                    "Structured analysis is unavailable; source metadata remains published. "
+                    "The author abstract is shown only on the metadata card and is not used as "
+                    "grounded report narrative."
+                )
+            ),
+            evidence_ids=(
+                ()
+                if analysis is None
+                else tuple(
+                    evidence.id
+                    for evidence in analysis.analysis.evidence
+                    if evidence.verification_status is not VerificationStatus.REJECTED
+                    and evidence.id in usable_evidence_ids
+                )[:3]
+            ),
         )
-        for item in ready_inputs[:MAX_REPORT_HIGHLIGHTED_PAPERS]
+        for card in publication_input.cards[:MAX_REPORT_HIGHLIGHTED_PAPERS]
     )
-    highlighted_papers = tuple(item for item in highlighted_papers if item.evidence_ids)
     comparison_values = tuple(
         comparison for item in ready_inputs for comparison in item.comparisons
     )
@@ -176,19 +195,29 @@ def build_daily_report_plan(
         for item in ready_inputs
         if (lineage := lineages_by_root.get(item.paper_id)) is not None
     )
-    missing_sections = _missing_sections(
-        ready_inputs=ready_inputs,
-        failed_count=len(failed_items),
-        lineages_by_root=lineages_by_root,
-        omitted_entity_types=omitted_entity_types,
+    missing_sections = (
+        ()
+        if no_update
+        else _missing_sections(
+            ready_inputs=ready_inputs,
+            failed_count=len(failed_items),
+            lineages_by_root=lineages_by_root,
+            omitted_entity_types=omitted_entity_types,
+        )
     )
-    missing_trend_windows = tuple(
-        window for window in TrendWindow if window not in {item.window for item in ordered_trends}
+    missing_trend_windows = (
+        ()
+        if no_update
+        else tuple(
+            window
+            for window in TrendWindow
+            if window not in {item.window for item in ordered_trends}
+        )
     )
     if missing_trend_windows:
         missing_sections = (
             *missing_sections,
-            "Trend snapshots are unavailable for: "
+            "INSUFFICIENT_DATA: trend snapshots are unavailable for "
             + ", ".join(f"{window.days}-day" for window in missing_trend_windows)
             + ".",
         )
@@ -227,6 +256,11 @@ def build_daily_report_plan(
             "when publication first started; it is not a historical end-of-day reconstruction."
         ),
     ]
+    if no_update:
+        limitations.insert(
+            0,
+            "No relevant new arXiv paper was selected for this topic on this logical date.",
+        )
     if any(item.data_sufficiency is not TrendDataSufficiency.SUFFICIENT for item in ordered_trends):
         limitations.append(
             "At least one trend window has limited or insufficient data; its interpretation is "
@@ -496,13 +530,32 @@ def _missing_sections(
 ) -> tuple[str, ...]:
     values: list[str] = []
     if failed_count:
-        values.append("One or more selected papers are missing from product publication.")
+        values.append(
+            f"ANALYSIS_UNAVAILABLE: {failed_count} selected paper"
+            f"{'s' if failed_count != 1 else ''} published with metadata only."
+        )
+    related_work_unavailable = sum(item.related_work_available is False for item in ready_inputs)
+    if related_work_unavailable:
+        values.append(
+            f"RELATED_WORK_UNAVAILABLE: {related_work_unavailable} analyzed paper"
+            f"{'s' if related_work_unavailable != 1 else ''} have no usable related-work result."
+        )
+    comparison_unavailable = sum(not item.comparisons for item in ready_inputs)
+    if comparison_unavailable:
+        values.append(
+            f"COMPARISON_UNAVAILABLE: {comparison_unavailable} analyzed paper"
+            f"{'s' if comparison_unavailable != 1 else ''}; "
+            "reason NO_COMPATIBLE_HISTORICAL_ANALYSIS."
+        )
     missing_lineages = sum(item.paper_id not in lineages_by_root for item in ready_inputs)
     if missing_lineages:
-        values.append(f"Lineage snapshots are unavailable for {missing_lineages} completed papers.")
+        values.append(
+            f"INSUFFICIENT_DATA: lineage is unavailable for {missing_lineages} analyzed paper"
+            f"{'s' if missing_lineages != 1 else ''}."
+        )
     if omitted_entity_types:
         labels = ", ".join(item.value for item in sorted(set(omitted_entity_types)))
-        values.append(f"Evidence-supported graph entities were unavailable for: {labels}.")
+        values.append(f"INSUFFICIENT_DATA: graph entities are unavailable for {labels}.")
     return tuple(values)
 
 

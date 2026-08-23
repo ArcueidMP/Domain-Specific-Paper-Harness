@@ -115,7 +115,6 @@ from paper_harness.domain.reports import (
     ReportType,
 )
 from paper_harness.entrypoints.api import create_app
-from paper_harness.entrypoints.runtime import DailyPipelineSelectionError
 from paper_harness.ports.arxiv import ArxivPaperRecord
 from paper_harness.ports.repository import (
     MigrationIncompatibleError,
@@ -859,7 +858,7 @@ def test_m1_read_api_exposes_persisted_topics_papers_and_latest_run(
     assert client.get(f"/api/v1/runs/{run['id']}").json()["id"] == run["id"]
 
 
-def test_run_reads_expose_a_failed_parent_execution_after_empty_selection(
+def test_run_reads_expose_complete_parent_execution_after_empty_selection(
     topic_config: TopicConfig,
 ) -> None:
     now = datetime(2026, 1, 10, 5, tzinfo=UTC)
@@ -899,14 +898,10 @@ def test_run_reads_expose_a_failed_parent_execution_after_empty_selection(
         pipeline_selection_limit=1,
         pipeline_execution_id=execution_id,
     )
-    selection_error = DailyPipelineSelectionError(
-        "arXiv ingestion completed but no paper passed the deterministic relevance filter"
-    )
-    repository.fail_pipeline_execution(
+    repository.complete_pipeline_execution(
         execution_id,
+        status=RunStatus.COMPLETE,
         completed_at=now + timedelta(minutes=1),
-        error_code=selection_error.error_code,
-        error_detail=str(selection_error),
     )
 
     client = TestClient(create_app(repository))
@@ -916,9 +911,9 @@ def test_run_reads_expose_a_failed_parent_execution_after_empty_selection(
 
     for response in (listed, latest, detail):
         assert response["status"] == "COMPLETE"
-        assert response["pipeline_status"] == "FAILED"
-        assert response["pipeline_error_code"] == selection_error.error_code
-        assert response["pipeline_error_detail"] == str(selection_error)
+        assert response["pipeline_status"] == "COMPLETE"
+        assert response["pipeline_error_code"] is None
+        assert response["pipeline_error_detail"] is None
         assert response["pipeline_deadline_at"] is not None
 
 
@@ -1270,6 +1265,8 @@ def test_related_work_distinguishes_missing_paper_from_no_search_session(
     assert empty.status_code == 200
     assert empty.json() == {
         "paper_id": str(paper.id),
+        "related_work_status": "RELATED_WORK_UNAVAILABLE",
+        "related_work_reason": "NO_RELATED_WORK_RESULT",
         "session": None,
         "actions": [],
         "items": [],
@@ -1568,12 +1565,12 @@ def test_failed_product_publication_run_is_visible_without_a_report(
     _, _, _, product_run, _ = _m4_read_fixture(paper, version, analysis)
     failed_item = replace(
         product_run.items[0].item,
-        stage=PaperStage.COMPARED,
+        stage=PaperStage.REPORT_GENERATED,
         status=RunItemStatus.FAILED,
-        failed_stage=PaperStage.GRAPH_UPDATED,
-        error_code="GRAPH_REFERENCE_INVALID",
+        failed_stage=PaperStage.PUBLISHED,
+        error_code="REPOSITORY_UNAVAILABLE",
         retryable=False,
-        error_detail="Graph edge referenced an unavailable entity.",
+        error_detail="The publication transaction could not commit.",
     )
     repository.product_run = ProductRunDetail(
         run=replace(
@@ -1581,8 +1578,8 @@ def test_failed_product_publication_run_is_visible_without_a_report(
             status=RunStatus.FAILED,
             completed_count=0,
             failed_count=1,
-            error_code="NO_SELECTED_PAPER_COMPLETED",
-            error_detail="No selected paper completed publication.",
+            error_code="PUBLICATION_TRANSACTION_FAILED",
+            error_detail="The atomic publication transaction failed.",
         ),
         items=(replace(product_run.items[0], item=failed_item),),
         report=None,
@@ -1592,8 +1589,8 @@ def test_failed_product_publication_run_is_visible_without_a_report(
     assert response.status_code == 200
     body = response.json()
     assert body["run"]["status"] == "FAILED"
-    assert body["run"]["error_code"] == "NO_SELECTED_PAPER_COMPLETED"
-    assert body["items"][0]["error_code"] == "GRAPH_REFERENCE_INVALID"
+    assert body["run"]["error_code"] == "PUBLICATION_TRANSACTION_FAILED"
+    assert body["items"][0]["error_code"] == "REPOSITORY_UNAVAILABLE"
     assert body["report"] is None
 
 

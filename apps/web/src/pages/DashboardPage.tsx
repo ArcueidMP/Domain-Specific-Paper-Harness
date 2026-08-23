@@ -76,7 +76,7 @@ export function DashboardPage() {
           <StateNotice
             kind="empty"
             title="No product publication run recorded"
-            detail="A daily report will appear only after a product publication run has persisted its graph, trends, and publication state."
+            detail="A daily report will appear after source metadata is published for the logical date. Optional enrichment may remain unavailable."
           />
         ) : null}
         {latestDaily.data ? (
@@ -87,12 +87,16 @@ export function DashboardPage() {
               heading="Latest product publication"
             />
             {latestDaily.data.report ? (
-              <ReportDetail report={latestDaily.data.report} compact />
+              <ReportDetail
+                report={latestDaily.data.report}
+                items={latestDaily.data.items}
+                compact
+              />
             ) : (
               <StateNotice
                 kind="empty"
                 title="Run has no published report"
-                detail="FAILED runs remain visible, but publication is intentionally absent when no selected paper completes or the publication transaction fails."
+                detail="A report is absent only when a system-level failure or publication transaction prevented publication."
               />
             )}
           </div>

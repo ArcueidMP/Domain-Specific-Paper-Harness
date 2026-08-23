@@ -179,7 +179,7 @@ export function RunsPage() {
                   <div className="section-title-row">
                     <h2 id="run-report-title">Published report</h2>
                   </div>
-                  <ReportDetail report={detail.data.report} compact />
+                  <ReportDetail report={detail.data.report} items={detail.data.items} compact />
                 </section>
               ) : null}
             </>

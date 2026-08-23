@@ -32,7 +32,11 @@ from paper_harness.application.daily_selection import (
     select_daily_papers,
 )
 from paper_harness.application.generate_periodic_report import GeneratePeriodicReport
-from paper_harness.application.historical_backfill import HistoricalBackfill, six_month_window
+from paper_harness.application.historical_backfill import (
+    HistoricalBackfill,
+    HistoricalBackfillTimeoutError,
+    six_month_window,
+)
 from paper_harness.application.ingest_arxiv import SCHEDULE_TIME_ZONE, IngestArxiv
 from paper_harness.application.pipeline_accounting import (
     AccountingArxiv,
@@ -46,11 +50,11 @@ from paper_harness.application.pipeline_budget import (
     DEFAULT_PIPELINE_TIMEOUT_SECONDS,
     pipeline_budget,
 )
-from paper_harness.application.product_models import (
-    ProductFailureInput,
-    ProductPaperInput,
+from paper_harness.application.product_models import ProductPaperInput
+from paper_harness.application.publish_product import (
+    ProductRelatedWorkUnavailableError,
+    PublishProduct,
 )
-from paper_harness.application.publish_product import ProductComparisonMissingError, PublishProduct
 from paper_harness.application.read_models import (
     ProductRunDetail,
     RelatedWorkDetail,
@@ -104,15 +108,9 @@ from paper_harness.ports.scholarly_search import (
 from paper_harness.ports.scientific_embedding import (
     ScientificEmbeddingConfigurationError,
     ScientificEmbeddingPortError,
-    ScientificEmbeddingUnavailableError,
 )
 
 PIPELINE_ORCHESTRATION_VERSION = "daily-pipeline-v1"
-
-
-class DailyPipelineSelectionError(RuntimeError):
-    error_code = "NO_RELEVANT_PAPER_SELECTED"
-    retryable = False
 
 
 class DailyPipelineRunFailedError(RuntimeError):
@@ -145,7 +143,7 @@ class DailyPipelineDeadlineExceededError(TimeoutError):
 
 @dataclass(frozen=True, slots=True)
 class DailyPipelineFailure:
-    paper_id: UUID
+    paper_id: UUID | None
     stage: str
     error_code: str
     retryable: bool
@@ -156,7 +154,7 @@ class DailyPipelineFailure:
 class DailyPipelineResult:
     ingestion_run: DailyRun
     analysis_run: DailyRun
-    historical_backfill: HistoricalBackfillRun
+    historical_backfill: HistoricalBackfillRun | None
     product_run: DailyRun
     evaluated_count: int
     relevant_count: int
@@ -188,11 +186,7 @@ class DailyPipelineResult:
 
     @property
     def status(self) -> RunStatus:
-        if self.product_run.status is RunStatus.FAILED:
-            return RunStatus.FAILED
-        if self.product_run.status is RunStatus.PARTIAL or self.failures:
-            return RunStatus.PARTIAL
-        return RunStatus.COMPLETE
+        return self.product_run.status
 
 
 @dataclass(frozen=True, slots=True)
@@ -507,11 +501,6 @@ def execute_daily_pipeline(
             selected_paper_version_ids=selected_paper_version_ids,
             updated_at=datetime.now(UTC),
         )
-        if not selected_paper_version_ids:
-            raise DailyPipelineSelectionError(
-                "arXiv ingestion completed but no paper passed the deterministic relevance filter"
-            )
-
         analysis_run = AnalyzePapers(
             arxiv=arxiv,
             parser=parser,
@@ -537,24 +526,101 @@ def execute_daily_pipeline(
             "structured analysis",
         )
         child_failures = list(_run_item_failures(analysis_detail))
-        publication_failures: list[ProductFailureInput] = []
+
+        publication_source = repository.get_product_publication_input(
+            topic.id,
+            run_date,
+            pipeline_execution_id=execution.id,
+        )
+        if publication_source is None:
+            raise DailyPipelineResumeError(
+                "structured analysis has no exact product publication input"
+            )
+        if not publication_source.cards:
+            product_run = PublishProduct(
+                repository=repository,
+                llm=llm if narrative_mode is ReportNarrativeMode.DEEPSEEK else None,
+            ).execute(
+                topic,
+                logical_date=run_date,
+                narrative_mode=narrative_mode,
+                comparison_ids=frozenset(),
+                pipeline_execution_id=execution.id,
+                upstream_failures=(),
+            )
+            if product_run.status is RunStatus.FAILED:
+                raise _failed_pipeline_run_error(
+                    repository,
+                    product_run,
+                    "product publication",
+                )
+            product_detail = _require_run_detail(
+                repository,
+                product_run.id,
+                "product publication",
+            )
+            result = DailyPipelineResult(
+                ingestion_run=ingestion_run,
+                analysis_run=analysis_run,
+                historical_backfill=None,
+                product_run=product_run,
+                evaluated_count=selection.evaluated_count,
+                relevant_count=selection.relevant_count,
+                selected_count=0,
+                search_session_count=0,
+                comparison_count=0,
+                failures=_deduplicate_pipeline_failures(
+                    child_failures + list(_run_item_failures(product_detail))
+                ),
+                duration_ms=max(0, round((monotonic() - started) * 1000)),
+                historical_analysis_run=None,
+                historical_materialized_count=0,
+                accounting=accounting.snapshot(),
+            )
+            repository.complete_pipeline_execution(
+                execution.id,
+                status=result.status,
+                completed_at=datetime.now(UTC),
+            )
+            return result
 
         # One stable weekly six-month snapshot avoids re-querying and re-embedding
         # the same historical corpus every day. The daily seven-day arXiv window
         # overlaps this Monday anchor, so first deployment leaves no date gap.
         historical_through = run_date - timedelta(days=run_date.weekday())
         _require_pipeline_time(deadline_monotonic, "historical backfill")
-        historical_backfill = HistoricalBackfill(
-            repository=repository,
-            scholarly_search=scholarly_search,
-            embeddings=embeddings,
-        ).execute(
-            topic=topic,
-            through=historical_through,
-            max_queries=backfill_max_queries,
-            per_query_limit=backfill_per_query_limit,
-            overall_timeout_seconds=backfill_timeout_seconds,
-        )
+        try:
+            historical_backfill = HistoricalBackfill(
+                repository=repository,
+                scholarly_search=scholarly_search,
+                embeddings=embeddings,
+            ).execute(
+                topic=topic,
+                through=historical_through,
+                max_queries=backfill_max_queries,
+                per_query_limit=backfill_per_query_limit,
+                overall_timeout_seconds=backfill_timeout_seconds,
+            )
+        except (
+            ScholarlySearchError,
+            ScientificEmbeddingPortError,
+            DomainInvariantError,
+            HistoricalBackfillTimeoutError,
+        ) as error:
+            if _is_fatal_pipeline_dependency_error(error):
+                raise
+            window_from, window_to = six_month_window(historical_through)
+            failed_backfill = repository.get_historical_backfill(
+                topic.id,
+                window_from,
+                window_to,
+            )
+            if failed_backfill is None:
+                raise RepositoryError(
+                    "failed historical enrichment has no persisted run state"
+                ) from error
+            historical_backfill = failed_backfill
+            child_failures.append(_pipeline_failure(None, "HISTORICAL_BACKFILL", error))
 
         representative_arxiv_ids = repository.list_historical_representative_arxiv_ids(
             topic.id,
@@ -634,15 +700,6 @@ def execute_daily_pipeline(
             )
             return historical_run
 
-        publication_source = repository.get_product_publication_input(
-            topic.id,
-            run_date,
-            pipeline_execution_id=execution.id,
-        )
-        if publication_source is None:
-            raise DailyPipelineResumeError(
-                "structured analysis has no exact product publication input"
-            )
         existing_product = repository.get_product_run_for_date(
             topic.id,
             run_date,
@@ -652,7 +709,9 @@ def execute_daily_pipeline(
             RunStatus.COMPLETE,
             RunStatus.PARTIAL,
         ):
-            historical_analysis_run = run_historical_analysis(())
+            historical_analysis_run = (
+                run_historical_analysis(()) if publication_source.papers else None
+            )
             # A published product is immutable. Invoke the publisher only to
             # validate the requested narrative mode and reload that exact run;
             # do not create fresh search sessions or comparisons on replay.
@@ -664,7 +723,7 @@ def execute_daily_pipeline(
                 logical_date=run_date,
                 narrative_mode=narrative_mode,
                 pipeline_execution_id=execution.id,
-                upstream_failures=_deduplicate_product_failures(publication_failures),
+                upstream_failures=(),
             )
             if product_run.status is RunStatus.FAILED:
                 raise _failed_pipeline_run_error(
@@ -738,15 +797,6 @@ def execute_daily_pipeline(
                 if _is_fatal_pipeline_dependency_error(error):
                     raise
                 failures.append(_pipeline_failure(paper.paper_id, "PRIOR_WORK_RETRIEVED", error))
-                publication_failures.append(
-                    _product_failure(
-                        paper.paper_id,
-                        paper.paper_version_id,
-                        stage=PaperStage.EVIDENCE_EXTRACTED,
-                        failed_stage=PaperStage.PRIOR_WORK_RETRIEVED,
-                        error=error,
-                    )
-                )
                 continue
             related = repository.get_related_work(
                 paper.paper_id,
@@ -754,19 +804,10 @@ def execute_daily_pipeline(
                 search_session_id=search_detail.session.id,
             )
             if related is None:
-                error = ProductComparisonMissingError(
+                error = ProductRelatedWorkUnavailableError(
                     "completed related-work search has no persisted candidate projection"
                 )
                 failures.append(_pipeline_failure(paper.paper_id, "PRIOR_WORK_RETRIEVED", error))
-                publication_failures.append(
-                    _product_failure(
-                        paper.paper_id,
-                        paper.paper_version_id,
-                        stage=PaperStage.EVIDENCE_EXTRACTED,
-                        failed_stage=PaperStage.PRIOR_WORK_RETRIEVED,
-                        error=error,
-                    )
-                )
                 continue
             related_sources.append(_RelatedSource(paper=paper, related=related))
 
@@ -809,7 +850,6 @@ def execute_daily_pipeline(
 
         for source in planned_sources:
             source_comparison_ids: set[UUID] = set()
-            source_comparison_errors: list[BaseException] = []
             for related_item in source.related.items:
                 candidate = related_item.candidate
                 if candidate.comparison_target_decision is not ComparisonTargetDecision.TARGET:
@@ -846,21 +886,10 @@ def execute_daily_pipeline(
                     if _is_fatal_pipeline_dependency_error(error):
                         raise
                     failures.append(_pipeline_failure(source.paper.paper_id, "COMPARED", error))
-                    source_comparison_errors.append(error)
                     continue
                 comparison_count += 1
                 source_comparison_ids.add(comparison.comparison.id)
             current_comparison_ids.update(source_comparison_ids)
-            if not source_comparison_ids and source_comparison_errors:
-                publication_failures.append(
-                    _product_failure(
-                        source.paper.paper_id,
-                        source.paper.paper_version_id,
-                        stage=PaperStage.PRIOR_WORK_RETRIEVED,
-                        failed_stage=PaperStage.COMPARED,
-                        error=source_comparison_errors[0],
-                    )
-                )
 
         product_run = PublishProduct(
             repository=repository,
@@ -871,7 +900,7 @@ def execute_daily_pipeline(
             narrative_mode=narrative_mode,
             comparison_ids=frozenset(current_comparison_ids),
             pipeline_execution_id=execution.id,
-            upstream_failures=_deduplicate_product_failures(publication_failures),
+            upstream_failures=(),
         )
         if product_run.status is RunStatus.FAILED:
             raise _failed_pipeline_run_error(
@@ -1055,7 +1084,7 @@ def _terminal_pipeline_replay(
         window_from,
         window_to,
     )
-    if historical_backfill is None:
+    if historical_backfill is None and analysis_run.selected_count > 0:
         raise DailyPipelineResumeError("terminal pipeline execution is missing its backfill")
     ingestion_detail = repository.get_run(ingestion_run.id)
     if ingestion_detail is None:
@@ -1444,6 +1473,23 @@ def _pipeline_selection(
         raise DailyPipelineResumeError(
             "ingestion items contain a partial or unsupported selection decision"
         )
+    if detail.run.pipeline_execution_mode is PipelineExecutionMode.REPROCESS:
+        baseline_version_ids = repository.get_reprocessing_baseline_paper_version_ids(
+            topic.id,
+            detail.run.logical_date,
+        )
+        baseline_candidates = tuple(
+            candidate
+            for candidate in candidates
+            if candidate.paper_version_id in baseline_version_ids
+        )
+        if baseline_candidates:
+            ranked = select_daily_papers(topic, baseline_candidates, limit=limit)
+            return _PipelineSelection(
+                selected=tuple(item.candidate for item in ranked.selected),
+                evaluated_count=len(candidates),
+                relevant_count=len(ranked.eligible),
+            )
     published_versions = repository.get_canonically_published_paper_version_ids(
         tuple(candidate.paper_version_id for candidate in candidates),
     )
@@ -1469,14 +1515,13 @@ def _is_fatal_pipeline_dependency_error(error: BaseException) -> bool:
             ScholarlySearchAuthenticationError,
             ScholarlySearchConfigurationError,
             ScientificEmbeddingConfigurationError,
-            ScientificEmbeddingUnavailableError,
             RepositoryError,
         ),
     )
 
 
 def _pipeline_failure(
-    paper_id: UUID,
+    paper_id: UUID | None,
     stage: str,
     error: BaseException,
 ) -> DailyPipelineFailure:
@@ -1509,38 +1554,10 @@ def _run_item_failures(
     return tuple(failures)
 
 
-def _product_failure(
-    paper_id: UUID,
-    paper_version_id: UUID,
-    *,
-    stage: PaperStage,
-    failed_stage: PaperStage,
-    error: BaseException,
-) -> ProductFailureInput:
-    return ProductFailureInput(
-        paper_id=paper_id,
-        paper_version_id=paper_version_id,
-        stage=stage,
-        failed_stage=failed_stage,
-        error_code=str(getattr(error, "error_code", "DAILY_PIPELINE_ITEM_FAILED")),
-        retryable=bool(getattr(error, "retryable", False)),
-        error_detail=(str(error) or "item failed without diagnostic detail")[:1000],
-    )
-
-
-def _deduplicate_product_failures(
-    failures: list[ProductFailureInput],
-) -> tuple[ProductFailureInput, ...]:
-    by_version: dict[UUID, ProductFailureInput] = {}
-    for failure in failures:
-        by_version.setdefault(failure.paper_version_id, failure)
-    return tuple(by_version[key] for key in sorted(by_version, key=str))
-
-
 def _deduplicate_pipeline_failures(
     failures: list[DailyPipelineFailure],
 ) -> tuple[DailyPipelineFailure, ...]:
-    by_identity: dict[tuple[UUID, str, str], DailyPipelineFailure] = {}
+    by_identity: dict[tuple[UUID | None, str, str], DailyPipelineFailure] = {}
     for failure in failures:
         by_identity[(failure.paper_id, failure.stage, failure.error_code)] = failure
     return tuple(

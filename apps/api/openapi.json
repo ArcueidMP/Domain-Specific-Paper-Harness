@@ -2567,6 +2567,26 @@
             ],
             "title": "Comparison Id"
           },
+          "comparison_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparison Reason"
+          },
+          "comparison_status": {
+            "enum": [
+              "AVAILABLE",
+              "LIMITED_COMPARABILITY",
+              "COMPARISON_UNAVAILABLE"
+            ],
+            "title": "Comparison Status",
+            "type": "string"
+          },
           "discoveries": {
             "items": {
               "$ref": "#/components/schemas/CandidateDiscoveryResponse"
@@ -2590,7 +2610,9 @@
           "paper",
           "discoveries",
           "relations",
-          "comparison_id"
+          "comparison_id",
+          "comparison_status",
+          "comparison_reason"
         ],
         "title": "RelatedWorkItemResponse",
         "type": "object"
@@ -2624,6 +2646,25 @@
             "title": "Paper Id",
             "type": "string"
           },
+          "related_work_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Work Reason"
+          },
+          "related_work_status": {
+            "enum": [
+              "AVAILABLE",
+              "RELATED_WORK_UNAVAILABLE"
+            ],
+            "title": "Related Work Status",
+            "type": "string"
+          },
           "session": {
             "anyOf": [
               {
@@ -2642,6 +2683,8 @@
         },
         "required": [
           "paper_id",
+          "related_work_status",
+          "related_work_reason",
           "session",
           "actions",
           "items",
@@ -3167,6 +3210,21 @@
             ],
             "title": "Provider"
           },
+          "publication_outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "UPDATE",
+                  "NO_UPDATE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Outcome"
+          },
           "report_type": {
             "$ref": "#/components/schemas/ReportType"
           },
@@ -3547,6 +3605,21 @@
               }
             ]
           },
+          "publication_outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "UPDATE",
+                  "NO_UPDATE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Outcome"
+          },
           "report": {
             "anyOf": [
               {
@@ -3625,9 +3698,51 @@
       "RunItemResponse": {
         "additionalProperties": false,
         "properties": {
+          "analysis_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "AVAILABLE",
+                  "ANALYSIS_UNAVAILABLE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Status"
+          },
           "canonical_arxiv_id": {
             "title": "Canonical Arxiv Id",
             "type": "string"
+          },
+          "comparison_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparison Reason"
+          },
+          "comparison_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "AVAILABLE",
+                  "LIMITED_COMPARABILITY",
+                  "COMPARISON_UNAVAILABLE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparison Status"
           },
           "created_at": {
             "format": "date-time",
@@ -3671,6 +3786,17 @@
             "title": "Id",
             "type": "string"
           },
+          "paper_abstract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Abstract"
+          },
           "paper_id": {
             "format": "uuid",
             "title": "Paper Id",
@@ -3684,6 +3810,32 @@
             "format": "uuid",
             "title": "Paper Version Id",
             "type": "string"
+          },
+          "related_work_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Work Reason"
+          },
+          "related_work_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "AVAILABLE",
+                  "RELATED_WORK_UNAVAILABLE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Related Work Status"
           },
           "retryable": {
             "anyOf": [
@@ -3706,11 +3858,37 @@
             "title": "Schema Version",
             "type": "integer"
           },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
           "stage": {
             "$ref": "#/components/schemas/PaperStage"
           },
           "status": {
             "$ref": "#/components/schemas/RunItemStatus"
+          },
+          "trend_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "AVAILABLE",
+                  "INSUFFICIENT_DATA"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trend Status"
           },
           "updated_at": {
             "format": "date-time",
@@ -3995,6 +4173,21 @@
                 "type": "null"
               }
             ]
+          },
+          "publication_outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "UPDATE",
+                  "NO_UPDATE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Outcome"
           },
           "schema_version": {
             "minimum": 1.0,

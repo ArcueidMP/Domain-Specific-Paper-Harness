@@ -1443,6 +1443,13 @@ export interface components {
             candidate: components["schemas"]["SearchCandidateResponse"];
             /** Comparison Id */
             comparison_id: string | null;
+            /** Comparison Reason */
+            comparison_reason: string | null;
+            /**
+             * Comparison Status
+             * @enum {string}
+             */
+            comparison_status: "AVAILABLE" | "LIMITED_COMPARABILITY" | "COMPARISON_UNAVAILABLE";
             /** Discoveries */
             discoveries: components["schemas"]["CandidateDiscoveryResponse"][];
             paper: components["schemas"]["ExternalPaperResponse"];
@@ -1462,6 +1469,13 @@ export interface components {
              * Format: uuid
              */
             paper_id: string;
+            /** Related Work Reason */
+            related_work_reason: string | null;
+            /**
+             * Related Work Status
+             * @enum {string}
+             */
+            related_work_status: "AVAILABLE" | "RELATED_WORK_UNAVAILABLE";
             session: components["schemas"]["SearchSessionResponse"] | null;
             /** Total */
             total: number;
@@ -1699,6 +1713,8 @@ export interface components {
             prompt_version: string | null;
             /** Provider */
             provider: string | null;
+            /** Publication Outcome */
+            publication_outcome?: ("UPDATE" | "NO_UPDATE") | null;
             report_type: components["schemas"]["ReportType"];
             /** Run Id */
             run_id: string | null;
@@ -1816,6 +1832,8 @@ export interface components {
             /** Pipeline Selection Limit */
             pipeline_selection_limit?: number | null;
             pipeline_status?: components["schemas"]["RunStatus"] | null;
+            /** Publication Outcome */
+            publication_outcome?: ("UPDATE" | "NO_UPDATE") | null;
             report: components["schemas"]["ReportResponse"] | null;
             /** Schema Version */
             schema_version: number;
@@ -1837,8 +1855,14 @@ export interface components {
         };
         /** RunItemResponse */
         RunItemResponse: {
+            /** Analysis Status */
+            analysis_status?: ("AVAILABLE" | "ANALYSIS_UNAVAILABLE") | null;
             /** Canonical Arxiv Id */
             canonical_arxiv_id: string;
+            /** Comparison Reason */
+            comparison_reason?: string | null;
+            /** Comparison Status */
+            comparison_status?: ("AVAILABLE" | "LIMITED_COMPARABILITY" | "COMPARISON_UNAVAILABLE") | null;
             /**
              * Created At
              * Format: date-time
@@ -1854,6 +1878,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Paper Abstract */
+            paper_abstract?: string | null;
             /**
              * Paper Id
              * Format: uuid
@@ -1866,6 +1892,10 @@ export interface components {
              * Format: uuid
              */
             paper_version_id: string;
+            /** Related Work Reason */
+            related_work_reason?: string | null;
+            /** Related Work Status */
+            related_work_status?: ("AVAILABLE" | "RELATED_WORK_UNAVAILABLE") | null;
             /** Retryable */
             retryable: boolean | null;
             /**
@@ -1875,8 +1905,12 @@ export interface components {
             run_id: string;
             /** Schema Version */
             schema_version: number;
+            /** Source Url */
+            source_url?: string | null;
             stage: components["schemas"]["PaperStage"];
             status: components["schemas"]["RunItemStatus"];
+            /** Trend Status */
+            trend_status?: ("AVAILABLE" | "INSUFFICIENT_DATA") | null;
             /**
              * Updated At
              * Format: date-time
@@ -1960,6 +1994,8 @@ export interface components {
             /** Pipeline Selection Limit */
             pipeline_selection_limit?: number | null;
             pipeline_status?: components["schemas"]["RunStatus"] | null;
+            /** Publication Outcome */
+            publication_outcome?: ("UPDATE" | "NO_UPDATE") | null;
             /** Schema Version */
             schema_version: number;
             /** Selected Count */

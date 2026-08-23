@@ -446,6 +446,12 @@ class RepositoryPort(Protocol):
         paper_version_ids: tuple[UUID, ...],
     ) -> frozenset[UUID]: ...
 
+    def get_reprocessing_baseline_paper_version_ids(
+        self,
+        topic_id: UUID,
+        logical_date: date,
+    ) -> frozenset[UUID]: ...
+
     def attach_existing_analysis_to_run(
         self,
         *,
@@ -550,6 +556,7 @@ class RepositoryPort(Protocol):
         paper_id: UUID,
         *,
         paper_version_id: UUID | None,
+        analysis_id: UUID | None = None,
         analysis_scope: AnalysisScope | None = None,
         canonical_only: bool = False,
     ) -> AnalysisDetail | None: ...
