@@ -21,7 +21,7 @@ from paper_harness.domain.models import TopicConfig
 def test_checked_in_topic_configs_are_valid_and_bounded(filename: str, slug: str) -> None:
     topic = load_topic_config(Path("configs/topics") / filename)
     assert topic.slug == slug
-    assert topic.overlap_hours == 48
+    assert topic.overlap_hours == 168
     assert topic.representative_full_text_count == 100
     assert topic.max_results == 500
 
@@ -78,7 +78,7 @@ def test_topic_document_rejects_query_syntax_injection() -> None:
                     "include_terms": ['agent" OR all:*'],
                 },
                 "discovery": {
-                    "overlap_hours": 48,
+                    "overlap_hours": 168,
                     "initial_lookback_days": 7,
                     "max_results": 100,
                 },
@@ -101,7 +101,7 @@ def test_topic_document_normalizes_duplicate_categories_and_terms() -> None:
                 "exclude_terms": ["simulation", " Simulation "],
             },
             "discovery": {
-                "overlap_hours": 48,
+                "overlap_hours": 168,
                 "initial_lookback_days": 7,
                 "max_results": 100,
             },
@@ -128,7 +128,7 @@ def test_topic_document_rejects_unbounded_full_text_selection() -> None:
                     "include_terms": ["LLM agent"],
                 },
                 "discovery": {
-                    "overlap_hours": 48,
+                    "overlap_hours": 168,
                     "initial_lookback_days": 7,
                     "max_results": 100,
                 },

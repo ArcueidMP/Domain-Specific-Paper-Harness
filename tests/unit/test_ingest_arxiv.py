@@ -24,10 +24,33 @@ from paper_harness.ports.arxiv import (
     ArxivPaperRecord,
     ArxivResultLimitError,
     ArxivUnavailableError,
+    normalize_arxiv_records,
 )
 from paper_harness.ports.repository import RepositoryIntegrityError
 
 PIPELINE_EXECUTION_ID = UUID("b1f599e0-6b87-54af-a3b4-2a3d1473de93")
+
+
+class WindowAwareFakeArxiv(FakeArxiv):
+    def search(
+        self,
+        *,
+        query: str,
+        updated_from: datetime,
+        updated_until: datetime,
+        max_results: int,
+    ) -> tuple[ArxivPaperRecord, ...]:
+        records = super().search(
+            query=query,
+            updated_from=updated_from,
+            updated_until=updated_until,
+            max_results=max_results,
+        )
+        return normalize_arxiv_records(
+            records,
+            updated_from=updated_from,
+            updated_until=updated_until,
+        )[:max_results]
 
 
 def test_ingestion_uses_overlap_deduplicates_and_advances_cursor(
@@ -47,6 +70,41 @@ def test_ingestion_uses_overlap_deduplicates_and_advances_cursor(
     assert arxiv.calls[0][2] == now
     assert repository.cursor is not None
     assert repository.cursor.watermark == now
+
+
+def test_week_overlap_captures_record_that_became_visible_after_submission(
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    prior_watermark = datetime(2026, 8, 24, 2, tzinfo=UTC)
+    now = prior_watermark + timedelta(days=1)
+    delayed_updated_at = prior_watermark - timedelta(hours=100)
+    delayed_record = replace(
+        arxiv_record_v1,
+        submitted_at=delayed_updated_at - timedelta(hours=1),
+        updated_at=delayed_updated_at,
+    )
+    topic = replace(topic_config, overlap_hours=168)
+    repository = FakeRepository()
+    repository.cursor = IngestionCursor(
+        topic_id=topic.id,
+        watermark=prior_watermark,
+        schema_version=1,
+        created_at=prior_watermark,
+        updated_at=prior_watermark,
+    )
+    arxiv = WindowAwareFakeArxiv((delayed_record,))
+
+    run = IngestArxiv(arxiv=arxiv, repository=repository, clock=lambda: now).execute(
+        topic,
+        logical_date=now.date(),
+    )
+
+    expected_from = prior_watermark - timedelta(hours=168)
+    assert arxiv.calls[0][1:] == (expected_from, now, topic.max_results)
+    assert expected_from <= delayed_record.updated_at <= now
+    assert run.discovered_count == run.normalized_count == 1
+    assert len(repository.items) == 1
 
 
 def test_cursor_overlap_persists_locally_sorted_records_from_disordered_input(

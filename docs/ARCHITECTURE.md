@@ -58,6 +58,13 @@ authors, run items, and the next cursor.
 Database uniqueness, transactions, and a PostgreSQL advisory lock make repeated
 logical windows safe. Semantic Scholar never participates in daily discovery.
 
+The cursor overlap is a bound on arXiv submission-to-announcement visibility
+delay, not only clock skew. Production topics use a seven-day overlap and run
+after the 20:00 Eastern announcement so weekend and deferred batches remain in
+the discovery window. Repeated retrieval is safe because canonical paper
+versions are upserted idempotently and already published versions are excluded
+before normal Daily selection.
+
 ## Complete Daily pipeline
 
 The protected `run-pipeline` command coordinates existing use cases; it is not a
