@@ -24,7 +24,7 @@ arxiv:
     - neural simulator
   exclude_terms: []
 discovery:
-  overlap_hours: 48
+  overlap_hours: 168
   initial_lookback_days: 7
   max_results: 500
 representative_full_text_count: 100

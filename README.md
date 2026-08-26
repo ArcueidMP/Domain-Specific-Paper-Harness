@@ -67,10 +67,10 @@ to `demo`.
 external system -> adapter -> port -> application use case -> domain
 ```
 
-The production defaults are `asia-southeast1`, staggered 05:00/05:20/05:40
-schedules in `Asia/Kuala_Lumpur`, zero minimum Cloud Run instances, immutable
-Artifact Registry image digests, Secret Manager numeric versions, and an IAP
-owner allowlist.
+The production defaults are `asia-southeast1`, staggered 10:00/10:20/10:40
+schedules in `Asia/Kuala_Lumpur`, after the daily arXiv announcement, zero
+minimum Cloud Run instances, immutable Artifact Registry image digests, Secret
+Manager numeric versions, and an IAP owner allowlist.
 
 See [Architecture](docs/ARCHITECTURE.md), [Boundaries](docs/BOUNDARIES.md),
 [Failure policy](docs/FAILURE_POLICY.md), [Current status](docs/STATUS.md), and

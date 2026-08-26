@@ -287,19 +287,19 @@ variable "migration_timeout_seconds" {
 variable "schedule" {
   description = "Broad LLM Agents Daily Job cron expression."
   type        = string
-  default     = "0 5 * * *"
+  default     = "0 10 * * *"
 }
 
 variable "brain_computer_interfaces_schedule" {
   description = "Brain-Computer Interfaces Daily Job cron expression."
   type        = string
-  default     = "20 5 * * *"
+  default     = "20 10 * * *"
 }
 
 variable "world_models_schedule" {
   description = "World Models Daily Job cron expression."
   type        = string
-  default     = "40 5 * * *"
+  default     = "40 10 * * *"
 }
 
 variable "schedule_time_zone" {
