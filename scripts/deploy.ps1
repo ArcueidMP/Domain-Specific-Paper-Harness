@@ -72,6 +72,6 @@ Invoke-CheckedNative -Command $Terraform -Arguments @(
 ) -FailureMessage "Terraform validation failed."
 
 $Action = if ($Apply) { "apply" } else { "plan" }
-Invoke-CheckedNative -Command $Terraform -Arguments @(
-    "-chdir=$TerraformDirectory", $Action, $CommonArguments
-) -FailureMessage "Terraform $Action failed."
+$ActionArguments = @("-chdir=$TerraformDirectory", $Action) + $CommonArguments
+Invoke-CheckedNative -Command $Terraform -Arguments $ActionArguments `
+    -FailureMessage "Terraform $Action failed."

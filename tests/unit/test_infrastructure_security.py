@@ -102,6 +102,10 @@ def test_operator_scripts_use_direct_commands() -> None:
 
     assert '"init"' in deploy
     assert '$Action = if ($Apply) { "apply" } else { "plan" }' in deploy
+    assert (
+        '$ActionArguments = @("-chdir=$TerraformDirectory", $Action) + $CommonArguments' in deploy
+    )
+    assert "-Arguments $ActionArguments" in deploy
     assert "run jobs execute" in migration
     assert '"run", "jobs", "execute"' in daily
     assert "PIPELINE_LOGICAL_DATE" in daily
