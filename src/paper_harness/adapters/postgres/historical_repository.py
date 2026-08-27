@@ -75,6 +75,7 @@ from paper_harness.domain.models import (
     RunStatus,
 )
 from paper_harness.ports.repository import (
+    ExternalPaperIdentifierConflictError,
     RepositoryIntegrityError,
     RepositoryUnavailableError,
 )
@@ -1971,7 +1972,7 @@ def _merge_external_identifier_metadata(
         if existing is not None and not _same_external_identifier_value(
             normalized_type, existing[1], identifier_value
         ):
-            raise RepositoryIntegrityError(
+            raise ExternalPaperIdentifierConflictError(
                 f"external paper identifier conflict for {identifier_type}"
             )
         if existing is None:
@@ -2002,7 +2003,7 @@ def _merge_external_identifier_metadata(
                 identifier.identifier_value,
                 expected[1],
             ):
-                raise RepositoryIntegrityError(
+                raise ExternalPaperIdentifierConflictError(
                     f"external paper identifier conflict for {identifier.identifier_type}"
                 )
 

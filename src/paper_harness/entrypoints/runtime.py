@@ -99,7 +99,11 @@ from paper_harness.ports.llm import (
     LLMConfigurationError,
     LLMPortError,
 )
-from paper_harness.ports.repository import RepositoryError, RepositoryPort
+from paper_harness.ports.repository import (
+    ExternalPaperIdentifierConflictError,
+    RepositoryError,
+    RepositoryPort,
+)
 from paper_harness.ports.scholarly_search import (
     ScholarlySearchAuthenticationError,
     ScholarlySearchConfigurationError,
@@ -606,6 +610,7 @@ def execute_daily_pipeline(
             ScientificEmbeddingPortError,
             DomainInvariantError,
             HistoricalBackfillTimeoutError,
+            ExternalPaperIdentifierConflictError,
         ) as error:
             if _is_fatal_pipeline_dependency_error(error):
                 raise
@@ -793,6 +798,7 @@ def execute_daily_pipeline(
                 ScientificEmbeddingPortError,
                 LLMPortError,
                 DomainInvariantError,
+                ExternalPaperIdentifierConflictError,
             ) as error:
                 if _is_fatal_pipeline_dependency_error(error):
                     raise
@@ -1507,7 +1513,7 @@ def _pipeline_selection(
 
 
 def _is_fatal_pipeline_dependency_error(error: BaseException) -> bool:
-    return isinstance(
+    return not isinstance(error, ExternalPaperIdentifierConflictError) and isinstance(
         error,
         (
             LLMAuthenticationError,

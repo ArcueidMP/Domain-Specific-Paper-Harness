@@ -28,7 +28,7 @@ from paper_harness.domain.identity import (
     stable_historical_corpus_entry_id,
 )
 from paper_harness.domain.models import TopicConfig
-from paper_harness.ports.repository import RepositoryPort
+from paper_harness.ports.repository import ExternalPaperIdentifierConflictError, RepositoryPort
 from paper_harness.ports.scholarly_search import (
     ScholarlyPaper,
     ScholarlySearchError,
@@ -216,6 +216,7 @@ class HistoricalBackfill:
             ScientificEmbeddingPortError,
             DomainInvariantError,
             HistoricalBackfillTimeoutError,
+            ExternalPaperIdentifierConflictError,
         ) as error:
             self._repository.fail_historical_backfill(
                 run.id,
