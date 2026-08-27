@@ -116,6 +116,11 @@ Materialization records Semantic Scholar rank as provenance and preserves exact
 arXiv version when available. Required identity and field types remain strict. A
 non-arXiv result remains a stub and cannot enter full-text analysis.
 
+An ambiguous external-paper identifier merge rolls back the owning backfill or
+related-work transaction and preserves the existing identifier. That narrow
+enrichment failure is recorded without blocking publication of independently
+persisted source metadata; other repository integrity failures remain fatal.
+
 SPECTER2 requires the pinned offline artifact and exact contract. Missing,
 wrong-revision, wrong-dimension, non-finite, or zero output makes the owning
 historical enrichment unavailable; it does not switch provider or prevent

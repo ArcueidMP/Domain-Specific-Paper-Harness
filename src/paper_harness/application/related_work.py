@@ -51,7 +51,7 @@ from paper_harness.domain.identity import (
 )
 from paper_harness.domain.models import TopicConfig
 from paper_harness.ports.llm import LLMPort, LLMPortError
-from paper_harness.ports.repository import RepositoryPort
+from paper_harness.ports.repository import ExternalPaperIdentifierConflictError, RepositoryPort
 from paper_harness.ports.scholarly_search import (
     ScholarlyPaper,
     ScholarlySearchError,
@@ -652,6 +652,7 @@ class RelatedWorkSearch:
             LLMPortError,
             DomainInvariantError,
             RelatedWorkInputError,
+            ExternalPaperIdentifierConflictError,
         ) as error:
             self._repository.fail_search_session(
                 session.id,

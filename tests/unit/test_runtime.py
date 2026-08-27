@@ -47,6 +47,7 @@ from paper_harness.entrypoints.runtime import (
     execute_product_publication,
 )
 from paper_harness.ports.llm import LLMConfigurationError
+from paper_harness.ports.repository import ExternalPaperIdentifierConflictError
 from paper_harness.ports.scholarly_search import ScholarlySearchConfigurationError
 from paper_harness.ports.scientific_embedding import ScientificEmbeddingConfigurationError
 
@@ -358,6 +359,42 @@ def test_daily_pipeline_reuses_compatible_terminal_ingestion_and_analysis_runs(
     assert result.ingestion_run is harness.ingestion
     assert result.analysis_run is harness.analysis
     assert result.product_run is harness.product
+
+
+def test_optional_historical_identifier_conflict_does_not_block_publication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _configure_reused_pipeline(monkeypatch)
+    conflict = ExternalPaperIdentifierConflictError("external paper identifier conflict for DOI")
+    failed_backfill = MagicMock(spec=HistoricalBackfillRun)
+    harness.backfill_execute.side_effect = conflict
+    harness.repository.get_historical_backfill.return_value = failed_backfill
+
+    result = _execute_pipeline(max_selected_papers=1)
+
+    assert result.product_run is harness.product
+    assert result.historical_backfill is failed_backfill
+    assert tuple((failure.stage, failure.error_code) for failure in result.failures) == (
+        ("HISTORICAL_BACKFILL", "PERSISTENCE_INTEGRITY_FAILED"),
+    )
+    harness.publication_execute.assert_called_once()
+
+
+def test_related_work_identifier_conflict_is_isolated_to_its_source_paper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _configure_reused_pipeline(monkeypatch)
+    harness.search_execute.side_effect = ExternalPaperIdentifierConflictError(
+        "external paper identifier conflict for DOI"
+    )
+
+    result = _execute_pipeline(max_selected_papers=1)
+
+    assert result.product_run is harness.product
+    assert tuple((failure.stage, failure.error_code) for failure in result.failures) == (
+        ("PRIOR_WORK_RETRIEVED", "PERSISTENCE_INTEGRITY_FAILED"),
+    )
+    harness.publication_execute.assert_called_once()
 
 
 def test_daily_pipeline_zero_relevant_papers_publishes_complete_no_update(

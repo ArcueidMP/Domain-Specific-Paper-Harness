@@ -98,6 +98,10 @@ class RepositoryIntegrityError(RepositoryError):
     error_code = "PERSISTENCE_INTEGRITY_FAILED"
 
 
+class ExternalPaperIdentifierConflictError(RepositoryIntegrityError):
+    """Approved external identifiers disagree without a safe merge decision."""
+
+
 class MigrationIncompatibleError(RepositoryError):
     """The database migration revision differs from the application head."""
 

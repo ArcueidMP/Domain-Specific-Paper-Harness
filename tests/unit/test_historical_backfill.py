@@ -24,7 +24,10 @@ from paper_harness.domain.historical import (
     ScientificEmbedding,
 )
 from paper_harness.domain.models import TopicConfig
-from paper_harness.ports.repository import RepositoryPort
+from paper_harness.ports.repository import (
+    ExternalPaperIdentifierConflictError,
+    RepositoryPort,
+)
 from paper_harness.ports.scholarly_search import (
     ScholarlyAuthor,
     ScholarlyExternalIds,
@@ -276,6 +279,27 @@ def test_backfill_filters_exact_window_and_persists_embeddings_atomically(
     assert all(page[2][0].dimension == 768 for page in repository.pages)
     assert result.query_plan == ("LLM agent", "web agent")
     assert result.embedding_model_revision == _Embeddings.model_revision
+
+
+def test_external_identifier_conflict_marks_optional_backfill_failed(
+    topic_config: TopicConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _Repository()
+    scholarly = _ScholarlySearch((_paper("a" * 40, publication_date=date(2026, 4, 1)),))
+
+    def fail_page(*_args: object, **_kwargs: object) -> HistoricalBackfillRun:
+        raise ExternalPaperIdentifierConflictError("external paper identifier conflict for DOI")
+
+    monkeypatch.setattr(repository, "persist_historical_backfill_page", fail_page)
+
+    with pytest.raises(ExternalPaperIdentifierConflictError, match="identifier conflict for DOI"):
+        _service(repository, scholarly).execute(topic=topic_config, through=date(2026, 8, 9))
+
+    assert repository.run is not None
+    assert repository.run.status is BackfillStatus.FAILED
+    assert repository.run.error_code == "PERSISTENCE_INTEGRITY_FAILED"
+    assert repository.run.error_detail == "external paper identifier conflict for DOI"
 
 
 @pytest.mark.parametrize("status", (BackfillStatus.RUNNING, BackfillStatus.FAILED))
