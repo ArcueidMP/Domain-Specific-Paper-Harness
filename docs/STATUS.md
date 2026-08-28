@@ -1,50 +1,58 @@
 # Current Status
 ## Current milestone
 
-The optional public-Demo data-isolation foundation is implemented and locally
-verified. It is not provisioned in the production database or cloud project.
+The production Daily ingestion availability correction and off-peak scheduling
+change are deployed. The first automatic 20:00/20:20/20:40 run is awaiting
+acceptance on 2026-08-29. The optional public-Demo isolation code remains
+implemented but is not provisioned in the production database or cloud project.
 
 ## Completed capabilities
 
 Production remains an IAP-protected availability-first multi-topic product.
-Source-analysis failures publish transparent metadata cards; optional enrichment
-does not block Daily publication; zero-result days publish `COMPLETE / NO_UPDATE`.
+Daily discovery now uses a 168-hour overlap that covers delayed arXiv
+announcements. Canonically published versions are excluded from normal
+selection, zero-result days publish `COMPLETE / NO_UPDATE`, and an ambiguous
+external-paper identifier rolls back only its optional enrichment transaction
+without overwriting identifiers or blocking independently usable source data.
 
-The codebase now supports an independently migrated PostgreSQL `demo` schema,
-least-privilege sync/read roles, a deterministic canonical-publication snapshot,
-free-form diagnostic redaction, explicit table classification, atomic rollback,
-operator CLI commands, and an independent post-CI GitHub OIDC workflow. Raw
-parsed content, embeddings, cursors, and backfill bookkeeping are excluded.
+The codebase also supports an independently migrated PostgreSQL `demo` schema,
+least-privilege sync/read roles, deterministic redacted snapshots, operator CLI
+commands, and an independent post-CI GitHub OIDC workflow. These Demo resources
+have not been bootstrapped or provisioned in production.
 
 ## Verification
 
-Focused verification passed: 70 Demo/schema/CLI/automation unit tests and 71
-existing-plus-Demo PostgreSQL integration tests. Ruff, Ruff format, Pyright,
-repository hygiene, patch whitespace, Terraform format, and Terraform validation
-also passed. Dual-schema clean Alembic migration, role isolation, canonical
-revision selection, idempotent synchronization, API reads, redaction, and
-rollback on revision mismatch were exercised against a disposable pgvector
-database. The prior production baseline canonical passed before this change;
-`scripts/verify.ps1` was not rerun because this optional boundary has not been
-provisioned or accepted in production.
+Focused ingestion, historical-backfill, related-work, runtime, Terraform, and
+deployment-script checks passed locally. Pull requests #7 through #10 passed the
+Python, frontend, and infrastructure CI jobs before squash merge. Terraform
+plans for the ingestion rollout and off-peak schedule contained only the
+explicitly targeted Cloud Run Jobs and Scheduler updates, with no additions or
+deletions. Terraform state was refreshed after each targeted apply.
 
 ## Deployment
 
 The private Web/API remains revision `paper-harness-web-00012-tp7` at
-`https://paper-harness-web-nxdmkbsdtq-as.a.run.app`. Existing Daily Jobs,
-Schedulers, IAP, GROBID, secrets, migration state, and production `DATABASE_URL`
-were not changed. No `demo` schema/roles, OIDC identity, Demo secret value,
-public API, or Cloudflare resource has been created.
+`https://paper-harness-web-nxdmkbsdtq-as.a.run.app`. All three Daily Jobs use
+`daily@sha256:3e7d855e54697d0ad9feebf2c5d207e3eec5af3f4a18a1a63f14bcd97185bb89`.
+Enabled Scheduler times in `Asia/Kuala_Lumpur` are Broad LLM Agents at 20:00,
+Brain-Computer Interfaces at 20:20, and World Models at 20:40. IAP, GROBID,
+secrets, migration state, and the production `DATABASE_URL` were not changed.
+
+No `demo` schema/roles, Demo database secrets, GitHub OIDC identity, public API,
+or Cloudflare resource exists in production.
 
 ## Current blockers
 
-Demo provisioning requires a read-only capability check proving that the
-managed PostgreSQL owner can create a schema, login roles, and column grants;
-owner/sync/read credentials and fixed Secret Manager versions are also external
-inputs. No code blocker remains, and no fallback weakens these boundaries.
+The first off-peak scheduled executions have not yet occurred. Recent manual
+reprocessing was rate-limited by arXiv HTTP 429, so production acceptance must
+use the next bounded normal executions rather than repeated manual retries.
+
+Demo provisioning still requires the database capability check, owner-provided
+sync/read credentials, fixed Secret Manager versions, and the first snapshot.
 
 ## Next milestone
 
-Inspect the production database capabilities, run the idempotent Demo bootstrap
-and first canonical snapshot, apply the optional OIDC/secret-container Terraform
-resources, then plan the separate Cloudflare Pages and public read-API rollout.
+Accept the 2026-08-29 automatic Daily executions and confirm the 168-hour
+windows, honest terminal publications, and off-peak start times. Then begin the
+Demo rollout at database capability inspection and Phase 0/1 bootstrap rather
+than skipping directly to automation or the public runtime.
