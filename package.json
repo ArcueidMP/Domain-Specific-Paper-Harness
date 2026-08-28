@@ -1,6 +1,7 @@
 {
   "name": "domain-specific-paper-harness",
   "private": true,
+  "license": "Apache-2.0",
   "packageManager": "pnpm@11.0.9",
   "engines": {
     "node": ">=24.0.0 <25"

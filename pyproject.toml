@@ -5,10 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "domain-specific-paper-harness"
 version = "0.1.0"
-description = "Private multi-topic research intelligence for arXiv papers."
+description = "Self-hosted multi-topic research intelligence for arXiv papers."
 readme = "README.md"
 requires-python = ">=3.13.13,<3.14"
-license = { text = "Proprietary" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 dependencies = [
   "alembic>=1.16,<2",
   "arxiv==4.0.0",

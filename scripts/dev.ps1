@@ -40,7 +40,10 @@ $ApiArguments = @(
     "uvicorn", "paper_harness_api.main:app",
     "--host", "127.0.0.1", "--port", $ApiPort.ToString(), "--reload"
 )
-$WebArguments = @("pnpm", "dev", "--", "--host", "127.0.0.1", "--port", $WebPort.ToString())
+$WebArguments = @(
+    "pnpm", "--filter", "@paper-harness/web", "dev",
+    "--host", "127.0.0.1", "--port", $WebPort.ToString()
+)
 
 $ApiProcess = Start-Process -FilePath $Uv -ArgumentList $ApiArguments -NoNewWindow -PassThru
 $WebProcess = Start-Process -FilePath $Corepack -ArgumentList $WebArguments -NoNewWindow -PassThru

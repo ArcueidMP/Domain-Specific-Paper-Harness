@@ -7,7 +7,9 @@ AGENTS.md if one is added later, and follow the user's current request when it
 explicitly narrows the work.
 
 All source code, code comments, repository documentation, commit messages, and
-user-facing product copy must be written in English.
+user-facing product copy must be written in English. `README.zh-CN.md` is the
+single documentation exception and must remain a faithful Simplified Chinese
+translation of `README.md`.
 
 ## Mission
 

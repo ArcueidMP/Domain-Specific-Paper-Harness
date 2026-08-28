@@ -65,3 +65,7 @@ models/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Local rollout and remediation plans
+/DEMO-ROLLOUT-PLAN.md
+/INGESTION-FIX-PLAN.md
