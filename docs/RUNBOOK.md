@@ -378,8 +378,8 @@ scripts/verify-scheduler.ps1 -ProjectId $Project -Region $Region -SchedulerName 
 
 Set `scheduler_paused = false`, review the Terraform plan, and apply it to
 enable the staggered `Asia/Kuala_Lumpur` schedules after the daily arXiv
-announcement: Broad LLM Agents at 10:00, Brain-Computer Interfaces at 10:20,
-and World Models at 10:40. Cloud Scheduler rejects manual invocations while a
+announcement: Broad LLM Agents at 20:00, Brain-Computer Interfaces at 20:20,
+and World Models at 20:40. Cloud Scheduler rejects manual invocations while a
 job is paused, so run verification only after the Terraform-owned enablement:
 
 ```powershell

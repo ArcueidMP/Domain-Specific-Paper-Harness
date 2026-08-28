@@ -437,6 +437,6 @@ def test_scheduler_and_outputs_follow_the_daily_boundary() -> None:
     assert "deploy_daily_resources = false" in example
     assert "GROBID is independently deployable" in example
     assert "Keep it disabled while" in example
-    assert '# schedule = "0 10 * * *"' in example
-    assert '# brain_computer_interfaces_schedule = "20 10 * * *"' in example
-    assert '# world_models_schedule = "40 10 * * *"' in example
+    assert '# schedule = "0 20 * * *"' in example
+    assert '# brain_computer_interfaces_schedule = "20 20 * * *"' in example
+    assert '# world_models_schedule = "40 20 * * *"' in example

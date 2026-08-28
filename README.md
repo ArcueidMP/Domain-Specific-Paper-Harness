@@ -67,7 +67,7 @@ to `demo`.
 external system -> adapter -> port -> application use case -> domain
 ```
 
-The production defaults are `asia-southeast1`, staggered 10:00/10:20/10:40
+The production defaults are `asia-southeast1`, staggered 20:00/20:20/20:40
 schedules in `Asia/Kuala_Lumpur`, after the daily arXiv announcement, zero
 minimum Cloud Run instances, immutable Artifact Registry image digests, Secret
 Manager numeric versions, and an IAP owner allowlist.

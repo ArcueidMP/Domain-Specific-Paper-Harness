@@ -41,13 +41,13 @@ scheduler_paused = true
 # semantic_scholar_secret_version = "1"
 
 # Create the topic Schedulers paused until all manual topic executions are accepted.
-# The broad topic runs at 10:00 Asia/Kuala_Lumpur, after the arXiv announcement;
-# BCI and World Models are staggered at 10:20 and 10:40 while sharing the image.
+# The broad topic runs at 20:00 Asia/Kuala_Lumpur, after the arXiv announcement;
+# BCI and World Models are staggered at 20:20 and 20:40 while sharing the image.
 # deploy_scheduler = true
 # scheduler_paused = true
-# schedule = "0 10 * * *"
-# brain_computer_interfaces_schedule = "20 10 * * *"
-# world_models_schedule = "40 10 * * *"
+# schedule = "0 20 * * *"
+# brain_computer_interfaces_schedule = "20 20 * * *"
+# world_models_schedule = "40 20 * * *"
 
 # Optional Demo snapshot automation is independent of all production runtimes.
 # Terraform creates empty secret containers and a GitHub OIDC identity restricted
