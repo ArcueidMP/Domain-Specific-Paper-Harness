@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [int]$PostgresPort = 55432,
+    [int]$PostgresPort = 15432,
     [switch]$SkipImageBuild
 )
 

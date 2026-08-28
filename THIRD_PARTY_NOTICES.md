@@ -1,5 +1,7 @@
 # Third-Party Notices
 
+The first-party source in the v0.1.0 public source release is licensed under
+Apache-2.0 as recorded in the repository's `LICENSE` file and package metadata.
 No third-party source code is vendored in this repository. Package and container
 dependencies remain governed by their upstream licenses and are pinned in the
 applicable lockfiles or immutable image references. The Daily production build
@@ -7,7 +9,12 @@ embeds a hash-verified conversion of the approved SPECTER2 Base model artifact;
 no model weights are checked into Git. Production images are published only to
 the private Artifact Registry and are deployed by immutable digest.
 
-## M5 package-license review
+The public distribution is a GitHub source archive only. Container images remain
+private, model artifacts are not part of the source archive, and a hosted public
+demo is not included. Public container images, a hosted public demo, and an
+image-wide scanner-generated SBOM require a separate distribution review.
+
+## Package-license review
 
 `scripts/check_dependency_licenses.py` is the deterministic, credential-free
 package review. It traverses the installed first-party Python production
@@ -18,7 +25,7 @@ to package, version, and license. Known incompatible AGPL, GPL, SSPL, BUSL,
 Commons-Clause, proprietary, and related terms fail verification; missing or
 new metadata remains visible for review without becoming a format-only blocker.
 
-The exact 2026-08-10 local review accepted the locked Python and bundled
+The exact 2026-08-28 local review accepted the locked Python and bundled
 frontend closures. The approved set is permissive except for the reviewed
 MPL-2.0 components and the unmodified `psycopg` and `psycopg-binary` libraries
 under LGPL-3.0-only. Their installed `.dist-info/licenses` files are retained in
@@ -39,10 +46,11 @@ This focused result is not an image-wide legal attestation. An OS-package SBOM
 was not generated, and installed package metadata does not enumerate every
 component embedded in native wheels or the upstream Java image. Runtime images
 retain their operating-system and upstream notices. No incompatible license
-was found in the focused review. The residual lack of a scanner-generated SBOM
-is an accepted limitation for this private, unmodified internal deployment,
-not a publication blocker. Dependency, base-digest, or distribution-model
-changes require a renewed review.
+was found in the focused review. These accepted limitations are not a source
+publication blocker because the public release does not distribute container or
+dependency artifacts. A future public image distribution requires a renewed
+review, including its image-wide license and SBOM boundary. Dependency,
+base-digest, or distribution-model changes also require a renewed review.
 
 ## Direct integration
 
@@ -72,8 +80,8 @@ The Docker Hub manifest was independently pulled and inspected on 2026-08-08 as
 Cloud deployment still requires the first-party wrapper to be mirrored into
 Artifact Registry and referenced by its resulting immutable digest. The upstream
 image contains its own transitive components. The retained upstream and direct
-notice review is the M5 release evidence; it is not a complete SBOM, as recorded
-in the accepted limitations.
+notice review is the current runtime evidence; it is not a complete SBOM, as
+recorded in the accepted limitations.
 
 ### SPECTER2 Base
 

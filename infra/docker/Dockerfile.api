@@ -21,6 +21,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY README.md ./
+COPY LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 COPY src src
@@ -36,7 +37,7 @@ LABEL org.opencontainers.image.title="Domain-Specific Paper Harness Web/API" \
       org.opencontainers.image.description="Private FastAPI and React research-intelligence service" \
       org.opencontainers.image.source="https://github.com/ArcueidMP/Domain-Specific-Paper-Harness" \
       org.opencontainers.image.version="0.1.0" \
-      org.opencontainers.image.licenses="Proprietary"
+      org.opencontainers.image.licenses="Apache-2.0"
 ENV APP_ENV=production \
     PATH=/app/.venv/bin:$PATH \
     PYTHONPATH=/app/apps/api \
@@ -49,6 +50,7 @@ RUN groupadd --system --gid 10001 paper-harness \
 COPY --from=python-build --chown=paper-harness:paper-harness /app /app
 COPY --from=web-build --chown=paper-harness:paper-harness /workspace/apps/web/dist /app/static
 COPY --from=web-build --chown=paper-harness:paper-harness /workspace/frontend-license-material /opt/licenses/frontend
+COPY --chown=paper-harness:paper-harness LICENSE /opt/licenses/paper-harness/LICENSE
 COPY --chown=paper-harness:paper-harness THIRD_PARTY_NOTICES.md /opt/licenses/paper-harness/THIRD_PARTY_NOTICES.md
 USER 10001:10001
 EXPOSE 8080
