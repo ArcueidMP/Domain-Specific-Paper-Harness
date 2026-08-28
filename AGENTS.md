@@ -180,7 +180,7 @@ Semantic Scholar, DeepSeek, and private GROBID.
 Deployment defaults:
 
 - GCP region: asia-southeast1
-- Schedules: 10:00, 10:20, and 10:40 for the three initial topics
+- Schedules: 20:00, 20:20, and 20:40 for the three initial topics
 - Schedule time zone: Asia/Kuala_Lumpur
 - Cloud Run minimum instances: 0 where supported
 - Artifact Registry for images
