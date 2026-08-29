@@ -56,13 +56,17 @@ def test_secret_access_is_scoped_to_the_runtime_that_uses_each_secret() -> None:
 
 
 def test_web_and_grobid_access_remain_identity_gated() -> None:
+    variables = _read(TERRAFORM_DIRECTORY / "variables.tf")
     runtime = _read(TERRAFORM_DIRECTORY / "runtime.tf")
 
     assert "iap_enabled         = true" in runtime
     assert 'role     = "roles/run.invoker"' in runtime
     assert "google_project_service_identity.iap.email" in runtime
     assert 'role                   = "roles/iap.httpsResourceAccessor"' in runtime
-    assert 'members                = ["user:${var.owner_email}"]' in runtime
+    assert 'variable "additional_iap_user_emails"' in variables
+    assert '["user:${var.owner_email}"]' in runtime
+    assert '"user:${email}"' in runtime
+    assert "var.additional_iap_user_emails" in runtime
     assert 'members  = ["serviceAccount:${google_service_account.daily.email}"]' in runtime
 
 

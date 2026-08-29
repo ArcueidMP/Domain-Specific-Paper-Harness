@@ -18,6 +18,10 @@ least-privilege sync/read roles, deterministic redacted snapshots, operator CLI
 commands, and an independent post-CI GitHub OIDC workflow. These Demo resources
 are implemented but are not provisioned in production.
 
+The private Web/API IAP binding supports the owner plus an explicit set of
+additional approved Google accounts. Production identities stay in an ignored
+Terraform variables file and are not committed to the public repository.
+
 ## Verification
 
 The public-source release passed tracked-file hygiene, Ruff, Pyright, generated
@@ -27,13 +31,19 @@ Playwright flows, a clean Alembic upgrade and revision check, Terraform format
 and validation, Docker Compose validation, and all three runtime image builds.
 The documented Windows keyless Quick Start also migrated a clean database and
 returned successful Web, liveness, readiness, and topic responses.
+Focused IAP/Terraform tests passed, and the production IAM-only plan applied as
+one in-place binding update with no additions, deletions, or Cloud Run revision.
 
 ## Deployment
 
 The private Web/API remains protected by Google Cloud IAP. Three topic-specific
-Daily Jobs and private GROBID remain deployed. Preparing the source release does
-not change IAP, production secrets, database migration state, Scheduler, or any
-deployed runtime.
+Daily Jobs and private GROBID remain deployed. The public source release did not
+change production secrets, database migration state, Scheduler, or any deployed
+runtime.
+
+The IAP allowlist is Terraform-managed and currently contains the owner and one
+additional approved collaborator. Their identities are intentionally omitted
+from public documentation.
 
 No Demo schema or roles, Demo database secrets, GitHub OIDC identity, public
 Demo API, or Cloudflare resource are provisioned in production.

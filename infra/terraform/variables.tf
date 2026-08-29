@@ -24,6 +24,20 @@ variable "owner_email" {
   }
 }
 
+variable "additional_iap_user_emails" {
+  description = "Additional Google accounts allowed through IAP to the private web service."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for email in var.additional_iap_user_emails :
+      can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", email))
+    ])
+    error_message = "additional_iap_user_emails must contain only email addresses."
+  }
+}
+
 variable "name_prefix" {
   description = "Prefix used for resource names."
   type        = string

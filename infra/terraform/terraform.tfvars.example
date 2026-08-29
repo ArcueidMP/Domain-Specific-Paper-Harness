@@ -1,5 +1,6 @@
-project_id  = "your-existing-project-id"
-owner_email = "owner@example.com"
+project_id                 = "your-existing-project-id"
+owner_email                = "owner@example.com"
+additional_iap_user_emails = []
 
 # Infrastructure-only is the safe default. Each runtime boundary is enabled only
 # after its immutable image and required fixed numeric secret versions exist.
