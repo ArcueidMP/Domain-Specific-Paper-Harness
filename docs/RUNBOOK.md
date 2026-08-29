@@ -13,7 +13,8 @@ artifacts.
   any cloud change.
 - Do not create Cloud SQL, a fixed-cost load balancer, a paid VM, Kubernetes, or
   another recurring-cost resource without explicit authorization.
-- Keep Web/API behind Cloud Run IAP and the owner allowlist. Keep GROBID private.
+- Keep Web/API behind Cloud Run IAP and an explicit user allowlist. Keep GROBID
+  private.
 - Use immutable Artifact Registry digests and fixed enabled secret versions.
 - Run Alembic explicitly. The API never migrates at startup.
 - Run the Daily pipeline through its Cloud Run Job, never through FastAPI.
@@ -249,7 +250,8 @@ mutable tags.
 
 Start from `infra/terraform/terraform.tfvars.example`. Keep the production copy
 outside Git. Supply the existing project, owner, immutable image digests, and
-enabled numeric secret versions.
+enabled numeric secret versions. Put any additional approved Google accounts in
+`additional_iap_user_emails`; never commit the production values.
 
 Create a fresh plan:
 

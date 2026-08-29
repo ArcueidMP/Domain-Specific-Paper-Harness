@@ -165,6 +165,10 @@ resource "google_cloud_run_v2_service" "web" {
     percent = 100
   }
 
+  lifecycle {
+    ignore_changes = [client, client_version]
+  }
+
   depends_on = [
     google_project_service.required["run.googleapis.com"],
     google_project_service.required["iap.googleapis.com"],
@@ -193,7 +197,10 @@ resource "google_iap_web_cloud_run_service_iam_binding" "owner" {
   location               = google_cloud_run_v2_service.web[0].location
   cloud_run_service_name = google_cloud_run_v2_service.web[0].name
   role                   = "roles/iap.httpsResourceAccessor"
-  members                = ["user:${var.owner_email}"]
+  members = toset(concat(
+    ["user:${var.owner_email}"],
+    [for email in var.additional_iap_user_emails : "user:${email}"],
+  ))
 
   depends_on = [google_cloud_run_v2_service_iam_binding.iap_invoker]
 }
