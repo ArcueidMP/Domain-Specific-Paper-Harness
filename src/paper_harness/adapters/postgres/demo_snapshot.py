@@ -29,6 +29,7 @@ _SYSTEM_SCHEMAS = frozenset({"information_schema", "pg_catalog", "pg_toast"})
 # construction.
 DEMO_EXCLUDED_TABLES: Final = frozenset(
     {
+        "arxiv_discovery_progress",
         "citation_contexts",
         "historical_backfill_runs",
         "historical_corpus_entries",
@@ -64,6 +65,7 @@ DEMO_INCLUDED_TABLES: Final = (
     "lineage_nodes",
     "product_run_paper_inputs",
     "report_entity_highlights",
+    "report_enrichment_failures",
     "report_failures",
     "report_lineage_highlights",
     "report_paper_highlights",
@@ -149,6 +151,9 @@ _TABLE_PREDICATES: Final = MappingProxyType(
             "src.report_id IN (SELECT id FROM pg_temp.demo_snapshot_reports)"
         ),
         "report_failures": ("src.report_id IN (SELECT id FROM pg_temp.demo_snapshot_reports)"),
+        "report_enrichment_failures": (
+            "src.report_id IN (SELECT id FROM pg_temp.demo_snapshot_reports)"
+        ),
         "report_lineage_highlights": (
             "src.report_id IN (SELECT id FROM pg_temp.demo_snapshot_reports)"
         ),
@@ -295,7 +300,7 @@ def default_demo_snapshot_manifest(
         redactions: tuple[tuple[str, str], ...] = ()
         if table_name in _NULL_DIAGNOSTIC_TABLES:
             redactions = (("error_detail", "NULL"),)
-        elif table_name == "report_failures":
+        elif table_name in ("report_failures", "report_enrichment_failures"):
             redactions = (("error_detail", f"'{DEMO_REDACTED_DIAGNOSTIC}'"),)
         specs.append(
             DemoTableSpec(
@@ -767,6 +772,10 @@ def build_demo_selection_statements(source_schema: str) -> tuple[str, ...]:
         UNION
         SELECT paper_version_id FROM {source}.report_failures
         WHERE report_id IN (SELECT id FROM pg_temp.demo_snapshot_reports)
+        UNION
+        SELECT paper_version_id FROM {source}.report_enrichment_failures
+        WHERE report_id IN (SELECT id FROM pg_temp.demo_snapshot_reports)
+          AND paper_version_id IS NOT NULL
         UNION
         SELECT paper_version_id FROM {source}.paper_analyses
         WHERE id IN (SELECT id FROM pg_temp.demo_snapshot_analyses)

@@ -44,6 +44,7 @@ from paper_harness.domain.models import (
     RunStatus,
 )
 from paper_harness.domain.reports import (
+    EnrichmentStage,
     ReportNarrativeMode,
     ReportSectionKind,
     ReportType,
@@ -228,6 +229,19 @@ class ReportFailureResponse(ApiModel):
     created_at: datetime
 
 
+class ReportEnrichmentFailureResponse(ApiModel):
+    id: UUID
+    report_id: UUID
+    failed_stage: EnrichmentStage
+    paper_id: UUID | None
+    paper_version_id: UUID | None
+    error_code: str
+    retryable: bool
+    error_detail: str
+    schema_version: int = Field(ge=1)
+    created_at: datetime
+
+
 class ReportCountsResponse(ApiModel):
     retrieved: int = Field(ge=0)
     selected: int = Field(ge=0)
@@ -309,6 +323,7 @@ class ReportResponse(ApiModel):
     schema_version: int = Field(ge=1)
     created_at: datetime
     failures: list[ReportFailureResponse]
+    enrichment_failures: list[ReportEnrichmentFailureResponse]
     sections: list[ReportSectionResponse]
     report_type: ReportType
     period_start: date

@@ -83,8 +83,19 @@ from paper_harness.domain.models import (
     RunStatus,
     TopicConfig,
 )
-from paper_harness.domain.reports import Report, ReportEvidenceReference, ReportType
-from paper_harness.ports.arxiv import ArxivPaperRecord, ArxivPdf, ArxivPortError
+from paper_harness.domain.reports import (
+    Report,
+    ReportEvidenceReference,
+    ReportType,
+    product_item_ready_for_publication,
+)
+from paper_harness.ports.arxiv import (
+    ArxivDiscoveryProgress,
+    ArxivIdentifierPage,
+    ArxivPaperRecord,
+    ArxivPdf,
+    ArxivPortError,
+)
 from paper_harness.ports.repository import RepositoryError
 
 
@@ -142,6 +153,7 @@ class FakeArxiv:
         error: ArxivPortError | None = None,
         pdf_content: bytes = b"%PDF-1.7\nfixture",
         pdf_error: ArxivPortError | None = None,
+        discovery_day: date | None = None,
     ) -> None:
         self.records = records
         self.error = error
@@ -150,6 +162,34 @@ class FakeArxiv:
         self.calls: list[tuple[str, datetime, datetime, int]] = []
         self.id_calls: list[tuple[str, ...]] = []
         self.pdf_calls: list[tuple[str, int, str]] = []
+        self.discovery_calls: list[tuple[date, str, str | None]] = []
+        self.discovery_day = discovery_day
+
+    def list_updated_identifiers(
+        self,
+        *,
+        day: date,
+        category: str,
+        resumption_token: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> ArxivIdentifierPage:
+        self.discovery_calls.append((day, category, resumption_token))
+        if self.discovery_day is None:
+            self.discovery_day = day
+        if self.error is not None:
+            raise self.error
+        return ArxivIdentifierPage(
+            tuple(
+                sorted(
+                    {
+                        record.canonical_arxiv_id
+                        for record in self.records
+                        if self.discovery_day == day and category in record.categories
+                    }
+                )
+            ),
+            None,
+        )
 
     def search(
         self,
@@ -168,6 +208,7 @@ class FakeArxiv:
         self,
         *,
         canonical_arxiv_ids: tuple[str, ...],
+        timeout_seconds: float | None = None,
     ) -> tuple[ArxivPaperRecord, ...]:
         self.id_calls.append(canonical_arxiv_ids)
         if self.error is not None:
@@ -197,6 +238,7 @@ class FakeRepository:
     def __init__(self) -> None:
         self.topic: StoredTopic | None = None
         self.cursor: IngestionCursor | None = None
+        self.ingestion_progress: dict[UUID, ArxivDiscoveryProgress] = {}
         self.run: DailyRun | None = None
         self.items: tuple[RunItem, ...] = ()
         self.papers: tuple[Paper, ...] = ()
@@ -254,6 +296,7 @@ class FakeRepository:
         self.pipeline_locked = False
         self.pipeline_executions: dict[UUID, PipelineExecution] = {}
         self.canonically_published_version_ids: frozenset[UUID] = frozenset()
+        self.canonically_published_version_ids_by_topic: dict[UUID, frozenset[UUID]] = {}
         self.reprocessing_baseline_version_ids: frozenset[UUID] = frozenset()
         self.enforce_published_visibility = False
 
@@ -444,8 +487,50 @@ class FakeRepository:
             error_code=None,
             error_detail=None,
         )
-        self.items = ()
+        if run_id not in self.ingestion_progress:
+            self.items = ()
         return self.run
+
+    def get_ingestion_progress(self, run_id: UUID) -> ArxivDiscoveryProgress | None:
+        return self.ingestion_progress.get(run_id)
+
+    def persist_ingestion_progress(
+        self,
+        *,
+        topic: TopicConfig,
+        run_id: UUID,
+        progress: ArxivDiscoveryProgress,
+        records: tuple[ArxivPaperRecord, ...],
+        persisted_at: datetime,
+    ) -> None:
+        del topic
+        if self.run is None or self.run.id != run_id:
+            raise RepositoryError("ingestion run is missing")
+        items = {item.id: item for item in self.items}
+        for record in records:
+            item_id = uuid5(run_id, f"{record.canonical_arxiv_id}:v{record.version}")
+            items[item_id] = RunItem(
+                id=item_id,
+                run_id=run_id,
+                paper_id=uuid5(run_id, record.canonical_arxiv_id),
+                paper_version_id=uuid5(
+                    run_id, f"version:{record.canonical_arxiv_id}:v{record.version}"
+                ),
+                stage=PaperStage.NORMALIZED,
+                status=RunItemStatus.COMPLETED,
+                failed_stage=None,
+                error_code=None,
+                retryable=None,
+                error_detail=None,
+                schema_version=1,
+                created_at=persisted_at,
+                updated_at=persisted_at,
+            )
+        self.items = tuple(items.values())
+        self.ingestion_progress[run_id] = progress
+        self.run = replace(
+            self.run, discovered_count=len(self.items), normalized_count=len(self.items)
+        )
 
     def persist_ingestion_selection(
         self,
@@ -482,7 +567,8 @@ class FakeRepository:
         completed_at: datetime,
     ) -> DailyRun:
         del topic
-        self.items = tuple(
+        prior_items = {item.id: item for item in self.items}
+        incoming_items = tuple(
             RunItem(
                 id=uuid5(run_id, f"{record.canonical_arxiv_id}:v{record.version}"),
                 run_id=run_id,
@@ -502,6 +588,7 @@ class FakeRepository:
             )
             for record in records
         )
+        self.items = tuple({**prior_items, **{item.id: item for item in incoming_items}}.values())
         if self.run is None or self.run.id != run_id:
             raise AssertionError("run was not started")
         expected_cursor_policy = self.run.pipeline_execution_mode not in (
@@ -522,7 +609,7 @@ class FakeRepository:
             self.run,
             status=RunStatus.COMPLETE,
             completed_at=completed_at,
-            discovered_count=len(records),
+            discovered_count=len(self.items),
             normalized_count=len(self.items),
         )
         return self.run
@@ -1238,7 +1325,9 @@ class FakeRepository:
                 stage=PaperStage.TREND_SNAPSHOTS_GENERATED,
                 updated_at=updated_at,
             )
-            if item.status is RunItemStatus.IN_PROGRESS and item.stage is PaperStage.GRAPH_UPDATED
+            if trends
+            and item.status is RunItemStatus.IN_PROGRESS
+            and item.stage is PaperStage.GRAPH_UPDATED
             else item
             for item in self.items
         )
@@ -1265,7 +1354,9 @@ class FakeRepository:
                 updated_at=completed_at,
             )
             if item.status is RunItemStatus.IN_PROGRESS
-            and item.stage is PaperStage.TREND_SNAPSHOTS_GENERATED
+            and product_item_ready_for_publication(
+                item.stage, item.paper_version_id, report.enrichment_failures
+            )
             else item
             for item in self.items
         )
@@ -1503,9 +1594,12 @@ class FakeRepository:
 
     def get_canonically_published_paper_version_ids(
         self,
+        topic_id: UUID,
         paper_version_ids: tuple[UUID, ...],
     ) -> frozenset[UUID]:
-        return frozenset(paper_version_ids).intersection(self.canonically_published_version_ids)
+        return frozenset(paper_version_ids).intersection(
+            self.canonically_published_version_ids_by_topic.get(topic_id, frozenset())
+        )
 
     def get_reprocessing_baseline_paper_version_ids(
         self,

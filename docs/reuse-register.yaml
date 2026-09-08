@@ -1,5 +1,5 @@
 schema_version: 1
-updated_at: "2026-08-28"
+updated_at: "2026-09-08"
 entries:
   - project: arxiv.py
     upstream: https://github.com/lukasschwab/arxiv.py
@@ -8,7 +8,7 @@ entries:
     integration_mode: pinned-package-dependency
     copied_files: []
     local_changes: none
-    reason: Typed arXiv query, pagination, metadata, and PDF URL adapter boundary.
+    reason: Typed arXiv explicit metadata queries and PDF URL discovery; a first-party OAI-PMH adapter owns resumable Daily identifier harvesting without additional dependencies or copied upstream code.
     update_strategy: Review release notes, API behavior, license, and Python 3.13.13 tests before changing the exact pin.
     constraints:
       - Daily discovery remains arXiv-only.

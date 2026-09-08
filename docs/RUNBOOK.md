@@ -417,6 +417,29 @@ durations, and cost estimates without recording sensitive content.
 
 ## Failure handling
 
+Daily OAI discovery has a 900-second invocation budget and a 100-page budget.
+`discovery.max_results` limits a metadata batch, while the completed harvest may
+contain more papers. `ARXIV_DISCOVERY_INCOMPLETE` leaves its fixed-window
+checkpoint and pending IDs in PostgreSQL without advancing the topic cursor.
+For a failed NORMAL pipeline, repeat the same topic and logical date using
+`scripts/run-production-daily.ps1 -ProjectId $Project -Region $Region
+-JobName $JobName -LogicalDate $LogicalDate`. Keep its topic definition unchanged
+while resuming. A new logical date is a different execution, not a resume of
+that checkpoint. Expired tokens are handled by bounded idempotent replay of
+the affected day/category.
+
+For a failed REPROCESS execution, also pass `-Reprocess -ResumeExecutionId
+$ExecutionId`, where `$ExecutionId` is the existing run's `pipeline_execution_id`
+from the Runs API. The equivalent CLI option is `run-pipeline --reprocess
+--logical-date YYYY-MM-DD --resume-execution-id UUID`. This explicitly selects
+the existing revision; `--reprocess` without that UUID still creates a new one.
+The topic, logical date, and analysis scope must match the saved execution.
+
+Published graph, trend, and lineage failures appear in the report's
+`enrichment_failures` field and the report UI. Inspect their stable code and
+scope instead of treating them as insufficient data or counting them as core
+analysis failures. Their details are not model input and are redacted in Demo.
+
 - Global configuration, authentication, migration, database, and publication
   failures stop the run. Candidate schema or domain failures stay scoped to the
   narrowest identifiable item or provider operation and produce `PARTIAL` when

@@ -24,15 +24,16 @@ from paper_harness.domain.knowledge import (
     TrendWindow,
 )
 from paper_harness.domain.models import (
-    PaperStage,
     RunItem,
     RunItemStatus,
     RunOperation,
     RunStatus,
 )
 from paper_harness.domain.reports import (
+    EnrichmentStage,
     ReportComparisonHighlight,
     ReportCounts,
+    ReportEnrichmentFailure,
     ReportEntityHighlight,
     ReportFailure,
     ReportGraphChanges,
@@ -41,6 +42,7 @@ from paper_harness.domain.reports import (
     ReportPaperHighlight,
     ReportType,
     aggregate_report_eligible,
+    product_item_ready_for_publication,
 )
 
 MAX_REPORT_HIGHLIGHTED_PAPERS = 200
@@ -70,6 +72,7 @@ def build_daily_report_plan(
     trends: tuple[TrendSnapshot, ...],
     lineages: tuple[LineageSnapshot, ...],
     omitted_entity_types: tuple[GraphEntityType, ...],
+    enrichment_failures: tuple[ReportEnrichmentFailure, ...] = (),
 ) -> DailyReportAssemblyPlan:
     """Build authoritative daily report input before any optional LLM call."""
 
@@ -82,7 +85,9 @@ def build_daily_report_plan(
         item
         for item in run_detail.items
         if item.item.status is RunItemStatus.IN_PROGRESS
-        and item.item.stage is PaperStage.TREND_SNAPSHOTS_GENERATED
+        and product_item_ready_for_publication(
+            item.item.stage, item.item.paper_version_id, enrichment_failures
+        )
     )
     failed_items = tuple(
         item for item in run_detail.items if item.item.status is RunItemStatus.FAILED
@@ -203,11 +208,16 @@ def build_daily_report_plan(
             failed_count=len(failed_items),
             lineages_by_root=lineages_by_root,
             omitted_entity_types=omitted_entity_types,
+            enrichment_failures=enrichment_failures,
         )
     )
     missing_trend_windows = (
         ()
         if no_update
+        or any(
+            failure.failed_stage is EnrichmentStage.TREND_AGGREGATION
+            for failure in enrichment_failures
+        )
         else tuple(
             window
             for window in TrendWindow
@@ -221,6 +231,18 @@ def build_daily_report_plan(
             + ", ".join(f"{window.days}-day" for window in missing_trend_windows)
             + ".",
         )
+    missing_sections = (
+        *missing_sections,
+        *(
+            f"{failure.failed_stage.value} failed ({failure.error_code}); "
+            + (
+                "the report's trend computation is unavailable."
+                if failure.paper_id is None
+                else f"paper {failure.paper_id}."
+            )
+            for failure in enrichment_failures
+        ),
+    )
     referenced_evidence_ids = tuple(
         dict.fromkeys(
             evidence_id
@@ -282,6 +304,7 @@ def build_daily_report_plan(
         limitations=tuple(limitations),
         evidence=tuple(evidence_by_id[item] for item in referenced_evidence_ids),
         missing_sections=missing_sections,
+        enrichment_failures=enrichment_failures,
     )
     return DailyReportAssemblyPlan(
         request=request,
@@ -368,6 +391,29 @@ def build_periodic_report_plan(
         )
     )
     status = RunStatus.PARTIAL if failures else RunStatus.COMPLETE
+    enrichment_occurrences: dict[
+        tuple[EnrichmentStage, UUID | None], list[tuple[date, ReportEnrichmentFailure]]
+    ] = {}
+    for detail in daily_reports:
+        for failure in detail.report.enrichment_failures:
+            enrichment_occurrences.setdefault(
+                (failure.failed_stage, failure.paper_version_id), []
+            ).append((detail.report.logical_date, failure))
+    enrichment_failures = tuple(
+        replace(
+            occurrences[-1][1],
+            id=uuid5(report_id, f"enrichment:{stage.value}:{version_id}"),
+            report_id=report_id,
+            error_detail=_concise(
+                f"{len(occurrences)} daily failure occurrence(s): "
+                + "; ".join(f"{day}: {item.error_code}" for day, item in occurrences),
+                1000,
+            ),
+        )
+        for (stage, version_id), occurrences in sorted(
+            enrichment_occurrences.items(), key=lambda item: (item[0][0].value, str(item[0][1]))
+        )
+    )
     evidence_by_id = {item.id: item for detail in daily_reports for item in detail.evidence}
     usable_evidence_ids = {
         evidence_id
@@ -482,6 +528,7 @@ def build_periodic_report_plan(
         limitations=limitations,
         evidence=tuple(evidence_by_id[item] for item in referenced_evidence_ids),
         missing_sections=missing_sections,
+        enrichment_failures=enrichment_failures,
     )
     return PeriodicReportAssemblyPlan(
         request=request,
@@ -527,6 +574,7 @@ def _missing_sections(
     failed_count: int,
     lineages_by_root: dict[UUID, LineageSnapshot],
     omitted_entity_types: tuple[GraphEntityType, ...],
+    enrichment_failures: tuple[ReportEnrichmentFailure, ...],
 ) -> tuple[str, ...]:
     values: list[str] = []
     if failed_count:
@@ -547,13 +595,27 @@ def _missing_sections(
             f"{'s' if comparison_unavailable != 1 else ''}; "
             "reason NO_COMPATIBLE_HISTORICAL_ANALYSIS."
         )
-    missing_lineages = sum(item.paper_id not in lineages_by_root for item in ready_inputs)
+    failed_lineage_inputs = {
+        failure.paper_id
+        for failure in enrichment_failures
+        if failure.failed_stage
+        in (
+            EnrichmentStage.GRAPH_EXTRACTION,
+            EnrichmentStage.LINEAGE_GENERATION,
+        )
+    }
+    missing_lineages = sum(
+        item.paper_id not in lineages_by_root and item.paper_id not in failed_lineage_inputs
+        for item in ready_inputs
+    )
     if missing_lineages:
         values.append(
             f"INSUFFICIENT_DATA: lineage is unavailable for {missing_lineages} analyzed paper"
             f"{'s' if missing_lineages != 1 else ''}."
         )
-    if omitted_entity_types:
+    if omitted_entity_types and not any(
+        failure.failed_stage is EnrichmentStage.GRAPH_EXTRACTION for failure in enrichment_failures
+    ):
         labels = ", ".join(item.value for item in sorted(set(omitted_entity_types)))
         values.append(f"INSUFFICIENT_DATA: graph entities are unavailable for {labels}.")
     return tuple(values)

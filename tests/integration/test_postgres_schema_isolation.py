@@ -12,7 +12,9 @@ from alembic.config import Config
 from sqlalchemy import Engine, String, column, select, table, text
 from sqlalchemy.schema import CreateSchema, DropSchema
 
+from paper_harness.adapters.postgres import PostgresRepository
 from paper_harness.adapters.postgres.database import create_postgres_engine
+from paper_harness.adapters.postgres.repository import EXPECTED_DATABASE_REVISION
 
 
 def test_selected_schema_has_independent_migrations_and_runtime_search_path(
@@ -45,7 +47,11 @@ def test_selected_schema_has_independent_migrations_and_runtime_search_path(
             assert connection.execute(text("SHOW search_path")).scalar_one() == (
                 f"{database_schema},pg_catalog"
             )
-            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            assert (
+                connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                == EXPECTED_DATABASE_REVISION
+            )
+        PostgresRepository(demo_engine).check_ready()
 
         with postgres_engine.connect() as connection:
             assert connection.execute(select(version_table.c.version_num)).scalar_one() == (

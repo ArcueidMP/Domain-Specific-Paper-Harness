@@ -1,17 +1,29 @@
 # Current Status
 ## Current milestone
 
-The private production MVP is deployed. The current milestone is the verified
-Apache-2.0 v0.1.0 public source release, with no production runtime change and
-no public Demo provisioning.
+The private production MVP is deployed. The current maintenance revision fixes
+topic isolation, discovery completeness, and optional computation diagnostics.
+These source changes are verified locally; they have not been pushed or deployed.
 
 ## Completed capabilities
 
-Production is an IAP-protected, availability-first, multi-topic product. Daily
-discovery uses a 168-hour overlap for delayed arXiv announcements, excludes
-canonically published versions from normal selection, and publishes terminal
-`COMPLETE`, honest `PARTIAL`, or transparent `NO_UPDATE` results without making
-optional enrichment a publication blocker.
+Published-version deduplication now requires the active topic, while compatible
+paper analyses remain reusable across topics.
+
+Daily discovery uses official arXiv OAI-PMH identifiers and arxiv.py metadata.
+Atomic checkpoints preserve pending batches and expired-token recovery; only
+complete harvests advance the shared cursor. Historical reprocessing preserves
+its local exact-version baseline, and an explicit execution UUID resumes an
+interrupted reprocessing revision.
+
+Graph, trend, and lineage computation failures persist with stage, code, scope,
+and concise diagnostic. They remain visible in reports, the API, the UI, and
+bounded warning logs without advancing failed processing stages or blocking
+usable source metadata. Demo snapshots redact their diagnostic details.
+
+DeepSeek remains `deepseek-v4-flash`. The September 8 compatibility assessment
+rejected the unavailable stable V4.1 identifier and the short-lived beta as an
+unattended production default; see `docs/MODEL_COMPATIBILITY.md`.
 
 The codebase supports an independently migrated PostgreSQL `demo` schema,
 least-privilege sync/read roles, deterministic redacted snapshots, operator CLI
@@ -24,22 +36,25 @@ Terraform variables file and are not committed to the public repository.
 
 ## Verification
 
-The public-source release passed tracked-file hygiene, Ruff, Pyright, generated
-OpenAPI and TypeScript contract checks, dependency-license reviews, 931 Python
-tests with four explicit live tests skipped, 34 frontend unit tests, two
-Playwright flows, a clean Alembic upgrade and revision check, Terraform format
-and validation, Docker Compose validation, and all three runtime image builds.
-The documented Windows keyless Quick Start also migrated a clean database and
-returned successful Web, liveness, readiness, and topic responses.
-Focused IAP/Terraform tests passed, and the production IAM-only plan applied as
-one in-place binding update with no additions, deletions, or Cloud Run revision.
+The integrated non-live Python regression passed 983 tests with four live tests
+deselected. Subsequent focused recovery checks passed 41 tests, including the
+additional changed-topic resume failure case. PostgreSQL verification used a
+dedicated disposable local instance and covered clean migration, populated
+0006-to-0008 upgrades, migration/model parity, exact readiness, topic isolation,
+durable discovery recovery, diagnostic readback, rollback, and Demo isolation.
+
+Frontend lint, typecheck, production build, all 35 unit tests, and both
+Playwright flows passed. Local Vitest used its forks pool because the workstation
+threads pool could not start. Ruff, Pyright, generated OpenAPI/TypeScript drift
+checks, and repository hygiene were checked for the maintenance changes.
 
 ## Deployment
 
 The private Web/API remains protected by Google Cloud IAP. Three topic-specific
-Daily Jobs and private GROBID remain deployed. The public source release did not
-change production secrets, database migration state, Scheduler, or any deployed
-runtime.
+Daily Jobs and private GROBID remain deployed. This maintenance work did not
+change production secrets, Scheduler, database migration state, or runtime
+images. Migrations `0007_ingestion_progress` and `0008_enrichment_failures` are
+verified locally and await an explicit production rollout with the matching code.
 
 The IAP allowlist is Terraform-managed and currently contains the owner and one
 additional approved collaborator. Their identities are intentionally omitted
@@ -50,11 +65,11 @@ Demo API, or Cloudflare resource are provisioned in production.
 
 ## Current blockers
 
-There is no known implementation, verification, production, or data blocker for
-the public source distribution. Demo provisioning remains a separate future
-rollout.
+There is no blocker for the verified local maintenance changes. Production
+rollout and Demo provisioning are outside this task.
 
 ## Next milestone
 
-Publish and maintain the v0.1.x source release. The Demo database bootstrap and
-public runtime remain a separate later milestone.
+Review and explicitly roll out the maintenance revision with its additive
+migrations. The Demo database bootstrap and public runtime remain a separate
+later milestone.

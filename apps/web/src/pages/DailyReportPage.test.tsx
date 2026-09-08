@@ -6,6 +6,45 @@ import { dailyRun, evidenceId, methodNodeId, paperId, report } from "../test/m4-
 import { jsonResponse, renderWithProviders, requestPath } from "../test/render";
 
 describe("DailyReportPage", () => {
+  it("distinguishes failed enrichment from missing data in a complete publication", async () => {
+    const publication = {
+      ...dailyRun,
+      run: { ...dailyRun.run, status: "COMPLETE", failed_count: 0 },
+      report: {
+        ...report,
+        status: "COMPLETE",
+        failures: [],
+        enrichment_failures: [{
+          id: "optional-trend-failure",
+          report_id: report.id,
+          failed_stage: "TREND_AGGREGATION",
+          paper_id: null,
+          paper_version_id: null,
+          error_code: "TREND_AGGREGATION_INVALID",
+          retryable: false,
+          error_detail: "The trend input contains an invalid relation.",
+          schema_version: 1,
+          created_at: report.created_at,
+        }],
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      requestPath(input) === "/api/v1/daily/latest"
+        ? Promise.resolve(jsonResponse(publication))
+        : Promise.resolve(jsonResponse({ items: [], total: 0, limit: 20, offset: 0 })),
+    ));
+
+    renderWithProviders(<DailyReportPage />);
+
+    expect(await screen.findByText("Some research enrichment failed")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Enrichment failures" })).toBeInTheDocument();
+    expect(screen.getByText("TREND_AGGREGATION_INVALID")).toBeInTheDocument();
+    expect(screen.getByText("Report-wide computation")).toBeInTheDocument();
+    expect(screen.getByText("The trend input contains an invalid relation.")).toBeInTheDocument();
+    expect(screen.getAllByText("COMPLETE").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Partial report")).not.toBeInTheDocument();
+  });
+
   it("shows PARTIAL failures, limitations, evidence links, and lineage navigation", async () => {
     vi.stubGlobal(
       "fetch",

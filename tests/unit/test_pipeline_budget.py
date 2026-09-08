@@ -15,7 +15,7 @@ def test_default_pipeline_timeout_exceeds_the_declared_worst_case() -> None:
         backfill_timeout_seconds=1800,
     )
 
-    assert budget.required_worst_case_seconds == 26_580
+    assert budget.required_worst_case_seconds == 27_390
     assert budget.timeout_seconds == 28_800
     assert budget.timeout_seconds > budget.required_worst_case_seconds
 
@@ -30,10 +30,10 @@ def test_pipeline_accepts_a_bounded_timeout_below_the_additive_diagnostic() -> N
     )
 
     assert budget.timeout_seconds == 7200
-    assert budget.required_worst_case_seconds == 26_580
+    assert budget.required_worst_case_seconds == 27_390
 
 
-def test_deployment_smoke_timeout_exceeds_its_shared_backfill_budget() -> None:
+def test_deployment_smoke_timeout_is_below_the_additive_diagnostic() -> None:
     budget = pipeline_budget(
         timeout_seconds=7200,
         selected_papers=2,
@@ -44,8 +44,8 @@ def test_deployment_smoke_timeout_exceeds_its_shared_backfill_budget() -> None:
         backfill_timeout_seconds=1800,
     )
 
-    assert budget.required_worst_case_seconds == 6420
-    assert budget.timeout_seconds > budget.required_worst_case_seconds
+    assert budget.required_worst_case_seconds == 7230
+    assert budget.timeout_seconds < budget.required_worst_case_seconds
 
 
 def test_production_smoke_timeout_covers_the_same_shared_backfill_contract() -> None:
@@ -57,5 +57,5 @@ def test_production_smoke_timeout_covers_the_same_shared_backfill_contract() -> 
         backfill_timeout_seconds=1800,
     )
 
-    assert budget.required_worst_case_seconds == 5520
+    assert budget.required_worst_case_seconds == 6330
     assert budget.timeout_seconds > budget.required_worst_case_seconds

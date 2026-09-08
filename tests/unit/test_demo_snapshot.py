@@ -31,6 +31,7 @@ def test_manifest_explicitly_classifies_every_persistence_table() -> None:
     assert included.isdisjoint(manifest.excluded_tables)
     assert manifest.excluded_tables == DEMO_EXCLUDED_TABLES
     assert manifest.excluded_tables == {
+        "arxiv_discovery_progress",
         "citation_contexts",
         "historical_backfill_runs",
         "historical_corpus_entries",
@@ -67,10 +68,12 @@ def test_manifest_redacts_only_free_form_diagnostics_and_keeps_metrics() -> None
         assert table.redactions == (("error_detail", "NULL"),)
         assert "error_detail" not in table.source_columns
 
-    report_failures = manifest.table("report_failures")
-    assert report_failures.redactions == (("error_detail", f"'{DEMO_REDACTED_DIAGNOSTIC}'"),)
-    assert "error_code" in report_failures.source_columns
-    assert "retryable" in report_failures.source_columns
+    for table_name in ("report_failures", "report_enrichment_failures"):
+        failures = manifest.table(table_name)
+        assert failures.redactions == (("error_detail", f"'{DEMO_REDACTED_DIAGNOSTIC}'"),)
+        assert "error_detail" not in failures.source_columns
+        assert "error_code" in failures.source_columns
+        assert "retryable" in failures.source_columns
 
     for table_name, metrics in {
         "daily_runs": ("selected_count", "completed_count", "failed_count"),

@@ -35,6 +35,7 @@ const report: Report = {
   generated_at: "2026-08-08T05:04:00+08:00",
   schema_version: 1,
   created_at: "2026-08-08T05:04:00+08:00",
+  enrichment_failures: [],
   failures: [
     {
       id: "c7276cc5-8134-49d6-a95e-2ee73c4025f8",

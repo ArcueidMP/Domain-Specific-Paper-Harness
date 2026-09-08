@@ -33,11 +33,13 @@ from paper_harness.adapters.postgres.models import (
     PaperRow,
     PaperVersionRow,
     PipelineExecutionRow,
+    ReportEnrichmentFailureRow,
     ReportFailureRow,
     ReportRow,
     TopicPaperRow,
     TopicRow,
 )
+from paper_harness.adapters.postgres.repository import EXPECTED_DATABASE_REVISION
 from paper_harness.entrypoints.api import create_app
 from paper_harness.entrypoints.demo import (
     execute_demo_schema_bootstrap,
@@ -110,6 +112,7 @@ def test_demo_roles_snapshot_and_read_api_are_isolated(
         assert dict(first.table_counts)["topics"] >= 2
         assert dict(first.table_counts)["reports"] >= 2
         assert dict(first.table_counts)["report_failures"] >= 1
+        assert dict(first.table_counts)["report_enrichment_failures"] >= 1
         assert dict(first.table_counts)["pipeline_executions"] >= 1
         assert dict(first.table_counts)["daily_runs"] >= 2
         with read_engine.connect() as connection:
@@ -128,6 +131,13 @@ def test_demo_roles_snapshot_and_read_api_are_isolated(
                 {"report_id": report_id},
             ).one()
             assert failure == ("ANALYSIS_UNAVAILABLE", DEMO_REDACTED_DIAGNOSTIC)
+            assert connection.execute(
+                text(
+                    "SELECT failed_stage, error_code, error_detail FROM report_enrichment_failures "
+                    "WHERE report_id = :report_id"
+                ),
+                {"report_id": report_id},
+            ).one() == ("TREND_AGGREGATION", "TREND_AGGREGATION_INVALID", DEMO_REDACTED_DIAGNOSTIC)
             assert report_counts == (2, 1, 1, 2)
             report_titles = tuple(
                 connection.scalars(text("SELECT title FROM reports ORDER BY title"))
@@ -178,7 +188,8 @@ def test_demo_roles_snapshot_and_read_api_are_isolated(
             )
         with postgres_engine.begin() as connection:
             connection.execute(
-                text("UPDATE demo.alembic_version SET version_num = '0006_topic_reprocessing'")
+                text("UPDATE demo.alembic_version SET version_num = :revision"),
+                {"revision": EXPECTED_DATABASE_REVISION},
             )
             assert (
                 connection.scalar(
@@ -349,6 +360,21 @@ def _seed_public_snapshot(
                 "error_code": "ANALYSIS_UNAVAILABLE",
                 "retryable": False,
                 "error_detail": "private diagnostic canary",
+                "schema_version": 1,
+                "created_at": now,
+            },
+        )
+        connection.execute(
+            insert(ReportEnrichmentFailureRow),
+            {
+                "id": uuid4(),
+                "report_id": report_id,
+                "paper_id": None,
+                "paper_version_id": None,
+                "failed_stage": "TREND_AGGREGATION",
+                "error_code": "TREND_AGGREGATION_INVALID",
+                "retryable": False,
+                "error_detail": "private enrichment diagnostic canary",
                 "schema_version": 1,
                 "created_at": now,
             },

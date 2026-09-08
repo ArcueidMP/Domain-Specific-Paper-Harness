@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import cast
+from typing import NoReturn, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 from tests.fakes import FakeRepository
 
+from paper_harness.application import publish_product as publication_module
 from paper_harness.application.analyze_papers import build_analysis_bundle
 from paper_harness.application.generate_periodic_report import (
     GeneratePeriodicReport,
@@ -79,9 +80,12 @@ from paper_harness.domain.models import (
     TopicConfig,
 )
 from paper_harness.domain.reports import (
+    EnrichmentStage,
     GeneratedReportNarrative,
     GeneratedReportSection,
+    Report,
     ReportCounts,
+    ReportEnrichmentFailure,
     ReportEntityHighlight,
     ReportEvidenceReference,
     ReportFailure,
@@ -415,8 +419,6 @@ def _graph_corpus(papers: tuple[ProductPaperInput, ...]) -> GraphCorpusInput:
     bundles: list[KnowledgeGraphBundle] = []
     version_metadata: dict[UUID, tuple[UUID, str, date]] = {}
     for paper in papers:
-        if not paper.comparisons:
-            continue
         bundles.append(
             extract_analysis_graph(
                 TOPIC_ID,
@@ -853,6 +855,155 @@ def test_no_comparison_still_builds_analysis_graph_and_report() -> None:
     assert repository.product_run.report is not None
     assert repository.persisted_trends
     assert repository.reports
+    assert repository.product_run.report.report.enrichment_failures == ()
+
+
+@pytest.mark.parametrize(
+    ("function_name", "failed_stage", "last_successful_stage", "error_code"),
+    [
+        (
+            "extract_analysis_graph",
+            EnrichmentStage.GRAPH_EXTRACTION,
+            PaperStage.COMPARED,
+            "GRAPH_EXTRACTION_INVALID",
+        ),
+        (
+            "aggregate_trend_snapshots",
+            EnrichmentStage.TREND_AGGREGATION,
+            PaperStage.GRAPH_UPDATED,
+            "TREND_AGGREGATION_INVALID",
+        ),
+        (
+            "build_lineage_snapshot",
+            EnrichmentStage.LINEAGE_GENERATION,
+            PaperStage.TREND_SNAPSHOTS_GENERATED,
+            "LINEAGE_GENERATION_INVALID",
+        ),
+    ],
+)
+def test_computation_failure_preserves_analysis_and_records_actual_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    function_name: str,
+    failed_stage: EnrichmentStage,
+    last_successful_stage: PaperStage,
+    error_code: str,
+) -> None:
+    paper = _product_paper(1)
+    repository = _repository((paper,))
+    llm = _ReportLLM()
+    diagnostic = "The bounded computation received an invalid entity relation."
+
+    def invalid_computation(*_args: object, **_kwargs: object) -> NoReturn:
+        raise DomainInvariantError(diagnostic)
+
+    monkeypatch.setattr(publication_module, function_name, invalid_computation)
+    original_finalize = repository.finalize_product_publication
+    stages_at_publication: list[PaperStage] = []
+
+    def capture_finalize(*, run_id: UUID, report: Report, completed_at: datetime) -> DailyRun:
+        stages_at_publication.extend(item.stage for item in repository.items)
+        return original_finalize(run_id=run_id, report=report, completed_at=completed_at)
+
+    monkeypatch.setattr(repository, "finalize_product_publication", capture_finalize)
+    publisher = PublishProduct(repository=repository, llm=cast(LLMPort, llm), clock=lambda: NOW)
+    run = publisher.execute(
+        _topic(),
+        narrative_mode=ReportNarrativeMode.DEEPSEEK,
+        logical_date=AS_OF,
+    )
+
+    assert run.status is RunStatus.COMPLETE
+    assert (run.completed_count, run.failed_count) == (1, 0)
+    assert stages_at_publication == [last_successful_stage]
+    assert repository.product_run is not None and repository.product_run.report is not None
+    report = repository.product_run.report.report
+    assert report.failures == ()
+    assert report.evidence_ids
+    assert report.highlighted_papers[0].evidence_ids
+    assert len(report.enrichment_failures) == 1
+    failure = report.enrichment_failures[0]
+    assert failure.failed_stage is failed_stage
+    assert failure.error_code == error_code
+    assert failure.error_detail == diagnostic
+    assert failure.retryable is False
+    assert failure.paper_version_id == (
+        None if failed_stage is EnrichmentStage.TREND_AGGREGATION else paper.paper_version_id
+    )
+    assert any(error_code in section for section in report.missing_sections)
+    assert llm.calls[0].enrichment_failures == ()
+    assert all(diagnostic not in section for section in llm.calls[0].missing_sections)
+    if failed_stage is EnrichmentStage.TREND_AGGREGATION:
+        assert report.trend_snapshot_ids == ()
+        assert not any("INSUFFICIENT_DATA: trend" in value for value in report.missing_sections)
+    else:
+        assert not any("INSUFFICIENT_DATA: lineage" in value for value in report.missing_sections)
+    assert (
+        publisher.execute(
+            _topic(),
+            narrative_mode=ReportNarrativeMode.DEEPSEEK,
+            logical_date=AS_OF,
+        )
+        == run
+    )
+    assert repository.product_run.report.report == report
+
+
+def test_graph_failure_does_not_stop_other_papers_or_claim_a_missing_comparison(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _product_paper(1, with_comparison=False)
+    second = _product_paper(2)
+    repository = _repository((first, second))
+    original_extract = publication_module.extract_analysis_graph
+    original_finalize = repository.finalize_product_publication
+    stages: dict[UUID, PaperStage] = {}
+
+    def extract(topic_id: UUID, analysis: AnalysisBundle, *, paper_title: str):
+        if analysis.analysis.paper_version_id == first.paper_version_id:
+            raise DomainInvariantError("Invalid graph input for one paper.")
+        return original_extract(topic_id, analysis, paper_title=paper_title)
+
+    def capture_finalize(*, run_id: UUID, report: Report, completed_at: datetime) -> DailyRun:
+        stages.update({item.paper_version_id: item.stage for item in repository.items})
+        return original_finalize(run_id=run_id, report=report, completed_at=completed_at)
+
+    monkeypatch.setattr(publication_module, "extract_analysis_graph", extract)
+    monkeypatch.setattr(repository, "finalize_product_publication", capture_finalize)
+    run = PublishProduct(repository=repository, llm=None, clock=lambda: NOW).execute(
+        _topic(),
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=AS_OF,
+    )
+
+    assert run.status is RunStatus.COMPLETE
+    assert run.completed_count == 2
+    assert stages[first.paper_version_id] is PaperStage.EVIDENCE_EXTRACTED
+    assert stages[second.paper_version_id] is PaperStage.TREND_SNAPSHOTS_GENERATED
+    assert first.paper_version_id not in repository.product_graphs
+    assert second.paper_version_id in repository.product_graphs
+    assert len(repository.persisted_lineages) == 1
+
+
+def test_no_update_still_records_a_failed_trend_computation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(())
+
+    def invalid_trends(*_args: object, **_kwargs: object) -> NoReturn:
+        raise DomainInvariantError("Invalid trend input.")
+
+    monkeypatch.setattr(publication_module, "aggregate_trend_snapshots", invalid_trends)
+    run = PublishProduct(repository=repository, llm=None, clock=lambda: NOW).execute(
+        _topic(),
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=AS_OF,
+    )
+
+    assert run.status is RunStatus.COMPLETE and run.selected_count == 0
+    assert repository.product_run is not None and repository.product_run.report is not None
+    (failure,) = repository.product_run.report.report.enrichment_failures
+    assert failure.failed_stage is EnrichmentStage.TREND_AGGREGATION
+    assert failure.paper_id is None
 
 
 def test_deepseek_publication_uses_only_generated_sections_and_provenance() -> None:
@@ -1190,6 +1341,57 @@ def test_weekly_report_is_persisted_and_subsequent_generation_is_idempotent() ->
     assert first.narrative_mode is ReportNarrativeMode.STRUCTURED_ONLY
     assert tuple(section.kind for section in first.sections) == tuple(ReportSectionKind)
     assert len(repository.reports) == 1
+
+
+def test_periodic_report_keeps_enrichment_diagnostics_separate_from_core_failures() -> None:
+    period_start = date(2026, 8, 3)
+    period_end = date(2026, 8, 9)
+    source = _periodic_input(
+        report_type=ReportType.WEEKLY,
+        period_start=period_start,
+        period_end=period_end,
+        daily_count=7,
+        paper_count=3,
+    )
+    first = source.daily_reports[0]
+    failure = ReportEnrichmentFailure(
+        id=_id("daily-enrichment-failure"),
+        report_id=first.report.id,
+        failed_stage=EnrichmentStage.TREND_AGGREGATION,
+        paper_id=None,
+        paper_version_id=None,
+        error_code="TREND_AGGREGATION_INVALID",
+        retryable=False,
+        error_detail="Daily trend input was invalid.",
+        schema_version=1,
+        created_at=NOW,
+    )
+    repository = FakeRepository()
+    repository.periodic_input = replace(
+        source,
+        daily_reports=(
+            replace(first, report=replace(first.report, enrichment_failures=(failure,))),
+            *source.daily_reports[1:],
+        ),
+    )
+    llm = _ReportLLM()
+    report = GeneratePeriodicReport(
+        repository=repository, llm=cast(LLMPort, llm), clock=lambda: NOW
+    ).execute(
+        _topic(),
+        report_type=ReportType.WEEKLY,
+        period_start=period_start,
+        period_end=period_end,
+        narrative_mode=ReportNarrativeMode.DEEPSEEK,
+    )
+
+    assert report.status is RunStatus.COMPLETE and report.failures == ()
+    (inherited,) = report.enrichment_failures
+    assert inherited.report_id == report.id
+    assert inherited.id != failure.id
+    assert str(first.report.logical_date) in inherited.error_detail
+    assert inherited.error_code == "TREND_AGGREGATION_INVALID"
+    assert llm.calls[0].enrichment_failures == ()
 
 
 def test_periodic_report_does_not_propagate_newly_rejected_evidence() -> None:

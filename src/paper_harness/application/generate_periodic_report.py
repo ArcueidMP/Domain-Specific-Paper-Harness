@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 
 from paper_harness.application.report_inputs import build_periodic_report_plan
@@ -127,7 +128,7 @@ class GeneratePeriodicReport:
     def _generate(self, request: ReportNarrativeRequest) -> GeneratedReportNarrative:
         if self._llm is None:
             raise AssertionError("DeepSeek mode was validated before report generation")
-        return self._llm.generate_report(request)
+        return self._llm.generate_report(replace(request, enrichment_failures=()))
 
     def _aware_now(self) -> datetime:
         value = self._clock()

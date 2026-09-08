@@ -190,6 +190,12 @@ def assemble_product_report(
         schema_version=1,
         created_at=created_at,
         failures=request.failures,
+        enrichment_failures=tuple(
+            sorted(
+                request.enrichment_failures,
+                key=lambda failure: (failure.failed_stage.value, str(failure.paper_version_id)),
+            )
+        ),
         sections=sections,
         report_type=request.report_type,
         period_start=request.period_start,

@@ -90,9 +90,11 @@ from paper_harness.domain.models import (
     RunStatus,
 )
 from paper_harness.domain.reports import (
+    EnrichmentStage,
     Report,
     ReportComparisonHighlight,
     ReportCounts,
+    ReportEnrichmentFailure,
     ReportEntityHighlight,
     ReportEvidenceReference,
     ReportFailure,
@@ -103,6 +105,7 @@ from paper_harness.domain.reports import (
     ReportSection,
     ReportSectionKind,
     ReportType,
+    product_item_ready_for_publication,
 )
 from paper_harness.ports.repository import (
     RepositoryError,
@@ -136,6 +139,7 @@ from .models import (
     ProductRunPaperInputRow,
     RelationEvidenceLinkRow,
     ReportComparisonHighlightRow,
+    ReportEnrichmentFailureRow,
     ReportEntityHighlightRow,
     ReportEvidenceLinkRow,
     ReportFailureRow,
@@ -1639,7 +1643,6 @@ class ProductRepositoryMixin:
     ) -> None:
         if (expected_stage, next_stage) not in (
             (PaperStage.EVIDENCE_EXTRACTED, PaperStage.COMPARED),
-            (PaperStage.COMPARED, PaperStage.GRAPH_UPDATED),
         ):
             raise RepositoryIntegrityError("unsupported product item transition")
         try:
@@ -1675,8 +1678,8 @@ class ProductRepositoryMixin:
         expected_stage: PaperStage,
         updated_at: datetime,
     ) -> GraphWriteResult:
-        if expected_stage is not PaperStage.COMPARED:
-            raise RepositoryIntegrityError("graph persistence requires the COMPARED stage")
+        if expected_stage not in (PaperStage.EVIDENCE_EXTRACTED, PaperStage.COMPARED):
+            raise RepositoryIntegrityError("graph persistence requires grounded source analysis")
         try:
             with self._sessions.begin() as session:
                 item = _locked_product_item(session, run_id, paper_version_id)
@@ -2050,11 +2053,24 @@ class ProductRepositoryMixin:
                     if row.status == RunItemStatus.IN_PROGRESS.value
                     and row.stage == PaperStage.TREND_SNAPSHOTS_GENERATED.value
                 )
+                without_graph = tuple(
+                    row
+                    for row in item_rows
+                    if row.status == RunItemStatus.IN_PROGRESS.value
+                    and row.stage
+                    in (PaperStage.EVIDENCE_EXTRACTED.value, PaperStage.COMPARED.value)
+                )
                 no_update = not item_rows and run_row.selected_count == 0
                 metadata_only = bool(item_rows) and all(
                     row.status == RunItemStatus.FAILED.value for row in item_rows
                 )
-                if not graph_items and not already_advanced and not no_update and not metadata_only:
+                if (
+                    not graph_items
+                    and not already_advanced
+                    and not without_graph
+                    and not no_update
+                    and not metadata_only
+                ):
                     raise RepositoryError("product run has no graph-complete items")
                 if trends and (
                     len(trends) != 3
@@ -2098,7 +2114,7 @@ class ProductRepositoryMixin:
                         lineage,
                         publication_run_id=run_id,
                     )
-                for item in graph_items:
+                for item in graph_items if trends else ():
                     item.stage = PaperStage.TREND_SNAPSHOTS_GENERATED.value
                     item.updated_at = updated_at
                 session.flush()
@@ -2158,7 +2174,9 @@ class ProductRepositoryMixin:
                     row
                     for row in item_rows
                     if row.status == RunItemStatus.IN_PROGRESS.value
-                    and row.stage == PaperStage.TREND_SNAPSHOTS_GENERATED.value
+                    and product_item_ready_for_publication(
+                        PaperStage(row.stage), row.paper_version_id, report.enrichment_failures
+                    )
                 )
                 failed = tuple(row for row in item_rows if row.status == RunItemStatus.FAILED.value)
                 no_update = (
@@ -2182,6 +2200,34 @@ class ProductRepositoryMixin:
                     item.paper_version_id for item in item_rows
                 }:
                     raise RepositoryError("daily report cards do not match selected product items")
+                ready_by_version = {item.paper_version_id: item for item in ready}
+                for failure in report.enrichment_failures:
+                    if failure.failed_stage is EnrichmentStage.TREND_AGGREGATION:
+                        if report.trend_snapshot_ids:
+                            raise RepositoryError(
+                                "failed trend computation cannot publish snapshots"
+                            )
+                        continue
+                    if failure.paper_version_id is None:
+                        raise RepositoryError("paper enrichment failure has no version owner")
+                    item = ready_by_version.get(failure.paper_version_id)
+                    if item is None or item.paper_id != failure.paper_id:
+                        raise RepositoryError(
+                            "enrichment failure is not owned by a usable source item"
+                        )
+                    if (
+                        failure.failed_stage is EnrichmentStage.GRAPH_EXTRACTION
+                        and item.stage
+                        not in (PaperStage.EVIDENCE_EXTRACTED.value, PaperStage.COMPARED.value)
+                    ):
+                        raise RepositoryError("failed graph extraction cannot claim a graph stage")
+                    if failure.failed_stage is EnrichmentStage.LINEAGE_GENERATION and any(
+                        highlight.root_paper_id == failure.paper_id
+                        for highlight in report.lineage_highlights
+                    ):
+                        raise RepositoryError(
+                            "failed lineage computation cannot publish its snapshot"
+                        )
                 for item in ready:
                     item.stage = PaperStage.REPORT_GENERATED.value
                     item.updated_at = completed_at
@@ -2640,6 +2686,15 @@ def _report_detail_for_run(session: Session, run_id: UUID) -> ReportDetail | Non
 
 
 def _report_detail_from_session(session: Session, row: ReportRow) -> ReportDetail:
+    enrichment_failure_rows = tuple(
+        session.scalars(
+            select(ReportEnrichmentFailureRow)
+            .where(ReportEnrichmentFailureRow.report_id == row.id)
+            .order_by(
+                ReportEnrichmentFailureRow.failed_stage, ReportEnrichmentFailureRow.paper_version_id
+            )
+        )
+    )
     failure_rows = tuple(
         session.scalars(
             select(ReportFailureRow)
@@ -2768,6 +2823,21 @@ def _report_detail_from_session(session: Session, row: ReportRow) -> ReportDetai
                 created_at=item.created_at,
             )
             for item in failure_rows
+        ),
+        enrichment_failures=tuple(
+            ReportEnrichmentFailure(
+                id=item.id,
+                report_id=item.report_id,
+                failed_stage=EnrichmentStage(item.failed_stage),
+                paper_id=item.paper_id,
+                paper_version_id=item.paper_version_id,
+                error_code=item.error_code,
+                retryable=item.retryable,
+                error_detail=item.error_detail,
+                schema_version=item.schema_version,
+                created_at=item.created_at,
+            )
+            for item in enrichment_failure_rows
         ),
         sections=tuple(
             ReportSection(
@@ -4710,7 +4780,14 @@ def _insert_normalized_report(session: Session, report: Report) -> None:
         run_row = session.get(DailyRunRow, report.run_id)
         if run_row is None or run_row.topic_id != report.topic_id:
             raise RepositoryError("report run has the wrong topic owner")
-    version_ids = {item.paper_version_id for item in (*report.failures, *report.highlighted_papers)}
+    paper_references = (
+        *report.failures,
+        *report.highlighted_papers,
+        *(item for item in report.enrichment_failures if item.paper_version_id is not None),
+    )
+    version_ids = {
+        item.paper_version_id for item in paper_references if item.paper_version_id is not None
+    }
     versions = {
         row.id: row
         for row in session.scalars(
@@ -4719,7 +4796,8 @@ def _insert_normalized_report(session: Session, report: Report) -> None:
     }
     if set(versions) != version_ids or any(
         versions[item.paper_version_id].paper_id != item.paper_id
-        for item in (*report.failures, *report.highlighted_papers)
+        for item in paper_references
+        if item.paper_version_id is not None
     ):
         raise RepositoryError("report paper-version ownership is invalid")
     entity_ids = {item.graph_entity_id for item in report.major_entities}
@@ -4963,6 +5041,21 @@ def _insert_normalized_report(session: Session, report: Report) -> None:
                 error_detail=item.error_detail,
                 schema_version=item.schema_version,
                 created_at=item.created_at,
+            )
+        )
+    for failure in report.enrichment_failures:
+        session.add(
+            ReportEnrichmentFailureRow(
+                id=failure.id,
+                report_id=report.id,
+                failed_stage=failure.failed_stage.value,
+                paper_id=failure.paper_id,
+                paper_version_id=failure.paper_version_id,
+                error_code=failure.error_code,
+                retryable=failure.retryable,
+                error_detail=failure.error_detail,
+                schema_version=failure.schema_version,
+                created_at=failure.created_at,
             )
         )
     for position, item in enumerate(report.sections):

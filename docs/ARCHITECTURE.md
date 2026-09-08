@@ -46,24 +46,28 @@ schema conversion remain ordinary typed functions.
 
 ## Daily arXiv ingestion
 
-Daily discovery is arXiv-only. The application builds a query from
-`TopicConfig`, reads a persisted cursor with overlap, and requests metadata
-through the arxiv.py adapter. Normalization separates canonical arXiv identity
-from explicit versions, normalizes timestamps, deduplicates by canonical ID and
-version, and applies stable local ordering before pagination, overlap, cursor,
-and top-N decisions. Provider page order and equal timestamps are not validity
-invariants. A short transaction upserts papers, versions, source identities,
-authors, run items, and the next cursor.
+Daily discovery is arXiv-only. The application harvests the official OAI-PMH
+identifier stream for each UTC day and configured category, then uses arxiv.py
+to retrieve explicit-version metadata and PDF URLs. Topic inclusion and
+exclusion terms are applied locally to title and abstract metadata. See
+[ADR 0002](adr/0002-use-resumable-arxiv-discovery.md) for the coverage contract.
+
+Each ingestion run persists its fixed window, category/day position, provider
+continuation token, and pending metadata IDs. Accepted metadata and the next
+checkpoint commit together. Only exhausting every day/category continuation
+allows the shared watermark to advance. `discovery.max_results` bounds a
+metadata batch, not the total number of papers discoverable in the window.
+Paper analysis remains separately bounded by Daily selection limits.
 
 Database uniqueness, transactions, and a PostgreSQL advisory lock make repeated
 logical windows safe. Semantic Scholar never participates in daily discovery.
 
-The cursor overlap is a bound on arXiv submission-to-announcement visibility
-delay, not only clock skew. Production topics use a seven-day overlap and run
-after the 20:00 Eastern announcement so weekend and deferred batches remain in
-the discovery window. Repeated retrieval is safe because canonical paper
-versions are upserted idempotently and already published versions are excluded
-before normal Daily selection.
+The OAI datestamp records metadata availability or modification, independently
+of a paper's original submission/version timestamp. The configured seven-day
+overlap remains useful for replay. Expired tokens restart only the affected
+day/category; exhausted execution budgets leave resumable checkpoints. Canonical
+versions are upserted idempotently. Published-version exclusion is topic-scoped,
+while paper identities, parsing, and compatible analyses remain shared.
 
 ## Complete Daily pipeline
 
@@ -196,6 +200,14 @@ Independent valid items continue after an item failure. Upstream child statuses
 remain observable but do not have to equal the product-publication status; the
 report reflects its owning product run and carries the relevant missing-item
 details.
+
+Graph extraction, trend aggregation, and lineage computation failures are
+structured report diagnostics with a stage, stable code, retryability, and
+paper/version scope where applicable. They are persisted in the final report
+transaction and exposed through the generated API contract and report UI.
+Failed computations never advance their successful processing stage and are
+distinct from insufficient data. Safe metadata and analysis can still publish;
+core failure counts do not double-count optional enrichment failures.
 
 Public reads admit only terminal complete or partial owners. Failed staging data
 cannot leak into canonical product views. Deterministic 7/30/90-day aggregates

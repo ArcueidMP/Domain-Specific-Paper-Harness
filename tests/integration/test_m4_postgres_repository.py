@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
+from typing import NoReturn, cast
 from uuid import UUID, uuid5
 
 import pytest
@@ -23,16 +24,21 @@ from tests.integration.test_m3_postgres_repository import (
 )
 
 from paper_harness.adapters.postgres import PostgresRepository
+from paper_harness.adapters.postgres import product_repository as product_storage
 from paper_harness.adapters.postgres.models import (
     GraphEntityMentionRow,
     PaperAnalysisRow,
+    ReportEnrichmentFailureRow,
     ReportRow,
+    RunItemRow,
 )
+from paper_harness.application import publish_product as publication_module
 from paper_harness.application.analyze_papers import AnalyzePapers
 from paper_harness.application.ingest_arxiv import IngestArxiv
 from paper_harness.application.publish_product import PublishProduct
 from paper_harness.application.read_models import GraphView
 from paper_harness.domain.analysis import AnalysisScope, ModelUsage, VerificationStatus
+from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.domain.historical import (
     COMPARISON_DIMENSION_ORDER,
     CandidateOrigin,
@@ -83,6 +89,7 @@ from paper_harness.domain.models import (
     TopicConfig,
 )
 from paper_harness.domain.reports import (
+    EnrichmentStage,
     GeneratedReportNarrative,
     Report,
     ReportNarrativeMode,
@@ -90,6 +97,7 @@ from paper_harness.domain.reports import (
     ReportType,
 )
 from paper_harness.entrypoints.api import create_app
+from paper_harness.entrypoints.runtime import _run_item_failures
 from paper_harness.ports.arxiv import ArxivPaperRecord
 from paper_harness.ports.llm import AnalysisRequest, GeneratedAnalysis, LLMOutputError
 from paper_harness.ports.repository import RepositoryError, RepositoryIntegrityError
@@ -371,6 +379,7 @@ def _prepare_revised_source(
         source_record,
         version=2,
         title="An Unpublished Revised Agent Title",
+        abstract=source_record.abstract + " The revised study evaluates an LLM agent.",
         updated_at=revised_time,
         pdf_url=f"https://arxiv.org/pdf/{source_record.canonical_arxiv_id}v2",
         source_url=f"https://arxiv.org/abs/{source_record.canonical_arxiv_id}v2",
@@ -499,6 +508,152 @@ def test_zero_selection_publication_round_trips_as_complete_no_update(
     assert payload["run"]["status"] == "COMPLETE"
     assert payload["run"]["selected_count"] == 0
     assert "no update" in payload["report"]["summary"].lower()
+
+
+@pytest.mark.parametrize(
+    ("function_name", "failed_stage", "last_successful_stage"),
+    [
+        ("extract_analysis_graph", EnrichmentStage.GRAPH_EXTRACTION, PaperStage.COMPARED),
+        ("aggregate_trend_snapshots", EnrichmentStage.TREND_AGGREGATION, PaperStage.GRAPH_UPDATED),
+        (
+            "build_lineage_snapshot",
+            EnrichmentStage.LINEAGE_GENERATION,
+            PaperStage.TREND_SNAPSHOTS_GENERATED,
+        ),
+    ],
+)
+def test_optional_computation_failure_round_trips_without_losing_analysis(
+    postgres_repository: PostgresRepository,
+    postgres_engine: Engine,
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+    monkeypatch: pytest.MonkeyPatch,
+    function_name: str,
+    failed_stage: EnrichmentStage,
+    last_successful_stage: PaperStage,
+) -> None:
+    _, logical_date = _prepare_complete_source(postgres_repository, topic_config, arxiv_record_v1)
+
+    def invalid_computation(*_args: object, **_kwargs: object) -> NoReturn:
+        raise DomainInvariantError("The persisted computation input has an invalid relation.")
+
+    monkeypatch.setattr(publication_module, function_name, invalid_computation)
+    original_finalize = postgres_repository.finalize_product_publication
+    staged: list[str] = []
+
+    def inspect_finalize(*, run_id: UUID, report: Report, completed_at: datetime) -> DailyRun:
+        with Session(postgres_engine) as session:
+            staged.extend(
+                session.scalars(select(RunItemRow.stage).where(RunItemRow.run_id == run_id))
+            )
+        return original_finalize(run_id=run_id, report=report, completed_at=completed_at)
+
+    monkeypatch.setattr(postgres_repository, "finalize_product_publication", inspect_finalize)
+    publisher = PublishProduct(
+        repository=postgres_repository,
+        llm=None,
+        clock=lambda: NOW + timedelta(days=1, minutes=10),
+    )
+    run = publisher.execute(
+        topic_config,
+        narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+        logical_date=logical_date,
+    )
+
+    assert run.status is RunStatus.COMPLETE
+    assert (run.completed_count, run.failed_count) == (1, 0)
+    assert staged == [last_successful_stage.value]
+    detail = postgres_repository.get_product_run(
+        logical_date=logical_date, topic_slug=topic_config.slug
+    )
+    assert detail is not None and detail.report is not None
+    report = detail.report.report
+    assert report.evidence_ids and detail.report.evidence
+    assert report.failures == ()
+    (failure,) = report.enrichment_failures
+    assert failure.failed_stage is failed_stage
+    assert failure.error_detail == "The persisted computation input has an invalid relation."
+    assert detail.items[0].item.stage is PaperStage.PUBLISHED
+    assert detail.items[0].item.status is RunItemStatus.COMPLETED
+    with Session(postgres_engine) as session:
+        rows = tuple(session.scalars(select(ReportEnrichmentFailureRow)))
+        assert len(rows) == 1 and rows[0].report_id == report.id
+
+    client = TestClient(create_app(postgres_repository))
+    response = client.get(f"/api/v1/daily/{logical_date}?topic={topic_config.slug}")
+    assert response.status_code == 200
+    response_report = response.json()["report"]
+    assert response_report["status"] == "COMPLETE"
+    assert response_report["enrichment_failures"][0]["failed_stage"] == failed_stage.value
+    assert response_report["enrichment_failures"][0]["error_code"] == failure.error_code
+    assert response_report["enrichment_failures"][0]["error_detail"] == failure.error_detail
+    failed_section = (
+        "trend"
+        if failed_stage is EnrichmentStage.TREND_AGGREGATION
+        else "lineage"
+        if failed_stage is EnrichmentStage.LINEAGE_GENERATION
+        else "graph"
+    )
+    assert not any(
+        value.startswith(f"INSUFFICIENT_DATA: {failed_section}")
+        for value in cast(list[str], response_report["missing_sections"])
+    )
+    (pipeline_failure,) = _run_item_failures(detail)
+    assert pipeline_failure.stage == failed_stage.value
+    assert pipeline_failure.error_code == failure.error_code
+    run_detail = postgres_repository.get_run(run.id)
+    assert run_detail is not None
+    assert _run_item_failures(run_detail) == (pipeline_failure,)
+    assert (
+        publisher.execute(
+            topic_config,
+            narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+            logical_date=logical_date,
+        )
+        == run
+    )
+
+
+def test_failed_publication_rolls_back_enrichment_failures_with_report(
+    postgres_repository: PostgresRepository,
+    postgres_engine: Engine,
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, logical_date = _prepare_complete_source(postgres_repository, topic_config, arxiv_record_v1)
+
+    def invalid_trends(*_args: object, **_kwargs: object) -> NoReturn:
+        raise DomainInvariantError("Invalid trend input.")
+
+    original_insert = product_storage._insert_normalized_report
+
+    def reject_after_report_insert(session: Session, report: Report) -> NoReturn:
+        original_insert(session, report)
+        session.flush()
+        raise RepositoryError("Injected publication transaction failure.")
+
+    monkeypatch.setattr(publication_module, "aggregate_trend_snapshots", invalid_trends)
+    monkeypatch.setattr(product_storage, "_insert_normalized_report", reject_after_report_insert)
+    with pytest.raises(RepositoryError, match="Injected publication"):
+        PublishProduct(
+            repository=postgres_repository,
+            llm=None,
+            clock=lambda: NOW + timedelta(days=1, minutes=10),
+        ).execute(
+            topic_config,
+            narrative_mode=ReportNarrativeMode.STRUCTURED_ONLY,
+            logical_date=logical_date,
+        )
+
+    with Session(postgres_engine) as session:
+        assert not tuple(session.scalars(select(ReportEnrichmentFailureRow)))
+        assert not tuple(
+            session.scalars(
+                select(ReportRow).where(ReportRow.report_type == ReportType.DAILY.value)
+            )
+        )
+        assert tuple(session.scalars(select(PaperAnalysisRow)))
 
 
 def test_complete_product_publication_round_trips_graph_trends_lineage_and_report(
@@ -1734,7 +1889,11 @@ def test_long_version_title_publishes_without_graph_key_truncation(
     arxiv_record_v1: ArxivPaperRecord,
 ) -> None:
     long_title = "A Long Agent Title " + ("界" * 600)
-    long_record = replace(arxiv_record_v1, title=long_title)
+    long_record = replace(
+        arxiv_record_v1,
+        title=long_title,
+        abstract=arxiv_record_v1.abstract + " This study evaluates an LLM agent.",
+    )
     _, logical_date = _prepare_complete_source(postgres_repository, topic_config, long_record)
     published = PublishProduct(
         repository=postgres_repository,

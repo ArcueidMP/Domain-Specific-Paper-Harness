@@ -255,6 +255,10 @@ tracked file.
 The Web/API requires no DeepSeek or Semantic Scholar credential. The browser
 never receives any database or provider secret.
 
+The production model remains `deepseek-v4-flash`; the
+[V4.1 Flash compatibility assessment](docs/MODEL_COMPATIBILITY.md) records why
+the temporary September 8 beta was not selected for unattended Jobs.
+
 ## Publication states
 
 - `COMPLETE` means the day's usable source metadata was published. Optional
@@ -273,9 +277,17 @@ An independent item failure does not suppress other usable papers. Missing
 optional enrichment is shown as unavailable rather than fabricated or used to
 block an otherwise usable publication.
 
+Graph, trend, and lineage computation failures retain separate structured
+diagnostics in the report, including their stage, stable code, and paper/version
+scope. They are displayed as failed computations, distinct from insufficient
+data, without discarding usable metadata or analysis.
+
 ## Data sources and trust boundaries
 
-- **Daily discovery:** arXiv only.
+- **Daily discovery:** arXiv only, using OAI-PMH continuation for identifier
+  coverage and arxiv.py for metadata and PDF URLs. Partial harvests save their
+  progress without advancing the shared cursor. Published-version exclusion
+  applies within each topic, while compatible analysis can be shared.
 - **Historical and related work:** authenticated Semantic Scholar, the
   persisted local corpus, and the bounded PaSa-derived scholarly tool loop.
 - **Full text:** only arXiv-hosted PDFs are eligible. Non-arXiv historical
