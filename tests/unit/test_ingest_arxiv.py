@@ -21,6 +21,7 @@ from paper_harness.domain.models import (
     TopicConfig,
 )
 from paper_harness.ports.arxiv import (
+    ArxivDiscoveryProgress,
     ArxivPaperRecord,
     ArxivResultLimitError,
     ArxivUnavailableError,
@@ -29,28 +30,6 @@ from paper_harness.ports.arxiv import (
 from paper_harness.ports.repository import RepositoryIntegrityError
 
 PIPELINE_EXECUTION_ID = UUID("b1f599e0-6b87-54af-a3b4-2a3d1473de93")
-
-
-class WindowAwareFakeArxiv(FakeArxiv):
-    def search(
-        self,
-        *,
-        query: str,
-        updated_from: datetime,
-        updated_until: datetime,
-        max_results: int,
-    ) -> tuple[ArxivPaperRecord, ...]:
-        records = super().search(
-            query=query,
-            updated_from=updated_from,
-            updated_until=updated_until,
-            max_results=max_results,
-        )
-        return normalize_arxiv_records(
-            records,
-            updated_from=updated_from,
-            updated_until=updated_until,
-        )[:max_results]
 
 
 def test_ingestion_uses_overlap_deduplicates_and_advances_cursor(
@@ -66,8 +45,8 @@ def test_ingestion_uses_overlap_deduplicates_and_advances_cursor(
 
     assert run.status is RunStatus.COMPLETE
     assert run.discovered_count == run.normalized_count == 1
-    assert arxiv.calls[0][1] == now - timedelta(days=7, hours=48)
-    assert arxiv.calls[0][2] == now
+    assert run.cursor_from == now - timedelta(days=7, hours=48)
+    assert run.cursor_to == now
     assert repository.cursor is not None
     assert repository.cursor.watermark == now
 
@@ -93,7 +72,7 @@ def test_week_overlap_captures_record_that_became_visible_after_submission(
         created_at=prior_watermark,
         updated_at=prior_watermark,
     )
-    arxiv = WindowAwareFakeArxiv((delayed_record,))
+    arxiv = FakeArxiv((delayed_record,), discovery_day=now.date())
 
     run = IngestArxiv(arxiv=arxiv, repository=repository, clock=lambda: now).execute(
         topic,
@@ -101,7 +80,8 @@ def test_week_overlap_captures_record_that_became_visible_after_submission(
     )
 
     expected_from = prior_watermark - timedelta(hours=168)
-    assert arxiv.calls[0][1:] == (expected_from, now, topic.max_results)
+    assert run.cursor_from == expected_from
+    assert run.cursor_to == now
     assert expected_from <= delayed_record.updated_at <= now
     assert run.discovered_count == run.normalized_count == 1
     assert len(repository.items) == 1
@@ -117,7 +97,7 @@ def test_cursor_overlap_persists_locally_sorted_records_from_disordered_input(
     older = replace(
         arxiv_record_v1,
         canonical_arxiv_id="2601.00001",
-        title="Older paper",
+        title="Older LLM agent paper",
         submitted_at=datetime(2026, 1, 8, 2, tzinfo=UTC),
         updated_at=datetime(2026, 1, 8, 3, tzinfo=UTC),
         pdf_url="https://arxiv.org/pdf/2601.00001v1",
@@ -126,7 +106,7 @@ def test_cursor_overlap_persists_locally_sorted_records_from_disordered_input(
     newer = replace(
         arxiv_record_v1,
         canonical_arxiv_id="2601.00002",
-        title="Newer paper",
+        title="Newer LLM agent paper",
         submitted_at=datetime(2026, 1, 9, 2, tzinfo=UTC),
         updated_at=datetime(2026, 1, 9, 3, tzinfo=UTC),
         pdf_url="https://arxiv.org/pdf/2601.00002v1",
@@ -141,30 +121,26 @@ def test_cursor_overlap_persists_locally_sorted_records_from_disordered_input(
         updated_at=prior_watermark,
     )
     persisted: list[tuple[ArxivPaperRecord, ...]] = []
-    original_persist = repository.persist_arxiv_batch_and_complete
+    original_persist = repository.persist_ingestion_progress
 
     def capture_persist(
         *,
         topic: TopicConfig,
         run_id: UUID,
         records: tuple[ArxivPaperRecord, ...],
-        watermark: datetime,
-        advance_shared_cursor: bool,
+        progress: ArxivDiscoveryProgress,
         persisted_at: datetime,
-        completed_at: datetime,
-    ) -> DailyRun:
+    ) -> None:
         persisted.append(records)
         return original_persist(
             topic=topic,
             run_id=run_id,
             records=records,
-            watermark=watermark,
-            advance_shared_cursor=advance_shared_cursor,
+            progress=progress,
             persisted_at=persisted_at,
-            completed_at=completed_at,
         )
 
-    monkeypatch.setattr(repository, "persist_arxiv_batch_and_complete", capture_persist)
+    monkeypatch.setattr(repository, "persist_ingestion_progress", capture_persist)
     arxiv = FakeArxiv((older, newer, older))
     run = IngestArxiv(arxiv=arxiv, repository=repository, clock=lambda: now).execute(
         topic_config,
@@ -172,15 +148,15 @@ def test_cursor_overlap_persists_locally_sorted_records_from_disordered_input(
     )
 
     assert run.status is RunStatus.COMPLETE
-    assert [record.canonical_arxiv_id for record in persisted[0]] == [
+    assert [
+        record.canonical_arxiv_id
+        for record in normalize_arxiv_records(record for batch in persisted for record in batch)
+    ] == [
         "2601.00002",
         "2601.00001",
     ]
-    assert arxiv.calls[0][1:] == (
-        prior_watermark - timedelta(hours=topic_config.overlap_hours),
-        now,
-        topic_config.max_results,
-    )
+    assert run.cursor_from == prior_watermark - timedelta(hours=topic_config.overlap_hours)
+    assert run.cursor_to == now
     assert repository.cursor is not None
     assert repository.cursor.watermark == now
 
@@ -215,11 +191,8 @@ def test_smoke_ingestion_persists_results_without_advancing_the_shared_cursor(
     assert run.discovered_count == run.normalized_count == 1
     assert len(repository.items) == 1
     assert repository.cursor == prior_cursor
-    assert arxiv.calls[0][1:] == (
-        prior_watermark - timedelta(hours=topic_config.overlap_hours),
-        now,
-        topic_config.max_results,
-    )
+    assert run.cursor_from == prior_watermark - timedelta(hours=topic_config.overlap_hours)
+    assert run.cursor_to == now
 
 
 def test_reprocess_uses_logical_date_lookback_without_advancing_shared_cursor(
@@ -252,15 +225,14 @@ def test_reprocess_uses_logical_date_lookback_without_advancing_shared_cursor(
     assert run.status is RunStatus.COMPLETE
     assert run.pipeline_execution_mode is PipelineExecutionMode.REPROCESS
     assert repository.cursor == prior_cursor
-    assert arxiv.calls[0][1:] == (
+    assert run.cursor_from == (
         logical_date_end
         - timedelta(
             days=topic_config.initial_lookback_days,
             hours=topic_config.overlap_hours,
-        ),
-        logical_date_end,
-        topic_config.max_results,
+        )
     )
+    assert run.cursor_to == logical_date_end
 
 
 def test_duplicate_logical_run_does_not_call_arxiv(
@@ -271,10 +243,11 @@ def test_duplicate_logical_run_does_not_call_arxiv(
     repository = FakeRepository()
     use_case = IngestArxiv(arxiv=arxiv, repository=repository, clock=lambda: now)
     use_case.execute(topic_config, logical_date=now.date())
+    calls = len(arxiv.discovery_calls)
 
     with pytest.raises(DuplicateDailyRunError):
         use_case.execute(topic_config, logical_date=now.date())
-    assert len(arxiv.calls) == 1
+    assert len(arxiv.discovery_calls) == calls
 
 
 def test_global_arxiv_failure_is_recorded_as_failed(topic_config: TopicConfig) -> None:
@@ -382,7 +355,7 @@ def test_persistence_integrity_failure_marks_child_failed_and_reuses_it_on_resum
     assert repository.run.error_detail == "PostgreSQL rejected arXiv batch persistence"
     assert repository.cursor is not None
     assert repository.cursor.watermark == prior_watermark
-    assert repository.items == ()
+    assert len(repository.items) == 1
 
     resumed = use_case.execute(
         topic_config,
@@ -434,7 +407,8 @@ def test_running_pipeline_ingestion_resumes_same_run_and_window(
 
     assert resumed.id == original.id
     assert resumed.status is RunStatus.COMPLETE
-    assert arxiv.calls[0][1:] == (cursor_from, cursor_to, topic_config.max_results)
+    assert resumed.cursor_from == cursor_from
+    assert resumed.cursor_to == cursor_to
     assert repository.cursor is not None
     assert repository.cursor.watermark == cursor_to
 
@@ -489,7 +463,8 @@ def test_failed_pipeline_ingestion_replans_current_window_and_selection_limit(
     assert resumed.id == original.id
     assert resumed.status is RunStatus.COMPLETE
     assert resumed.pipeline_selection_limit == 3
-    assert arxiv.calls[0][1:] == (expected_from, resumed_at, topic_config.max_results)
+    assert resumed.cursor_from == expected_from
+    assert resumed.cursor_to == resumed_at
     assert repository.cursor is not None
     assert repository.cursor.watermark == resumed_at
 

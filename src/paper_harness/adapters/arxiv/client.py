@@ -6,7 +6,7 @@ import math
 import time
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, TypeVar, cast
 from urllib.parse import urlsplit
@@ -17,10 +17,12 @@ import arxiv  # pyright: ignore[reportMissingTypeStubs]
 import requests
 from urllib3.exceptions import ReadTimeoutError as Urllib3ReadTimeoutError
 
+from paper_harness.adapters.arxiv.oai import identifier_page_url, parse_identifier_page
 from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.domain.identity import parse_arxiv_identifier, validate_canonical_arxiv_id
 from paper_harness.ports.arxiv import (
     MAX_ARXIV_ID_LOOKUP,
+    ArxivIdentifierPage,
     ArxivPaperRecord,
     ArxivPdf,
     ArxivPdfError,
@@ -104,6 +106,50 @@ class ArxivClient:
         self._client._session = self._session  # pyright: ignore[reportPrivateUsage]
         self._candidate_lookahead = page_size
         self._pdf_max_bytes = pdf_max_bytes
+        self._sleep = sleep
+        self._monotonic = monotonic
+        self._delay_seconds = delay_seconds
+        self._last_oai_request: float | None = None
+
+    def list_updated_identifiers(
+        self,
+        *,
+        day: date,
+        category: str,
+        resumption_token: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> ArxivIdentifierPage:
+        url = identifier_page_url(day, category, resumption_token)
+
+        def consume(response: requests.Response) -> ArxivIdentifierPage:
+            if response.status_code in _RETRYABLE_HTTP_STATUSES:
+                raise ArxivUnavailableError(f"arXiv OAI transient HTTP {response.status_code}")
+            if response.status_code != 200:
+                raise ArxivResponseError(
+                    f"arXiv OAI rejected request with HTTP {response.status_code}"
+                )
+            content = bytearray()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                self._session.check_deadline()
+                content.extend(chunk)
+                if len(content) > self._session.atom_max_bytes:
+                    raise ArxivResponseError("arXiv OAI response exceeds its size bound")
+            return parse_identifier_page(bytes(content), day=day, category=category)
+
+        try:
+            with self._session.operation(timeout_seconds=timeout_seconds):
+                if self._last_oai_request is not None:
+                    remaining_delay = self._delay_seconds - (
+                        self._monotonic() - self._last_oai_request
+                    )
+                    if remaining_delay > 0:
+                        self._sleep(remaining_delay)
+                self._last_oai_request = self._monotonic()
+                return self._session.consume_stream(url, consume=consume, allow_redirects=False)
+        except requests.exceptions.RequestException as error:
+            raise ArxivUnavailableError(
+                f"bounded arXiv OAI transport failed with {type(error).__name__}"
+            ) from error
 
     def search(
         self,
@@ -130,9 +176,11 @@ class ArxivClient:
             sort_order=arxiv.SortOrder.Descending,
         )
         candidates: list[ArxivPaperRecord] = []
+        raw_result_count = 0
         with self._session.operation(), self._client.page_operation():
             try:
                 for result in self._client.results(search):
+                    raw_result_count += 1
                     try:
                         candidates.append(map_arxiv_result(result))
                     except ArxivResponseError:
@@ -160,12 +208,21 @@ class ArxivClient:
             updated_from=updated_from,
             updated_until=updated_until,
         )
-        return records[:max_results]
+        if (
+            len(records) > max_results
+            or raw_result_count >= max_results + self._candidate_lookahead
+        ):
+            raise ArxivResultLimitError(
+                "arXiv query result bound was reached; "
+                "use resumable OAI discovery for complete update windows"
+            )
+        return records
 
     def get_papers_by_ids(
         self,
         *,
         canonical_arxiv_ids: tuple[str, ...],
+        timeout_seconds: float | None = None,
     ) -> tuple[ArxivPaperRecord, ...]:
         canonical_arxiv_ids = tuple(dict.fromkeys(canonical_arxiv_ids))
         if not 1 <= len(canonical_arxiv_ids) <= MAX_ARXIV_ID_LOOKUP:
@@ -184,9 +241,12 @@ class ArxivClient:
             max_results=len(canonical_arxiv_ids),
         )
         by_id: dict[str, ArxivPaperRecord] = {}
-        with self._session.operation(), self._client.page_operation():
+        with (
+            self._session.operation(timeout_seconds=timeout_seconds),
+            self._client.page_operation(),
+        ):
             try:
-                for result in self._client.results(search):
+                for result in self._client.get_id_page(search):
                     try:
                         record = map_arxiv_result(result)
                     except ArxivResponseError:
@@ -325,6 +385,12 @@ class ValidatedArxivClient(arxiv.Client):
             raise ArxivResponseError("arXiv returned a malformed Atom feed")
         return feed
 
+    def get_id_page(self, search: arxiv.Search) -> Sequence[Any]:
+        """Request all bounded IDs in one page; rejected entries never shift an offset."""
+        url = self._format_url(search, 0, len(search.id_list))
+        feed = self._parse_feed(url, first_page=True)
+        return cast(Sequence[Any], feed.results)
+
 
 class BoundedArxivSession(requests.Session):
     """requests session with the repository's narrow transient retry policy."""
@@ -353,11 +419,22 @@ class BoundedArxivSession(requests.Session):
         self._deadline: float | None = None
         self.headers["Accept-Encoding"] = "identity"
 
+    @property
+    def atom_max_bytes(self) -> int:
+        return self._atom_max_bytes
+
     @contextmanager
-    def operation(self) -> Generator[None]:
+    def operation(self, *, timeout_seconds: float | None = None) -> Generator[None]:
         if self._deadline is not None:
             raise RuntimeError("arXiv session operation is already active")
-        self._deadline = self._monotonic() + self._max_total_seconds
+        total_seconds = (
+            self._max_total_seconds
+            if timeout_seconds is None
+            else min(timeout_seconds, self._max_total_seconds)
+        )
+        if total_seconds <= 0 or not math.isfinite(total_seconds):
+            raise ValueError("arXiv operation timeout must be finite and positive")
+        self._deadline = self._monotonic() + total_seconds
         try:
             yield
         finally:

@@ -90,10 +90,19 @@ Production requires PostgreSQL 15 or newer with pgvector. The URL must:
 
 The application does not provision or substitute a database provider.
 
-Before a production migration, create a provider-native backup and verify that
-the provider reports it as complete. Test restoration only into a distinct
-non-production database using the provider's supported procedure. Never expose
-the production URL in command arguments or restore over production as a test.
+Before a production migration, complete a provider snapshot or a provider-supported
+logical PostgreSQL backup. Supabase documents manual logical exports with its
+CLI or `pg_dump` in its [backup guidance](https://supabase.com/docs/guides/platform/backups).
+For this product, a custom-format archive of the application `public` schema
+includes its tables, data, indexes, constraints, and Alembic state. Keep it in
+ignored operator storage, never Git. Supply connection credentials through the
+child process environment rather than command arguments.
+
+Verify archive creation succeeded and restore it into a distinct non-production
+database. Recreate required extension namespaces, including `extensions.vector`
+when used by the source, and compare restored application table counts. Test the
+new migration against that restored database before changing production. Never
+restore over production as a test or introduce paid backup resources implicitly.
 
 ## Optional Demo schema bootstrap and synchronization
 
@@ -301,7 +310,22 @@ After completion, connect through an authorized database channel and run:
 SELECT version_num FROM alembic_version;
 ```
 
-The expected current revision is `0006_topic_reprocessing`.
+The expected current revision is `0008_enrichment_failures`.
+
+For an existing deployment upgrading from `0006`, keep all `deploy_*` resource
+flags enabled. First pause Scheduler through Terraform and update only the
+Migration Job image. Confirm all existing Daily executions have ended, complete
+the backup/restore check above, and execute the new Migration Job. Then update
+Web/API and all topic Daily Jobs to their matching new image digests. Verify
+authenticated readiness and one new execution per topic before restoring the
+previous Scheduler state. A completed same-date NORMAL execution is only a replay;
+use an explicit REPROCESS revision when validating a deployment on that date.
+
+The old and new application revisions require different exact Alembic heads, so
+the database/application cutover includes a maintenance interval. An image-only
+rollback does not restore old readiness after a schema upgrade. The new downgrade
+guards refuse to discard incomplete discovery or diagnostics without the declared
+recovery procedure; prefer fixing forward once new production records exist.
 
 ## Private runtime verification
 
@@ -416,6 +440,29 @@ failure summaries. Record provider call counts, token counts when available,
 durations, and cost estimates without recording sensitive content.
 
 ## Failure handling
+
+Daily OAI discovery has a 900-second invocation budget and a 100-page budget.
+`discovery.max_results` limits a metadata batch, while the completed harvest may
+contain more papers. `ARXIV_DISCOVERY_INCOMPLETE` leaves its fixed-window
+checkpoint and pending IDs in PostgreSQL without advancing the topic cursor.
+For a failed NORMAL pipeline, repeat the same topic and logical date using
+`scripts/run-production-daily.ps1 -ProjectId $Project -Region $Region
+-JobName $JobName -LogicalDate $LogicalDate`. Keep its topic definition unchanged
+while resuming. A new logical date is a different execution, not a resume of
+that checkpoint. Expired tokens are handled by bounded idempotent replay of
+the affected day/category.
+
+For a failed REPROCESS execution, also pass `-Reprocess -ResumeExecutionId
+$ExecutionId`, where `$ExecutionId` is the existing run's `pipeline_execution_id`
+from the Runs API. The equivalent CLI option is `run-pipeline --reprocess
+--logical-date YYYY-MM-DD --resume-execution-id UUID`. This explicitly selects
+the existing revision; `--reprocess` without that UUID still creates a new one.
+The topic, logical date, and analysis scope must match the saved execution.
+
+Published graph, trend, and lineage failures appear in the report's
+`enrichment_failures` field and the report UI. Inspect their stable code and
+scope instead of treating them as insufficient data or counting them as core
+analysis failures. Their details are not model input and are redacted in Demo.
 
 - Global configuration, authentication, migration, database, and publication
   failures stop the run. Candidate schema or domain failures stay scoped to the

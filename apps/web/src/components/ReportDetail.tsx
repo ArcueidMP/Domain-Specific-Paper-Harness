@@ -39,6 +39,16 @@ export function ReportDetail({ report, items = [], compact = false }: ReportDeta
         </div>
       ) : null}
 
+      {report.enrichment_failures.length > 0 ? (
+        <div className="partial-report-banner" role="alert">
+          <strong>Some research enrichment failed</strong>
+          <span>
+            {report.enrichment_failures.length} optional computation{report.enrichment_failures.length === 1 ? "" : "s"} failed.
+            Available source papers and analysis remain published.
+          </span>
+        </div>
+      ) : null}
+
       {noUpdate ? (
         <div className="no-update-banner" role="status">
           <strong>No research updates today</strong>
@@ -266,6 +276,30 @@ export function ReportDetail({ report, items = [], compact = false }: ReportDeta
                     <dt>Retryable</dt>
                     <dd>{failure.retryable ? "Yes" : "No"}</dd>
                   </div>
+                </dl>
+                <p>{failure.error_detail}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {!compact && report.enrichment_failures.length > 0 ? (
+        <section
+          className="report-block report-failures"
+          aria-labelledby={`enrichment-failures-${report.id}`}
+        >
+          <h2 id={`enrichment-failures-${report.id}`}>Enrichment failures</h2>
+          <ul>
+            {report.enrichment_failures.map((failure) => (
+              <li className="card" key={failure.id}>
+                {failure.paper_id ? (
+                  <TopicLink to={`/papers/${failure.paper_id}`}>Paper {failure.paper_id}</TopicLink>
+                ) : <strong>Report-wide computation</strong>}
+                <dl>
+                  <div><dt>Failed stage</dt><dd>{failure.failed_stage.replaceAll("_", " ")}</dd></div>
+                  <div><dt>Error code</dt><dd>{failure.error_code}</dd></div>
+                  <div><dt>Retryable</dt><dd>{failure.retryable ? "Yes" : "No"}</dd></div>
                 </dl>
                 <p>{failure.error_detail}</p>
               </li>

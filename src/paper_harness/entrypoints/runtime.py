@@ -59,6 +59,7 @@ from paper_harness.application.read_models import (
     ProductRunDetail,
     RelatedWorkDetail,
     RelatedWorkItem,
+    ReportDetail,
     RunDetail,
     SearchSessionDetail,
 )
@@ -338,6 +339,7 @@ def execute_daily_pipeline(
     narrative_mode: ReportNarrativeMode,
     max_selected_papers: int,
     reprocess: bool = False,
+    resume_execution_id: UUID | None = None,
     backfill_max_queries: int = 8,
     backfill_per_query_limit: int = 100,
     backfill_timeout_seconds: float = 1800.0,
@@ -348,6 +350,8 @@ def execute_daily_pipeline(
     """Execute the complete persisted M1-M4 workflow from one protected Job command."""
 
     started = monotonic()
+    if resume_execution_id is not None and (not reprocess or logical_date is None):
+        raise ValueError("resuming an execution requires --reprocess and an explicit logical date")
     if not 1 <= max_comparisons_per_paper <= 10:
         raise ValueError("comparison count per paper must be between one and ten")
     limits = search_limits or SearchLimits(
@@ -378,6 +382,19 @@ def execute_daily_pipeline(
     scholarly_settings = SemanticScholarSettings.from_environment()
     raw_parser = _grobid_parser(analysis_scope)
     repository = _ready_repository("daily pipeline")
+    if resume_execution_id is not None:
+        resumed = repository.get_pipeline_execution(resume_execution_id)
+        if (
+            resumed is None
+            or resumed.topic_id != topic.id
+            or resumed.logical_date != logical_date
+            or resumed.execution_mode is not PipelineExecutionMode.REPROCESS
+            or resumed.analysis_scope is not analysis_scope
+        ):
+            raise DailyPipelineResumeError(
+                "resume execution must identify an existing reprocess "
+                "for this topic, date, and scope"
+            )
     embeddings = _specter2_embeddings()
     accounting = PipelineAccounting()
     arxiv = AccountingArxiv(ArxivClient(), accounting)
@@ -403,7 +420,11 @@ def execute_daily_pipeline(
     execution_started_at = datetime.now(UTC)
     execution_mode = PipelineExecutionMode.REPROCESS if reprocess else PipelineExecutionMode.NORMAL
     execution = PipelineExecution(
-        id=(uuid4() if reprocess else stable_pipeline_execution_id(topic.id, run_date)),
+        id=(
+            (resume_execution_id or uuid4())
+            if reprocess
+            else stable_pipeline_execution_id(topic.id, run_date)
+        ),
         topic_id=topic.id,
         logical_date=run_date,
         execution_mode=execution_mode,
@@ -1497,6 +1518,7 @@ def _pipeline_selection(
                 relevant_count=len(ranked.eligible),
             )
     published_versions = repository.get_canonically_published_paper_version_ids(
+        topic.id,
         tuple(candidate.paper_version_id for candidate in candidates),
     )
     novel_candidates = tuple(
@@ -1557,6 +1579,19 @@ def _run_item_failures(
                 detail=(item.error_detail or "item failed without diagnostic detail")[:500],
             )
         )
+    if detail.run.operation is RunOperation.PRODUCT_PUBLICATION:
+        report = detail.report.report if isinstance(detail.report, ReportDetail) else detail.report
+        if report is not None:
+            failures.extend(
+                DailyPipelineFailure(
+                    paper_id=failure.paper_id,
+                    stage=failure.failed_stage.value,
+                    error_code=failure.error_code,
+                    retryable=failure.retryable,
+                    detail=failure.error_detail[:500],
+                )
+                for failure in report.enrichment_failures
+            )
     return tuple(failures)
 
 

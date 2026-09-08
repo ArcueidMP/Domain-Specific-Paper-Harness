@@ -68,7 +68,7 @@ from paper_harness.domain.models import (
     RunStatus,
     TopicConfig,
 )
-from paper_harness.ports.arxiv import ArxivPaperRecord
+from paper_harness.ports.arxiv import ArxivDiscoveryProgress, ArxivPaperRecord
 from paper_harness.ports.repository import (
     MigrationIncompatibleError,
     RepositoryError,
@@ -79,6 +79,7 @@ from paper_harness.ports.repository import (
 from .historical_repository import HistoricalRepositoryMixin
 from .models import (
     AnalysisClaimRow,
+    ArxivDiscoveryProgressRow,
     AuthorRow,
     CitationContextRow,
     DailyRunRow,
@@ -109,7 +110,7 @@ from .models import (
 )
 from .product_repository import ProductRepositoryMixin
 
-EXPECTED_DATABASE_REVISION = "0006_topic_reprocessing"
+EXPECTED_DATABASE_REVISION = "0008_enrichment_failures"
 
 
 class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
@@ -463,6 +464,16 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
     ) -> DailyRun:
         try:
             with self._sessions.begin() as session:
+                progress = session.get(ArxivDiscoveryProgressRow, run_id)
+                prior = session.get(DailyRunRow, run_id)
+                if (
+                    progress is not None
+                    and prior is not None
+                    and (prior.cursor_from != cursor_from or prior.cursor_to != cursor_to)
+                ):
+                    raise RepositoryIntegrityError(
+                        "resumable discovery must retain its fixed cursor window"
+                    )
                 row = session.scalars(
                     update(DailyRunRow)
                     .where(
@@ -477,8 +488,12 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
                         cursor_from=cursor_from,
                         cursor_to=cursor_to,
                         pipeline_selection_limit=pipeline_selection_limit,
-                        discovered_count=0,
-                        normalized_count=0,
+                        discovered_count=DailyRunRow.discovered_count
+                        if progress is not None
+                        else 0,
+                        normalized_count=DailyRunRow.normalized_count
+                        if progress is not None
+                        else 0,
                         selected_count=0,
                         completed_count=0,
                         failed_count=0,
@@ -489,7 +504,7 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
                 ).one_or_none()
                 if row is None:
                     raise RepositoryError("ingestion run is missing or cannot resume")
-                if session.scalar(
+                if progress is None and session.scalar(
                     select(func.count(RunItemRow.id)).where(RunItemRow.run_id == run_id)
                 ):
                     raise RepositoryError(
@@ -502,6 +517,110 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
         except IntegrityError as error:
             raise RepositoryIntegrityError("PostgreSQL rejected ingestion-run restart") from error
         return _run_from_row(row)
+
+    def get_ingestion_progress(self, run_id: UUID) -> ArxivDiscoveryProgress | None:
+        try:
+            with self._sessions() as session:
+                row = session.get(ArxivDiscoveryProgressRow, run_id)
+                if row is None:
+                    return None
+                return ArxivDiscoveryProgress(
+                    query=row.query,
+                    categories=tuple(row.categories),
+                    day=row.day,
+                    category_index=row.category_index,
+                    resumption_token=row.resumption_token,
+                    pending_ids=tuple(row.pending_ids),
+                    page_exhausted=row.page_exhausted,
+                    complete=row.complete,
+                )
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL ingestion progress read is unavailable"
+            ) from error
+
+    def persist_ingestion_progress(
+        self,
+        *,
+        topic: TopicConfig,
+        run_id: UUID,
+        progress: ArxivDiscoveryProgress,
+        records: tuple[ArxivPaperRecord, ...],
+        persisted_at: datetime,
+    ) -> None:
+        try:
+            with self._sessions.begin() as session:
+                run = session.scalars(
+                    select(DailyRunRow).where(DailyRunRow.id == run_id).with_for_update()
+                ).one_or_none()
+                if (
+                    run is None
+                    or run.operation != RunOperation.ARXIV_INGESTION.value
+                    or run.status != RunStatus.RUNNING.value
+                    or run.topic_id != topic.id
+                ):
+                    raise RepositoryIntegrityError(
+                        "discovery checkpoint requires its running topic ingestion"
+                    )
+                if (
+                    run.cursor_from is None
+                    or run.cursor_to is None
+                    or not run.cursor_from.date() <= progress.day <= run.cursor_to.date()
+                ):
+                    raise RepositoryIntegrityError(
+                        "discovery checkpoint is outside its fixed window"
+                    )
+                existing = session.get(ArxivDiscoveryProgressRow, run_id)
+                if existing is not None and (
+                    existing.query != progress.query
+                    or tuple(existing.categories) != progress.categories
+                    or existing.complete
+                ):
+                    raise RepositoryIntegrityError(
+                        "discovery checkpoint scope changed or is already complete"
+                    )
+                for record in records:
+                    self._persist_record(
+                        session,
+                        topic=topic,
+                        run_id=run_id,
+                        record=record,
+                        persisted_at=persisted_at,
+                    )
+                values = dict(
+                    source="arxiv_oai_pmh",
+                    query=progress.query,
+                    categories=list(progress.categories),
+                    day=progress.day,
+                    category_index=progress.category_index,
+                    resumption_token=progress.resumption_token,
+                    pending_ids=list(progress.pending_ids),
+                    page_exhausted=progress.page_exhausted,
+                    complete=progress.complete,
+                    schema_version=1,
+                    updated_at=persisted_at,
+                )
+                session.execute(
+                    insert(ArxivDiscoveryProgressRow)
+                    .values(run_id=run_id, created_at=persisted_at, **values)
+                    .on_conflict_do_update(
+                        index_elements=[ArxivDiscoveryProgressRow.run_id], set_=values
+                    )
+                )
+                count = (
+                    session.scalar(
+                        select(func.count(RunItemRow.id)).where(RunItemRow.run_id == run_id)
+                    )
+                    or 0
+                )
+                run.discovered_count = count
+                run.normalized_count = count
+        except OperationalError as error:
+            raise RepositoryUnavailableError(
+                "PostgreSQL discovery checkpoint is unavailable"
+            ) from error
+        except (IntegrityError, DataError) as error:
+            raise RepositoryIntegrityError("PostgreSQL rejected discovery checkpoint") from error
 
     def persist_ingestion_selection(
         self,
@@ -611,6 +730,11 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
                 ).one_or_none()
                 if locked_run is None:
                     raise RepositoryError(f"run {run_id} is missing or no longer running")
+                progress = session.get(ArxivDiscoveryProgressRow, run_id)
+                if progress is not None and not progress.complete:
+                    raise RepositoryIntegrityError(
+                        "incomplete arXiv discovery cannot advance the watermark"
+                    )
                 expected_cursor_policy = locked_run.pipeline_execution_mode not in (
                     PipelineExecutionMode.REPROCESS.value,
                     PipelineExecutionMode.SMOKE.value,
@@ -629,6 +753,12 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
                             persisted_at=persisted_at,
                         )
                     )
+                record_count = (
+                    session.scalar(
+                        select(func.count(RunItemRow.id)).where(RunItemRow.run_id == run_id)
+                    )
+                    or 0
+                )
                 if advance_shared_cursor:
                     self._advance_cursor(
                         session,
@@ -645,8 +775,8 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
                     .values(
                         status=RunStatus.COMPLETE.value,
                         completed_at=completed_at,
-                        discovered_count=len(records),
-                        normalized_count=len(items),
+                        discovered_count=record_count,
+                        normalized_count=record_count,
                         selected_count=0,
                         completed_count=0,
                         failed_count=0,
@@ -1528,6 +1658,7 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
 
     def get_canonically_published_paper_version_ids(
         self,
+        topic_id: UUID,
         paper_version_ids: tuple[UUID, ...],
     ) -> frozenset[UUID]:
         if not paper_version_ids:
@@ -1537,6 +1668,7 @@ class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):
             .join(DailyRunRow, DailyRunRow.id == RunItemRow.run_id)
             .where(
                 RunItemRow.paper_version_id.in_(paper_version_ids),
+                DailyRunRow.topic_id == topic_id,
                 RunItemRow.status == RunItemStatus.COMPLETED.value,
                 RunItemRow.stage == PaperStage.PUBLISHED.value,
                 DailyRunRow.operation == RunOperation.PRODUCT_PUBLICATION.value,

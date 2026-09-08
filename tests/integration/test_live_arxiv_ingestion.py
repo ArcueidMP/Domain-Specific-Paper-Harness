@@ -12,7 +12,7 @@ from paper_harness.adapters.arxiv import ArxivClient
 from paper_harness.adapters.postgres import PostgresRepository
 from paper_harness.application.ingest_arxiv import IngestArxiv
 from paper_harness.domain.models import RunStatus, TopicConfig
-from paper_harness.ports.arxiv import ArxivPaperRecord, ArxivPdf
+from paper_harness.ports.arxiv import ArxivIdentifierPage, ArxivPaperRecord, ArxivPdf
 
 pytestmark = [pytest.mark.integration, pytest.mark.live]
 
@@ -22,6 +22,17 @@ class KnownArxivPaper:
 
     def __init__(self) -> None:
         self._client = ArxivClient(page_size=5, max_retries=1)
+
+    def list_updated_identifiers(
+        self,
+        *,
+        day: date,
+        category: str,
+        resumption_token: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> ArxivIdentifierPage:
+        """Supply a fixture identity; the live boundary is Atom metadata and PostgreSQL."""
+        return ArxivIdentifierPage(("1706.03762",), None)
 
     def search(
         self,
@@ -43,8 +54,11 @@ class KnownArxivPaper:
         self,
         *,
         canonical_arxiv_ids: tuple[str, ...],
+        timeout_seconds: float | None = None,
     ) -> tuple[ArxivPaperRecord, ...]:
-        return self._client.get_papers_by_ids(canonical_arxiv_ids=canonical_arxiv_ids)
+        return self._client.get_papers_by_ids(
+            canonical_arxiv_ids=canonical_arxiv_ids, timeout_seconds=timeout_seconds
+        )
 
     def download_pdf(
         self,
@@ -75,7 +89,7 @@ def test_real_arxiv_record_reaches_postgresql(
         include_terms=("Attention Is All You Need",),
         exclude_terms=(),
         overlap_hours=1,
-        initial_lookback_days=5000,
+        initial_lookback_days=1,
         max_results=2,
         representative_full_text_count=1,
     )

@@ -640,6 +640,11 @@ export interface components {
             report: components["schemas"]["ReportResponse"] | null;
             run: components["schemas"]["RunSummary"];
         };
+        /**
+         * EnrichmentStage
+         * @enum {string}
+         */
+        EnrichmentStage: "GRAPH_EXTRACTION" | "TREND_AGGREGATION" | "LINEAGE_GENERATION";
         /** EvidenceListResponse */
         EvidenceListResponse: {
             /** Items */
@@ -1512,6 +1517,37 @@ export interface components {
             /** Selected */
             selected: number;
         };
+        /** ReportEnrichmentFailureResponse */
+        ReportEnrichmentFailureResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error Code */
+            error_code: string;
+            /** Error Detail */
+            error_detail: string;
+            failed_stage: components["schemas"]["EnrichmentStage"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Paper Id */
+            paper_id: string | null;
+            /** Paper Version Id */
+            paper_version_id: string | null;
+            /**
+             * Report Id
+             * Format: uuid
+             */
+            report_id: string;
+            /** Retryable */
+            retryable: boolean;
+            /** Schema Version */
+            schema_version: number;
+        };
         /** ReportEntityHighlightResponse */
         ReportEntityHighlightResponse: {
             /**
@@ -1664,6 +1700,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Enrichment Failures */
+            enrichment_failures: components["schemas"]["ReportEnrichmentFailureResponse"][];
             /** Evidence */
             evidence: components["schemas"]["ReportEvidenceReferenceResponse"][];
             /** Failures */

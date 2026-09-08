@@ -22,6 +22,8 @@ The initial topics are broad LLM agents, brain-computer interfaces, and world
 models. Each TopicConfig owns its description, arXiv categories, inclusion
 terms, exclusions, cursor, selection, reports, graph, trends, and lineage.
 Never apply one topic's exclusions globally to another topic.
+Published-version deduplication is also topic-scoped. Shared paper/version,
+parser, and analysis identities must not suppress another topic's selection.
 
 The finished product must:
 
@@ -371,15 +373,20 @@ identity, missing required timestamps, and unparseable required types remain
 real failures. Never fabricate a required value or mark malformed input as
 successful.
 
-Run states are:
+Product publication states follow docs/FAILURE_POLICY.md:
 
-- COMPLETE: every selected priority paper completed every required stage.
-- PARTIAL: at least one selected paper completed but one or more item stages
-  failed. A report may publish only with a prominent PARTIAL state and a list
-  of missing papers, failed stages, and stable error codes.
-- FAILED: invalid configuration, unavailable database, incompatible migration,
-  global arXiv failure, missing secret required by the requested operation, no
-  selected paper completed, or publication transaction failure.
+- COMPLETE: usable selected source metadata and core analysis published;
+  optional enrichment may have explicit availability or failure diagnostics.
+  Zero eligible papers produce a transparent NO_UPDATE report.
+- PARTIAL: usable source metadata published while selected papers have core
+  metadata or analysis failures, with failed stages and stable error codes.
+- FAILED: a required global configuration, authentication, database, discovery,
+  or publication boundary failed and the product could not safely publish.
+
+Optional graph, trend, and lineage computation failures must retain their typed
+stage, code, scope, and diagnostic in the report. They cannot advance successful
+processing stages or be mislabeled as insufficient data. Core failure counts
+and optional enrichment diagnostics have separate meanings.
 
 An item or candidate failure must not stop independent valid items. Continue
 within the configured bounds and publish a prominent PARTIAL result whenever at
@@ -445,9 +452,12 @@ rate limits, timeouts, transient retries, and error mapping. Production
 scholarly search requires SEMANTIC_SCHOLAR_API_KEY and must not silently use
 anonymous access.
 
-Prefer arxiv.py behind ArxivPort for arXiv querying, pagination, metadata, and
-PDF URL discovery. Application code owns query construction, cursor/overlap,
-identity/versioning, transactions, run records, and idempotency.
+Daily identifier discovery uses the official arXiv OAI-PMH date/category
+stream with persisted continuation and pending metadata IDs. arxiv.py remains
+behind ArxivPort for explicit metadata queries and PDF URL discovery. Application
+code owns topic filtering, cursor/overlap, identity/versioning, transactions,
+run records, and idempotency. A batch cap or provider ordering never proves
+discovery completeness; the watermark advances only after the harvest finishes.
 
 Reuse PaSa's Crawler/Selector architecture and compatible implementation where
 practical, isolated under third_party/pasa when vendored. Do not import its

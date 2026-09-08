@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from paper_harness.domain.analysis import (
@@ -21,7 +21,7 @@ from paper_harness.domain.historical import (
     GeneratedCrawlerPlan,
 )
 from paper_harness.domain.reports import GeneratedReportNarrative, ReportNarrativeRequest
-from paper_harness.ports.arxiv import ArxivPaperRecord, ArxivPdf, ArxivPort
+from paper_harness.ports.arxiv import ArxivIdentifierPage, ArxivPaperRecord, ArxivPdf, ArxivPort
 from paper_harness.ports.llm import LLMPort
 from paper_harness.ports.pdf_parser import PdfParseRequest, PdfParserPort
 from paper_harness.ports.scholarly_search import ScholarlyPaper, ScholarlySearchPort
@@ -129,6 +129,22 @@ class AccountingArxiv:
         self._delegate = delegate
         self._accounting = accounting
 
+    def list_updated_identifiers(
+        self,
+        *,
+        day: date,
+        category: str,
+        resumption_token: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> ArxivIdentifierPage:
+        self._accounting.record_arxiv_operation()
+        return self._delegate.list_updated_identifiers(
+            day=day,
+            category=category,
+            resumption_token=resumption_token,
+            timeout_seconds=timeout_seconds,
+        )
+
     def search(
         self,
         *,
@@ -149,9 +165,12 @@ class AccountingArxiv:
         self,
         *,
         canonical_arxiv_ids: tuple[str, ...],
+        timeout_seconds: float | None = None,
     ) -> tuple[ArxivPaperRecord, ...]:
         self._accounting.record_arxiv_operation()
-        return self._delegate.get_papers_by_ids(canonical_arxiv_ids=canonical_arxiv_ids)
+        return self._delegate.get_papers_by_ids(
+            canonical_arxiv_ids=canonical_arxiv_ids, timeout_seconds=timeout_seconds
+        )
 
     def download_pdf(
         self,

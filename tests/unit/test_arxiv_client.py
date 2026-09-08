@@ -13,7 +13,11 @@ import pytest
 import requests
 from urllib3.exceptions import ReadTimeoutError as Urllib3ReadTimeoutError
 
-from paper_harness.adapters.arxiv.client import ArxivClient, BoundedArxivSession
+from paper_harness.adapters.arxiv.client import (
+    ArxivClient,
+    BoundedArxivSession,
+    ValidatedArxivClient,
+)
 from paper_harness.ports.arxiv import (
     MAX_ARXIV_ID_LOOKUP,
     ArxivPdfError,
@@ -130,7 +134,7 @@ def test_exact_id_lookup_returns_explicit_versions_in_requested_order(
         captured.append((search.id_list, search.max_results))
         return iter((second, first))
 
-    monkeypatch.setattr(arxiv.Client, "results", results)
+    monkeypatch.setattr(ValidatedArxivClient, "get_id_page", results)
     client = ArxivClient(max_retries=0, sleep=lambda _delay: None)
 
     records = client.get_papers_by_ids(
@@ -164,7 +168,7 @@ def test_exact_id_lookup_rejects_unbounded_or_invalid_requests_before_transport(
         raise AssertionError("invalid ID lookup must not reach arXiv")
         yield
 
-    monkeypatch.setattr(arxiv.Client, "results", unexpected_results)
+    monkeypatch.setattr(ValidatedArxivClient, "get_id_page", unexpected_results)
 
     with pytest.raises(ValueError, match=message):
         ArxivClient(max_retries=0, sleep=lambda _delay: None).get_papers_by_ids(
@@ -190,7 +194,7 @@ def test_exact_id_lookup_returns_the_available_requested_subset(
             _result(arxiv_id, datetime(2026, 1, 10, tzinfo=UTC)) for arxiv_id in returned_ids
         )
 
-    monkeypatch.setattr(arxiv.Client, "results", results)
+    monkeypatch.setattr(ValidatedArxivClient, "get_id_page", results)
 
     records = ArxivClient(max_retries=0, sleep=lambda _delay: None).get_papers_by_ids(
         canonical_arxiv_ids=("2601.00001", "2601.00002"),
@@ -199,7 +203,35 @@ def test_exact_id_lookup_returns_the_available_requested_subset(
     assert tuple(record.canonical_arxiv_id for record in records) == expected_ids
 
 
-def test_timestamp_tie_at_result_cap_is_locally_and_stably_bounded(
+def test_exact_id_metadata_omission_does_not_restart_at_a_filtered_offset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = (
+        _VALID_ONE_RESULT_ATOM.replace(b"<published>2026-01-09T04:00:00Z</published>", b"")
+        .replace(
+            b"<opensearch:totalResults>1</opensearch:totalResults>",
+            b"<opensearch:totalResults>2</opensearch:totalResults>",
+        )
+        .replace(b"</feed>", _VALID_SECOND_ENTRY + b"</feed>")
+    )
+    requested: list[str] = []
+
+    def response(_session: Any, _method: str, url: str, **_kwargs: Any) -> requests.Response:
+        requested.append(url)
+        return _response(200, content=content)
+
+    monkeypatch.setattr(requests.Session, "request", response)
+    records = ArxivClient(page_size=1, delay_seconds=0, max_retries=0).get_papers_by_ids(
+        canonical_arxiv_ids=("2601.01234", "2601.05678")
+    )
+    assert [record.canonical_arxiv_id for record in records] == ["2601.05678"]
+    assert len(requested) == 1
+    parameters = parse_qs(urlsplit(requested[0]).query)
+    assert parameters["start"] == ["0"]
+    assert parameters["max_results"] == ["2"]
+
+
+def test_timestamp_tie_at_result_cap_is_reported_as_incomplete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     updated_at = datetime(2026, 1, 10, 4, tzinfo=UTC)
@@ -215,17 +247,13 @@ def test_timestamp_tie_at_result_cap_is_locally_and_stably_bounded(
     monkeypatch.setattr(arxiv.Client, "results", results_for_tie)
     client = ArxivClient(max_retries=0, sleep=lambda _delay: None)
 
-    records = client.search(
-        query="cat:cs.AI",
-        updated_from=updated_at - timedelta(hours=1),
-        updated_until=updated_at + timedelta(hours=1),
-        max_results=2,
-    )
-
-    assert [record.canonical_arxiv_id for record in records] == [
-        "2601.00001",
-        "2601.00002",
-    ]
+    with pytest.raises(ArxivResultLimitError, match="resumable OAI"):
+        client.search(
+            query="cat:cs.AI",
+            updated_from=updated_at - timedelta(hours=1),
+            updated_until=updated_at + timedelta(hours=1),
+            max_results=2,
+        )
 
 
 def test_shuffled_results_are_deduplicated_and_stably_sorted(
@@ -338,7 +366,7 @@ def test_conflicting_duplicate_canonical_version_is_resolved_deterministically(
     assert records[0].title == "Paper 2601.00001v1"
 
 
-def test_newer_row_is_filtered_before_local_top_n(
+def test_surplus_in_window_rows_cannot_be_silently_truncated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     in_window = datetime(2026, 1, 10, 4, tzinfo=UTC)
@@ -359,16 +387,13 @@ def test_newer_row_is_filtered_before_local_top_n(
 
     monkeypatch.setattr(arxiv.Client, "results", upstream_results)
     client = ArxivClient(max_retries=0, sleep=lambda _delay: None)
-    records = client.search(
-        query="cat:cs.AI",
-        updated_from=in_window - timedelta(hours=1),
-        updated_until=updated_until,
-        max_results=2,
-    )
-    assert [record.canonical_arxiv_id for record in records] == [
-        "2601.00001",
-        "2601.00002",
-    ]
+    with pytest.raises(ArxivResultLimitError, match="resumable OAI"):
+        client.search(
+            query="cat:cs.AI",
+            updated_from=in_window - timedelta(hours=1),
+            updated_until=updated_until,
+            max_results=2,
+        )
     assert captured_max_results == [102]
 
 

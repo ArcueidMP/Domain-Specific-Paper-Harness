@@ -614,6 +614,15 @@
         "title": "DailyRunEnvelopeResponse",
         "type": "object"
       },
+      "EnrichmentStage": {
+        "enum": [
+          "GRAPH_EXTRACTION",
+          "TREND_AGGREGATION",
+          "LINEAGE_GENERATION"
+        ],
+        "title": "EnrichmentStage",
+        "type": "string"
+      },
       "EvidenceListResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2778,6 +2787,84 @@
         "title": "ReportCountsResponse",
         "type": "object"
       },
+      "ReportEnrichmentFailureResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_code": {
+            "title": "Error Code",
+            "type": "string"
+          },
+          "error_detail": {
+            "title": "Error Detail",
+            "type": "string"
+          },
+          "failed_stage": {
+            "$ref": "#/components/schemas/EnrichmentStage"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "paper_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Version Id"
+          },
+          "report_id": {
+            "format": "uuid",
+            "title": "Report Id",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "report_id",
+          "failed_stage",
+          "paper_id",
+          "paper_version_id",
+          "error_code",
+          "retryable",
+          "error_detail",
+          "schema_version",
+          "created_at"
+        ],
+        "title": "ReportEnrichmentFailureResponse",
+        "type": "object"
+      },
       "ReportEntityHighlightResponse": {
         "additionalProperties": false,
         "properties": {
@@ -3090,6 +3177,13 @@
             "title": "Created At",
             "type": "string"
           },
+          "enrichment_failures": {
+            "items": {
+              "$ref": "#/components/schemas/ReportEnrichmentFailureResponse"
+            },
+            "title": "Enrichment Failures",
+            "type": "array"
+          },
           "evidence": {
             "items": {
               "$ref": "#/components/schemas/ReportEvidenceReferenceResponse"
@@ -3307,6 +3401,7 @@
           "schema_version",
           "created_at",
           "failures",
+          "enrichment_failures",
           "sections",
           "report_type",
           "period_start",

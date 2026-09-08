@@ -217,6 +217,41 @@ class TopicPaperRow(Base):
     last_discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ArxivDiscoveryProgressRow(Base):
+    __tablename__ = "arxiv_discovery_progress"
+    __table_args__ = (
+        CheckConstraint(
+            "category_index >= 0 AND category_index < cardinality(categories)",
+            name="ck_arxiv_discovery_category_index",
+        ),
+        CheckConstraint(
+            "cardinality(pending_ids) <= 10000", name="ck_arxiv_discovery_pending_bound"
+        ),
+        CheckConstraint(
+            "NOT complete OR (cardinality(pending_ids) = 0 AND resumption_token IS NULL)",
+            name="ck_arxiv_discovery_complete",
+        ),
+    )
+
+    run_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("daily_runs.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    source: Mapped[str] = mapped_column(String(50), nullable=False, default="arxiv_oai_pmh")
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    categories: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    category_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    resumption_token: Mapped[str | None] = mapped_column(Text)
+    pending_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    page_exhausted: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    complete: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class IngestionCursorRow(Base):
     __tablename__ = "ingestion_cursors"
     __table_args__ = (
@@ -1049,6 +1084,48 @@ class ReportFailureRow(Base):
     paper_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     paper_version_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     failed_stage: Mapped[str] = mapped_column(String(40), nullable=False)
+    error_code: Mapped[str] = mapped_column(String(80), nullable=False)
+    retryable: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    error_detail: Mapped[str] = mapped_column(String(1000), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ReportEnrichmentFailureRow(Base):
+    __tablename__ = "report_enrichment_failures"
+    __table_args__ = (
+        UniqueConstraint(
+            "report_id",
+            "failed_stage",
+            "paper_version_id",
+            name="uq_report_enrichment_failures_scope",
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint("schema_version > 0", name="ck_report_enrichment_failures_schema_version"),
+        CheckConstraint(
+            "(failed_stage = 'TREND_AGGREGATION' AND paper_id IS NULL "
+            "AND paper_version_id IS NULL) OR "
+            "(failed_stage IN ('GRAPH_EXTRACTION', 'LINEAGE_GENERATION') "
+            "AND paper_id IS NOT NULL AND paper_version_id IS NOT NULL)",
+            name="ck_report_enrichment_failures_scope",
+        ),
+        ForeignKeyConstraint(
+            ["paper_version_id", "paper_id"],
+            ["paper_versions.id", "paper_versions.paper_id"],
+            name="fk_report_enrichment_failures_version_paper",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True)
+    report_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("reports.id", ondelete="CASCADE"), nullable=False
+    )
+    failed_stage: Mapped[str] = mapped_column(String(40), nullable=False)
+    paper_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
+    paper_version_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
+    )
     error_code: Mapped[str] = mapped_column(String(80), nullable=False)
     retryable: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_detail: Mapped[str] = mapped_column(String(1000), nullable=False)

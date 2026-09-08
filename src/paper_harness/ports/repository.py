@@ -75,7 +75,7 @@ from paper_harness.domain.models import (
     TopicConfig,
 )
 from paper_harness.domain.reports import Report, ReportType
-from paper_harness.ports.arxiv import ArxivPaperRecord
+from paper_harness.ports.arxiv import ArxivDiscoveryProgress, ArxivPaperRecord
 
 
 class RepositoryError(RuntimeError):
@@ -148,6 +148,18 @@ class RepositoryPort(Protocol):
     def upsert_topic(self, topic: TopicConfig) -> StoredTopic: ...
 
     def get_ingestion_cursor(self, topic_id: UUID) -> IngestionCursor | None: ...
+
+    def get_ingestion_progress(self, run_id: UUID) -> ArxivDiscoveryProgress | None: ...
+
+    def persist_ingestion_progress(
+        self,
+        *,
+        topic: TopicConfig,
+        run_id: UUID,
+        progress: ArxivDiscoveryProgress,
+        records: tuple[ArxivPaperRecord, ...],
+        persisted_at: datetime,
+    ) -> None: ...
 
     def get_run_for_date(
         self,
@@ -447,6 +459,7 @@ class RepositoryPort(Protocol):
 
     def get_canonically_published_paper_version_ids(
         self,
+        topic_id: UUID,
         paper_version_ids: tuple[UUID, ...],
     ) -> frozenset[UUID]: ...
 

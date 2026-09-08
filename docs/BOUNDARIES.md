@@ -7,11 +7,21 @@ LLM Agents, Brain-Computer Interfaces, and World Models. TopicConfig owns each
 topic's scope, categories, inclusion terms, and exclusions; no topic-specific
 exclusion is applied as a global product restriction.
 
+Published-version deduplication always requires the active topic ID. A paper
+published in one topic remains eligible in another topic, even when they reuse
+the same persisted paper version and analysis.
+
 ## Source boundaries
 
 Daily discovery is arXiv-only. Semantic Scholar, Google Scholar, Crossref,
 OpenAlex, publisher sites, news, social media, and arbitrary web search cannot
 become daily discovery sources.
+
+Daily identifier discovery uses the official arXiv OAI-PMH endpoint and its
+continuation tokens. arxiv.py remains the metadata and PDF URL boundary.
+Provider ordering, top-N caps, and filtered record counts cannot prove discovery
+complete. Persisted continuation and metadata writes are atomic; an incomplete
+harvest cannot advance the shared watermark or become a successful empty day.
 
 Historical inputs may come only from:
 
@@ -102,6 +112,11 @@ Evidence, related work, comparison, graph, trend, and lineage enrichment remain
 optional at publication time. Validation may remove an unsupported claim or
 unsafe enrichment artifact, but it cannot remove independently usable source
 metadata from the Daily report.
+
+Actual graph, trend, and lineage computation failures are separate typed
+diagnostics in the immutable report. Their stable codes and scopes survive API
+readback; diagnostic details are excluded from model input and redacted in Demo
+snapshots. Insufficient data and failed computation are different outcomes.
 
 Graph relations distinguish metadata-explicit, text-explicit,
 deterministically derived, LLM-inferred, and human-verified provenance.

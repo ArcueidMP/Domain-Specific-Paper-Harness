@@ -231,6 +231,14 @@ def run_pipeline(
             envvar="PIPELINE_REPROCESS",
         ),
     ] = False,
+    resume_execution_id: Annotated[
+        UUID | None,
+        typer.Option(
+            "--resume-execution-id",
+            help="Resume an existing reprocess UUID; requires --reprocess and --logical-date.",
+            envvar="PIPELINE_RESUME_EXECUTION_ID",
+        ),
+    ] = None,
     analysis_scope: Annotated[
         str,
         typer.Option(
@@ -343,6 +351,7 @@ def run_pipeline(
             narrative_mode=parsed_narrative_mode,
             max_selected_papers=max_selected_papers,
             reprocess=reprocess,
+            resume_execution_id=resume_execution_id,
             backfill_max_queries=backfill_max_queries,
             backfill_per_query_limit=backfill_per_query_limit,
             backfill_timeout_seconds=backfill_timeout_seconds,

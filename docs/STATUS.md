@@ -1,60 +1,75 @@
 # Current Status
 ## Current milestone
 
-The private production MVP is deployed. The current milestone is the verified
-Apache-2.0 v0.1.0 public source release, with no production runtime change and
-no public Demo provisioning.
+The maintenance update from commit `7193f30` is deployed and accepted on
+2026-09-08. Source publication is tracked in
+[PR #14](https://github.com/ArcueidMP/Domain-Specific-Paper-Harness/pull/14).
 
 ## Completed capabilities
 
-Production is an IAP-protected, availability-first, multi-topic product. Daily
-discovery uses a 168-hour overlap for delayed arXiv announcements, excludes
-canonically published versions from normal selection, and publishes terminal
-`COMPLETE`, honest `PARTIAL`, or transparent `NO_UPDATE` results without making
-optional enrichment a publication blocker.
+Publication deduplication is topic-scoped while compatible analysis remains
+shared. Daily discovery uses arXiv OAI-PMH continuation and atomic metadata
+checkpoints; incomplete harvests cannot advance the cursor. Reprocessing
+preserves exact published baseline versions and supports explicit execution
+resumption.
 
-The codebase supports an independently migrated PostgreSQL `demo` schema,
-least-privilege sync/read roles, deterministic redacted snapshots, operator CLI
-commands, and an independent post-CI GitHub OIDC workflow. These Demo resources
-are implemented but are not provisioned in production.
+Graph, trend, and lineage computation failures retain structured diagnostics in
+reports, the API, the UI, and bounded warning logs. Safe source metadata remains
+publishable; Demo snapshots redact diagnostic details.
 
-The private Web/API IAP binding supports the owner plus an explicit set of
-additional approved Google accounts. Production identities stay in an ignored
-Terraform variables file and are not committed to the public repository.
+DeepSeek remains `deepseek-v4-flash`; the temporary V4.1 beta was not adopted.
+The compatibility evidence is in `docs/MODEL_COMPATIBILITY.md`.
 
 ## Verification
 
-The public-source release passed tracked-file hygiene, Ruff, Pyright, generated
-OpenAPI and TypeScript contract checks, dependency-license reviews, 931 Python
-tests with four explicit live tests skipped, 34 frontend unit tests, two
-Playwright flows, a clean Alembic upgrade and revision check, Terraform format
-and validation, Docker Compose validation, and all three runtime image builds.
-The documented Windows keyless Quick Start also migrated a clean database and
-returned successful Web, liveness, readiness, and topic responses.
-Focused IAP/Terraform tests passed, and the production IAM-only plan applied as
-one in-place binding update with no additions, deletions, or Cloud Run revision.
+Local verification passed 983 non-live Python tests, subsequent 41 focused
+recovery checks, 35 frontend tests, two Playwright flows, Ruff, Pyright, and
+OpenAPI/TypeScript drift and hygiene checks. GitHub's required Python, frontend,
+and infrastructure checks passed for the source revision.
+
+Both production images built and pushed successfully. The Daily image passed
+network-disabled CLI and SPECTER2 loading/768-dimensional embedding checks.
+A production logical backup was restored into isolated PostgreSQL and upgraded
+from 0006 to 0008. Its 1,436 papers, 1,542 versions, 675 analyses, 14,954 evidence
+records, and 176 reports matched the source and remained intact after migration.
+
+All three new REPROCESS executions for 2026-09-08 completed successfully in Cloud
+Run. Their OAI checkpoints exhausted 353/20/174 records with no pending IDs or
+tokens. The original 10/1/10 exact-version baselines and all three shared
+watermarks were preserved. Authenticated API readback matched the new reports.
 
 ## Deployment
 
-The private Web/API remains protected by Google Cloud IAP. Three topic-specific
-Daily Jobs and private GROBID remain deployed. The public source release did not
-change production secrets, database migration state, Scheduler, or any deployed
-runtime.
+The [private Web/API](https://paper-harness-web-nxdmkbsdtq-as.a.run.app) is at
+revision `paper-harness-web-00013-ws8`; production migration is
+`0008_enrichment_failures`. Web/API and Migration use image digest
+`sha256:b4e66af2cb24600d8c7dd6a365d6f999f0fba665275d0bc026ff852a1e67fffd`;
+all three Daily Jobs use
+`sha256:f279eef2bb06d8de04115505338068bb03533ba2b1039ceaff63b0db742576c4`.
+Terraform updated existing resources only.
 
-The IAP allowlist is Terraform-managed and currently contains the owner and one
-additional approved collaborator. Their identities are intentionally omitted
-from public documentation.
+| Topic | Publication | Metadata cards | Completed source analyses | Core failures |
+| --- | --- | --- | --- | --- |
+| Broad LLM Agents | COMPLETE | 10 | 10 | None |
+| Brain-Computer Interfaces | PARTIAL | 1 | 0 | PDF HTTP 404 |
+| World Models | PARTIAL | 10 | 8 | PDF size bound; model output validation |
 
-No Demo schema or roles, Demo database secrets, GitHub OIDC identity, public
-Demo API, or Cloudflare resource are provisioned in production.
+Graph, trend, and lineage artifacts were verified where usable inputs exist.
+The original schedules are enabled at 20:00/20:20/20:40 in
+`Asia/Kuala_Lumpur`. Authenticated readiness returned HTTP 200 with ready database
+and current migrations; anonymous readiness returned HTTP 302. IAP, the exact
+two-account allowlist, and private Daily-only GROBID invocation remain intact.
+
+Demo schema/roles, Demo secrets, GitHub OIDC, and public Demo resources remain
+unprovisioned. Production secrets and approved model settings were unchanged.
 
 ## Current blockers
 
-There is no known implementation, verification, production, or data blocker for
-the public source distribution. Demo provisioning remains a separate future
-rollout.
+No deployment blocker remains. Individual unavailable PDFs and invalid model
+outputs are explicitly retained in PARTIAL reports; they are not hidden as
+successful analyses.
 
 ## Next milestone
 
-Publish and maintain the v0.1.x source release. The Demo database bootstrap and
-public runtime remain a separate later milestone.
+Maintain the scheduled v0.1.x product. Public Demo provisioning remains a separate
+later rollout.

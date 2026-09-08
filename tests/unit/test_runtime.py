@@ -12,9 +12,11 @@ from unittest.mock import ANY, MagicMock
 from uuid import UUID
 
 import pytest
+from tests.fakes import FakeRepository
 
 from paper_harness.application.analyze_papers import AnalysisResumeError
 from paper_harness.application.ingest_arxiv import IngestionResumeError
+from paper_harness.application.read_models import ReportDetail, RunDetail
 from paper_harness.application.reporting import ReportNarrativeModeConflictError
 from paper_harness.domain.analysis import AnalysisScope, VerificationStatus
 from paper_harness.domain.historical import (
@@ -35,8 +37,16 @@ from paper_harness.domain.models import (
     RunItemStatus,
     RunOperation,
     RunStatus,
+    TopicConfig,
 )
-from paper_harness.domain.reports import ReportNarrativeMode
+from paper_harness.domain.reports import (
+    EnrichmentStage,
+    Report,
+    ReportCounts,
+    ReportEnrichmentFailure,
+    ReportNarrativeMode,
+    ReportType,
+)
 from paper_harness.entrypoints import runtime as runtime_module
 from paper_harness.entrypoints.runtime import (
     DailyPipelineRunFailedError,
@@ -361,6 +371,81 @@ def test_daily_pipeline_reuses_compatible_terminal_ingestion_and_analysis_runs(
     assert result.product_run is harness.product
 
 
+@pytest.mark.parametrize(
+    "execution_mode",
+    [PipelineExecutionMode.NORMAL, PipelineExecutionMode.SMOKE, PipelineExecutionMode.REPROCESS],
+)
+def test_pipeline_selection_keeps_another_topics_published_version_eligible(
+    monkeypatch: pytest.MonkeyPatch,
+    topic_config: TopicConfig,
+    execution_mode: PipelineExecutionMode,
+) -> None:
+    harness = _configure_reused_pipeline(monkeypatch, execution_mode=execution_mode)
+    candidate = harness.candidates[0]
+    published = FakeRepository()
+    published.canonically_published_version_ids_by_topic[topic_config.id] = frozenset(
+        {candidate.paper_version_id}
+    )
+    harness.repository.get_canonically_published_paper_version_ids.side_effect = (
+        published.get_canonically_published_paper_version_ids
+    )
+    detail = cast(RunDetail, harness.repository.get_run(harness.ingestion.id))
+    other_topic = replace(
+        topic_config,
+        id=UUID("eadc31d0-a4cd-49a9-8a1c-f74c6d7f4838"),
+        slug="overlapping-research",
+        name="Overlapping Research",
+    )
+
+    for topic, expected in ((topic_config, ()), (other_topic, harness.candidates)):
+        result = runtime_module._pipeline_selection(
+            harness.repository,
+            RunDetail(run=replace(detail.run, topic_id=topic.id), items=detail.items),
+            topic=topic,
+            candidates=harness.candidates,
+            limit=1,
+        )
+
+        assert result.selected == expected
+        harness.repository.get_canonically_published_paper_version_ids.assert_called_with(
+            topic.id,
+            (candidate.paper_version_id,),
+        )
+
+
+def test_pipeline_selection_replays_persisted_decisions_without_publication_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    topic_config: TopicConfig,
+) -> None:
+    harness = _configure_reused_pipeline(monkeypatch)
+    candidate = harness.candidates[0]
+    detail = cast(
+        RunDetail,
+        SimpleNamespace(
+            run=harness.ingestion,
+            items=(
+                _completed_item(
+                    candidate.paper_id,
+                    candidate.paper_version_id,
+                    stage=PaperStage.SELECTED,
+                ),
+            ),
+        ),
+    )
+
+    result = runtime_module._pipeline_selection(
+        harness.repository,
+        detail,
+        topic=topic_config,
+        candidates=harness.candidates,
+        limit=1,
+    )
+
+    assert result.selected == harness.candidates
+    harness.repository.get_canonically_published_paper_version_ids.assert_not_called()
+    harness.repository.get_reprocessing_baseline_paper_version_ids.assert_not_called()
+
+
 def test_optional_historical_identifier_conflict_does_not_block_publication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -527,6 +612,7 @@ def test_daily_pipeline_reuses_terminal_product_without_new_search_or_comparison
             return SimpleNamespace(
                 run=terminal_product,
                 items=() if product_status is RunStatus.COMPLETE else (failure_item,),
+                report=None,
             )
         assert callable(original_get_run)
         return original_get_run(run_id)
@@ -668,7 +754,22 @@ def test_terminal_pipeline_execution_replays_after_its_deadline_without_external
     product_detail = SimpleNamespace(
         run=terminal_product,
         items=(),
-        report=SimpleNamespace(report=SimpleNamespace(narrative_mode=ReportNarrativeMode.DEEPSEEK)),
+        report=ReportDetail(
+            report=Report(
+                id=UUID("70210853-d193-4ca9-a1c4-5da47a5752fd"),
+                run_id=terminal_product.id,
+                topic_id=terminal_product.topic_id,
+                logical_date=terminal_product.logical_date,
+                status=RunStatus.COMPLETE,
+                title="Persisted completed report",
+                summary="Persisted product result.",
+                source="m4_structured_report",
+                generated_at=terminal_product.started_at,
+                schema_version=1,
+                created_at=terminal_product.started_at,
+            ),
+            evidence=(),
+        ),
     )
     details = {
         harness.ingestion.id: ingestion_detail,
@@ -772,6 +873,7 @@ def test_partial_analysis_failure_keeps_product_and_parent_partial(
         ),
         harness.product.id: SimpleNamespace(
             run=harness.product,
+            report=None,
             items=(
                 _completed_item(candidates[0].paper_id, candidates[0].paper_version_id),
                 _failed_item(
@@ -987,6 +1089,58 @@ def test_failed_analysis_preserves_exhausted_dependency_item_metadata(
         ),
     )
     harness.backfill_constructor.assert_not_called()
+
+
+def test_daily_pipeline_returns_enrichment_failures_for_a_complete_publication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _configure_reused_pipeline(monkeypatch)
+    product: DailyRun = harness.product
+    report_id = UUID("70210853-d193-4ca9-a1c4-5da47a5752fd")
+    failure = ReportEnrichmentFailure(
+        id=UUID("a053f3d7-0a4f-44e0-9d80-c668982a8b0a"),
+        report_id=report_id,
+        failed_stage=EnrichmentStage.TREND_AGGREGATION,
+        paper_id=None,
+        paper_version_id=None,
+        error_code="TREND_AGGREGATION_INVALID",
+        retryable=False,
+        error_detail="Persisted trend diagnostic.",
+        schema_version=1,
+        created_at=product.started_at,
+    )
+    report = Report(
+        id=report_id,
+        run_id=product.id,
+        topic_id=product.topic_id,
+        logical_date=product.logical_date,
+        status=RunStatus.COMPLETE,
+        title="Daily publication",
+        summary="Source analysis was published.",
+        source="m4_structured_report",
+        generated_at=product.started_at,
+        schema_version=1,
+        created_at=product.started_at,
+        report_type=ReportType.DAILY,
+        counts=ReportCounts(1, 1, 1, 1, 0),
+        enrichment_failures=(failure,),
+    )
+    original_get_run = harness.repository.get_run.side_effect
+
+    def get_run(run_id: UUID) -> object:
+        if run_id == product.id:
+            return RunDetail(run=product, items=(), report=report)
+        assert callable(original_get_run)
+        return original_get_run(run_id)
+
+    harness.repository.get_run.side_effect = get_run
+    result = _execute_pipeline(max_selected_papers=1)
+
+    assert result.status is RunStatus.COMPLETE
+    assert result.product_run.failed_count == 0
+    assert tuple((item.stage, item.error_code) for item in result.failures) == (
+        ("TREND_AGGREGATION", "TREND_AGGREGATION_INVALID"),
+    )
 
 
 def test_daily_pipeline_constructs_specter2_once_and_reuses_it_for_backfill_and_search(
@@ -1238,6 +1392,7 @@ def test_daily_pipeline_materializes_and_analyzes_historical_versions_in_rank_or
     assert harness.backfill_execute.call_args.kwargs["through"] == date(2026, 8, 10)
     harness.arxiv.get_papers_by_ids.assert_called_once_with(
         canonical_arxiv_ids=("2601.00001",),
+        timeout_seconds=None,
     )
     materialization_call = harness.repository.persist_historical_arxiv_records.call_args
     assert materialization_call.kwargs["topic"] == _pipeline_topic()
@@ -1670,7 +1825,7 @@ def _configure_reused_pipeline(
             ),
         ),
         analysis.id: SimpleNamespace(run=analysis, items=analysis_items),
-        product.id: SimpleNamespace(run=product, items=()),
+        product.id: SimpleNamespace(run=product, items=(), report=None),
     }
     repository.get_run.side_effect = details.get
     publication_papers = tuple(

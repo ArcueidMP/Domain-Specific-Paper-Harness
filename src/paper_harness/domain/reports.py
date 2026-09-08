@@ -39,6 +39,12 @@ class ReportSectionKind(StrEnum):
     LIMITATIONS = "LIMITATIONS"
 
 
+class EnrichmentStage(StrEnum):
+    GRAPH_EXTRACTION = "GRAPH_EXTRACTION"
+    TREND_AGGREGATION = "TREND_AGGREGATION"
+    LINEAGE_GENERATION = "LINEAGE_GENERATION"
+
+
 def _require_aware(value: datetime, name: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise DomainInvariantError(f"{name} must be timezone-aware")
@@ -70,6 +76,56 @@ class ReportFailure:
         if self.schema_version < 1:
             raise DomainInvariantError("schema_version must be positive")
         _require_aware(self.created_at, "created_at")
+
+
+@dataclass(frozen=True, slots=True)
+class ReportEnrichmentFailure:
+    """An unsuccessful optional computation, distinct from missing corpus data."""
+
+    id: UUID
+    report_id: UUID
+    failed_stage: EnrichmentStage
+    paper_id: UUID | None
+    paper_version_id: UUID | None
+    error_code: str
+    retryable: bool
+    error_detail: str
+    schema_version: int
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        if (self.paper_id is None) != (self.paper_version_id is None):
+            raise DomainInvariantError("enrichment failure paper identity must be complete")
+        if (self.failed_stage is EnrichmentStage.TREND_AGGREGATION) != (self.paper_id is None):
+            raise DomainInvariantError("enrichment failure scope does not match its stage")
+        _require_text(self.error_code, "enrichment failure code", maximum=80)
+        _require_text(self.error_detail, "enrichment failure detail", maximum=1000)
+        if self.schema_version < 1:
+            raise DomainInvariantError("schema_version must be positive")
+        _require_aware(self.created_at, "created_at")
+
+
+def product_item_ready_for_publication(
+    stage: PaperStage,
+    paper_version_id: UUID,
+    enrichment_failures: tuple[ReportEnrichmentFailure, ...],
+) -> bool:
+    """Require successful work or a recorded optional failure before publication."""
+
+    if stage is PaperStage.TREND_SNAPSHOTS_GENERATED:
+        return True
+    if stage is PaperStage.GRAPH_UPDATED:
+        return any(
+            failure.failed_stage is EnrichmentStage.TREND_AGGREGATION
+            for failure in enrichment_failures
+        )
+    if stage in (PaperStage.EVIDENCE_EXTRACTED, PaperStage.COMPARED):
+        return any(
+            failure.failed_stage is EnrichmentStage.GRAPH_EXTRACTION
+            and failure.paper_version_id == paper_version_id
+            for failure in enrichment_failures
+        )
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +266,7 @@ class ReportNarrativeRequest:
     limitations: tuple[str, ...]
     evidence: tuple[ReportEvidenceReference, ...]
     missing_sections: tuple[str, ...] = ()
+    enrichment_failures: tuple[ReportEnrichmentFailure, ...] = ()
 
     def __post_init__(self) -> None:
         if self.report_type is ReportType.ANALYSIS:
@@ -407,6 +464,7 @@ class Report:
     prompt_version: str | None = None
     usage: ModelUsage | None = None
     verification_status: VerificationStatus = VerificationStatus.UNVERIFIED
+    enrichment_failures: tuple[ReportEnrichmentFailure, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in (RunStatus.COMPLETE, RunStatus.PARTIAL):
@@ -420,6 +478,13 @@ class Report:
             raise DomainInvariantError("partial report must list item failures")
         if any(failure.report_id != self.id for failure in self.failures):
             raise DomainInvariantError("report failure ownership is invalid")
+        if any(failure.report_id != self.id for failure in self.enrichment_failures):
+            raise DomainInvariantError("report enrichment failure ownership is invalid")
+        enrichment_keys = tuple(
+            (failure.failed_stage, failure.paper_version_id) for failure in self.enrichment_failures
+        )
+        if len(set(enrichment_keys)) != len(enrichment_keys):
+            raise DomainInvariantError("report enrichment failures must have unique stage scopes")
         if self.schema_version < 1:
             raise DomainInvariantError("schema_version must be positive")
         _require_aware(self.generated_at, "generated_at")

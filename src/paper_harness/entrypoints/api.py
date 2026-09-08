@@ -119,6 +119,7 @@ from paper_harness.entrypoints.api_schemas import (
     RelatedWorkResponse,
     ReportComparisonHighlightResponse,
     ReportCountsResponse,
+    ReportEnrichmentFailureResponse,
     ReportEntityHighlightResponse,
     ReportEvidenceReferenceResponse,
     ReportFailureResponse,
@@ -1716,6 +1717,21 @@ def _report_response(
         schema_version=report.schema_version,
         created_at=report.created_at,
         failures=[_report_failure_response(failure) for failure in report.failures],
+        enrichment_failures=[
+            ReportEnrichmentFailureResponse(
+                id=failure.id,
+                report_id=failure.report_id,
+                failed_stage=failure.failed_stage,
+                paper_id=failure.paper_id,
+                paper_version_id=failure.paper_version_id,
+                error_code=failure.error_code,
+                retryable=failure.retryable,
+                error_detail=failure.error_detail,
+                schema_version=failure.schema_version,
+                created_at=failure.created_at,
+            )
+            for failure in report.enrichment_failures
+        ],
         sections=[
             ReportSectionResponse(
                 id=section.id,

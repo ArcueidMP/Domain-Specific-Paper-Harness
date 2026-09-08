@@ -191,6 +191,12 @@ def test_daily_cli_passes_the_direct_reprocess_flag(
             "WARNING",
             1,
         ),
+        (
+            "TREND_AGGREGATION_INVALID",
+            False,
+            "WARNING",
+            0,
+        ),
     ],
 )
 def test_full_pipeline_cli_reports_complete_and_partial_results(
@@ -203,6 +209,8 @@ def test_full_pipeline_cli_reports_complete_and_partial_results(
     execution_mode = PipelineExecutionMode.NORMAL
     now = datetime(2026, 8, 10, 5, tzinfo=UTC)
     topic_id = UUID("4b7db6d4-349c-5c06-bc41-f84091580fcb")
+    enrichment_failure = failure_code == "TREND_AGGREGATION_INVALID"
+    core_failure = failure_code is not None and not enrichment_failure
     ingestion = DailyRun(
         id=UUID("04a6195a-4267-4d72-b882-16fa95acbc12"),
         topic_id=topic_id,
@@ -258,7 +266,7 @@ def test_full_pipeline_cli_reports_complete_and_partial_results(
         logical_date=now.date(),
         operation=RunOperation.PRODUCT_PUBLICATION,
         analysis_scope=None,
-        status=RunStatus.PARTIAL if failure_code is not None else RunStatus.COMPLETE,
+        status=RunStatus.PARTIAL if core_failure else RunStatus.COMPLETE,
         started_at=now,
         completed_at=now,
         cursor_from=None,
@@ -266,8 +274,8 @@ def test_full_pipeline_cli_reports_complete_and_partial_results(
         discovered_count=0,
         normalized_count=0,
         selected_count=2,
-        completed_count=1 if failure_code is not None else 2,
-        failed_count=1 if failure_code is not None else 0,
+        completed_count=1 if core_failure else 2,
+        failed_count=1 if core_failure else 0,
         error_code=None,
         error_detail=None,
         schema_version=1,
@@ -318,7 +326,7 @@ def test_full_pipeline_cli_reports_complete_and_partial_results(
             (
                 DailyPipelineFailure(
                     paper_id=UUID("d8fdbf73-cf9a-487f-9b6a-237e13272d55"),
-                    stage="COMPARED",
+                    stage="TREND_AGGREGATION" if enrichment_failure else "COMPARED",
                     error_code=failure_code,
                     retryable=failure_retryable,
                     detail="A bounded item operation did not complete.",
@@ -372,6 +380,11 @@ def test_full_pipeline_cli_reports_complete_and_partial_results(
         assert f'"error_code":"{failure_code}"' in result.output
     else:
         assert '"error_code":"COMPARISON_UNAVAILABLE"' not in result.output
+    if enrichment_failure:
+        assert '"status":"COMPLETE"' in result.output
+        assert '"stage":"TREND_AGGREGATION"' in result.output
+        assert '"failed_count":0' in result.output
+    assert "A bounded item operation did not complete." not in result.output
     exhausted_event_count = result.output.count('"event":"external_dependency_exhausted"')
     assert exhausted_event_count == expected_exhausted_events
     if expected_exhausted_events:

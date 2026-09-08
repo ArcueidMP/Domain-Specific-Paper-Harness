@@ -206,6 +206,8 @@ uv run --frozen --python 3.13.13 --extra specter2 paper-harness-daily run-pipeli
 
 Web/API 不需要 DeepSeek 或 Semantic Scholar 凭据。浏览器绝不会接收到任何数据库或供应商密钥。
 
+生产模型仍为 `deepseek-v4-flash`；[V4.1 Flash 兼容性评估](docs/MODEL_COMPATIBILITY.md) 记录了为何未将 9 月 8 日的临时测试版本用于无人值守的 Job。
+
 ## 发布状态
 
 - `COMPLETE` 表示当天可用的来源元数据已经发布。可选的 related-work、比较、图谱、趋势、谱系或证据 enrichment 仍可能被显式标记为不可用。
@@ -215,9 +217,11 @@ Web/API 不需要 DeepSeek 或 Semantic Scholar 凭据。浏览器绝不会接�
 
 某个独立项目失败不会抑制其他可用论文。缺少可选 enrichment 时会显示为不可用，而不会进行编造或阻止原本可用的 publication。
 
+图谱、趋势和谱系的计算失败会在报告中保留独立的结构化诊断，包括失败阶段、稳定错误码和论文/版本范围。界面将其显示为计算失败，与数据不足区分，同时保留可用的元数据和分析。
+
 ## 数据来源与信任边界
 
-- **Daily 发现：**仅限 arXiv。
+- **Daily 发现：**仅限 arXiv，使用 OAI-PMH 续传机制确认标识符发现范围的完整性，再通过 arxiv.py 获取元数据和 PDF URL。未完成的发现会保存进度，并且不会推进共享游标。已发布版本的排除仅在各主题内部生效，兼容的分析仍可共享。
 - **历史论文与 related work：**通过认证的 Semantic Scholar、已持久化的本地 corpus，以及有界的 PaSa 衍生 scholarly tool loop。
 - **全文：**仅 arXiv 托管的 PDF 符合条件。非 arXiv 历史结果仅保留 bibliographic 或 abstract stub。
 - **排除的行为：**不抓取出版商网站、不绕过付费墙、不下载出版商 PDF、不使用通用 Web 搜索、不进行隐藏的 provider 替换，也不修复格式错误的 model output。

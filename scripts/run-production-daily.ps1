@@ -6,11 +6,15 @@ param(
     [string]$Region = "asia-southeast1",
     [string]$JobName = "paper-harness-daily",
     [string]$LogicalDate,
-    [switch]$Reprocess
+    [switch]$Reprocess,
+    [Nullable[guid]]$ResumeExecutionId
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if ($null -ne $ResumeExecutionId -and (-not $Reprocess -or -not $LogicalDate)) {
+    throw "ResumeExecutionId requires Reprocess and the original LogicalDate."
+}
 $Gcloud = (Get-Command gcloud -ErrorAction Stop).Source
 
 $ActiveProject = (& $Gcloud config get-value project 2>$null).Trim()
@@ -33,6 +37,9 @@ if ($LogicalDate) {
 }
 if ($Reprocess) {
     $EnvironmentOverrides += "PIPELINE_REPROCESS=true"
+}
+if ($null -ne $ResumeExecutionId) {
+    $EnvironmentOverrides += "PIPELINE_RESUME_EXECUTION_ID=$ResumeExecutionId"
 }
 if ($EnvironmentOverrides.Count -gt 0) {
     $ExecutionArguments += "--update-env-vars=$($EnvironmentOverrides -join ',')"

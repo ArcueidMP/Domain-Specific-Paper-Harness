@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import NoReturn
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from paper_harness.application.ingest_arxiv import SCHEDULE_TIME_ZONE
 from paper_harness.application.product_models import GraphWriteResult, ProductFailureInput
@@ -37,7 +37,9 @@ from paper_harness.domain.models import (
     TopicConfig,
 )
 from paper_harness.domain.reports import (
+    EnrichmentStage,
     GeneratedReportNarrative,
+    ReportEnrichmentFailure,
     ReportNarrativeMode,
     ReportNarrativeRequest,
 )
@@ -67,6 +69,11 @@ class ProductGraphError(RuntimeError):
 
 class ProductTrendError(RuntimeError):
     error_code = "TREND_AGGREGATION_INVALID"
+    retryable = False
+
+
+class ProductLineageError(RuntimeError):
+    error_code = "LINEAGE_GENERATION_INVALID"
     retryable = False
 
 
@@ -182,6 +189,7 @@ class PublishProduct:
                 )
             )
             graph_results: dict[UUID, GraphWriteResult] = {}
+            enrichment_failures: list[ReportEnrichmentFailure] = []
             materialized_types: set[GraphEntityType] = set()
             upstream_failed_versions = {
                 failure.paper_version_id for failure in (*source.input_failures, *upstream_failures)
@@ -189,20 +197,23 @@ class PublishProduct:
             for paper in source.papers:
                 if paper.paper_version_id in upstream_failed_versions:
                     continue
-                try:
-                    self._repository.advance_product_item(
-                        run_id=run.id,
-                        paper_version_id=paper.paper_version_id,
-                        expected_stage=PaperStage.EVIDENCE_EXTRACTED,
-                        next_stage=PaperStage.COMPARED,
-                        updated_at=self._aware_now(),
-                    )
-                except RepositoryError as error:
-                    self._fail_run_then_raise(
-                        run.id,
-                        failed_stage=PaperStage.COMPARED,
-                        error=error,
-                    )
+                graph_input_stage = PaperStage.EVIDENCE_EXTRACTED
+                if paper.comparisons:
+                    try:
+                        self._repository.advance_product_item(
+                            run_id=run.id,
+                            paper_version_id=paper.paper_version_id,
+                            expected_stage=PaperStage.EVIDENCE_EXTRACTED,
+                            next_stage=PaperStage.COMPARED,
+                            updated_at=self._aware_now(),
+                        )
+                    except RepositoryError as error:
+                        self._fail_run_then_raise(
+                            run.id,
+                            failed_stage=PaperStage.COMPARED,
+                            error=error,
+                        )
+                    graph_input_stage = PaperStage.COMPARED
                 try:
                     analysis_graph = extract_analysis_graph(
                         topic.id,
@@ -230,16 +241,18 @@ class PublishProduct:
                         run_id=run.id,
                         paper_version_id=paper.paper_version_id,
                         bundle=bundle,
-                        expected_stage=PaperStage.COMPARED,
+                        expected_stage=graph_input_stage,
                         updated_at=self._aware_now(),
                     )
-                except DomainInvariantError:
-                    self._repository.advance_product_item(
-                        run_id=run.id,
-                        paper_version_id=paper.paper_version_id,
-                        expected_stage=PaperStage.COMPARED,
-                        next_stage=PaperStage.GRAPH_UPDATED,
-                        updated_at=self._aware_now(),
+                except DomainInvariantError as error:
+                    enrichment_failures.append(
+                        self._enrichment_failure(
+                            run.id,
+                            EnrichmentStage.GRAPH_EXTRACTION,
+                            ProductGraphError(_concise_detail(error)),
+                            paper_id=paper.paper_id,
+                            paper_version_id=paper.paper_version_id,
+                        )
                     )
                 except RepositoryError as error:
                     self._fail_run_then_raise(
@@ -283,8 +296,15 @@ class PublishProduct:
                     trends = tuple(
                         namespace_trend_snapshot(item, pipeline_execution_id) for item in trends
                     )
-            except DomainInvariantError:
+            except DomainInvariantError as error:
                 trends = ()
+                enrichment_failures.append(
+                    self._enrichment_failure(
+                        run.id,
+                        EnrichmentStage.TREND_AGGREGATION,
+                        ProductTrendError(_concise_detail(error)),
+                    )
+                )
             completed_paper_ids = {
                 paper.paper_id for paper in source.papers if paper.paper_version_id in graph_results
             }
@@ -299,13 +319,23 @@ class PublishProduct:
                         edges=corpus.edges,
                         generated_at=started_at,
                     )
-                except DomainInvariantError:
-                    continue
-                if pipeline_execution_id is not None:
-                    lineage = namespace_lineage_snapshot(
-                        lineage,
-                        pipeline_execution_id,
+                    if pipeline_execution_id is not None:
+                        lineage = namespace_lineage_snapshot(
+                            lineage,
+                            pipeline_execution_id,
+                        )
+                except DomainInvariantError as error:
+                    paper = next(paper for paper in source.papers if paper.paper_id == paper_id)
+                    enrichment_failures.append(
+                        self._enrichment_failure(
+                            run.id,
+                            EnrichmentStage.LINEAGE_GENERATION,
+                            ProductLineageError(_concise_detail(error)),
+                            paper_id=paper_id,
+                            paper_version_id=paper.paper_version_id,
+                        )
                     )
+                    continue
                 lineage_values.append(lineage)
             lineages = tuple(lineage_values)
             try:
@@ -340,6 +370,7 @@ class PublishProduct:
                             key=lambda item: item.value,
                         )
                     ),
+                    enrichment_failures=tuple(enrichment_failures),
                 )
                 no_update = run.selected_count == 0
                 effective_narrative_mode = (
@@ -403,7 +434,31 @@ class PublishProduct:
     def _generate_report(self, request: ReportNarrativeRequest) -> GeneratedReportNarrative:
         if self._llm is None:
             raise AssertionError("DeepSeek mode was validated before starting the run")
-        return self._llm.generate_report(request)
+        # Diagnostic details are operations data, not model context.
+        return self._llm.generate_report(replace(request, enrichment_failures=()))
+
+    def _enrichment_failure(
+        self,
+        run_id: UUID,
+        stage: EnrichmentStage,
+        error: ProductGraphError | ProductTrendError | ProductLineageError,
+        *,
+        paper_id: UUID | None = None,
+        paper_version_id: UUID | None = None,
+    ) -> ReportEnrichmentFailure:
+        report_id = stable_report_id(run_id)
+        return ReportEnrichmentFailure(
+            id=uuid5(report_id, f"enrichment:{stage.value}:{paper_version_id}"),
+            report_id=report_id,
+            failed_stage=stage,
+            paper_id=paper_id,
+            paper_version_id=paper_version_id,
+            error_code=error.error_code,
+            retryable=error.retryable,
+            error_detail=_concise_detail(error),
+            schema_version=1,
+            created_at=self._aware_now(),
+        )
 
     def _fail_item(
         self,

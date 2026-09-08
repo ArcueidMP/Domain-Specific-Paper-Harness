@@ -79,11 +79,17 @@ selected item can complete, or publication cannot commit.
 
 Invalid configuration, database/head failure, or global arXiv unavailability
 makes the ingestion run failed. Required paper identity and timestamp/type
-violations remain item failures; valid independent papers continue. Pagination,
-overlap, deduplication, and the cursor use the locally normalized and stably
-sorted candidate set, never the provider's page order. A cursor advances with
-the persisted normalized records in the same transaction, and a write failure
-rolls back both records and cursor.
+violations remain explicit failures. OAI-PMH continuation exhaustion determines
+coverage; provider ordering and a top-N cap do not. Each metadata batch and
+its checkpoint commit atomically. Missing metadata identities remain pending
+while valid records from the same batch are saved.
+
+`ARXIV_DISCOVERY_INCOMPLETE` records a bounded harvest that has not finished.
+The run fails visibly and the shared watermark remains unchanged. Retrying the
+same logical date resumes the saved fixed window. Expired OAI tokens restart
+only their day/category with idempotent writes and bounded restart attempts.
+The final transaction advances the watermark only after every continuation and
+pending metadata batch is exhausted. A failed write rolls back its checkpoint.
 
 Canonical identity and explicit version constraints decide idempotency. Content
 hashes are not a generic deduplication substitute. The PostgreSQL advisory lock
@@ -98,9 +104,10 @@ not stop other papers or remove the paper's metadata card. An all-item analysis
 failure is `PARTIAL`, not a run-fatal substitute for missing enrichment.
 
 Evidence must point to the selected exact version and a valid claim/relation.
-An atomic per-paper write prevents half-written analyses. If some selected
-papers succeed and others fail, the analysis run is partial; if none succeed,
-it is failed.
+An atomic per-paper write prevents half-written analyses. Item analysis failures
+remain explicit even when usable source metadata allows a partial product
+publication. Global configuration, authentication, or persistence failures
+remain fatal to their owning operation.
 
 ## Historical and related-work search
 
@@ -142,6 +149,15 @@ windows remain `INSUFFICIENT_DATA`; narrative generation cannot fill missing
 values. Graph, trend, lineage, and generated report narrative validation may
 omit the affected enrichment but cannot discard safe source metadata or
 grounded analysis already available for publication.
+
+Graph, trend, and lineage computation exceptions persist in
+`report_enrichment_failures` with a typed stage, stable error code, retryability,
+concise detail, timestamp, and paper/version ownership when applicable. These
+diagnostics commit with the final report and appear in its API and UI. A failed
+computation does not advance its successful processing stage. The publication
+can remain `COMPLETE` when its core metadata and analysis succeeded, with
+optional failures displayed separately from core item failures. Do not relabel
+these failures as `INSUFFICIENT_DATA` or send diagnostic details to the LLM.
 
 Each product-publication attempt selects current valid persisted analyses,
 comparisons, and evidence for its declared logical date and scope, then stages

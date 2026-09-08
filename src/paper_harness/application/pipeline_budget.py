@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 ARXIV_OPERATION_SECONDS = 90
+ARXIV_DISCOVERY_SECONDS = 900
 PDF_PARSER_OPERATION_SECONDS = 180
 LLM_OPERATION_SECONDS = 300
 PIPELINE_SAFETY_SECONDS = 900
@@ -39,7 +40,8 @@ def pipeline_budget(
         # Current-paper and historical-paper analysis each consume the full bound.
         (2 * selected_papers * analysis_seconds)
         # Discovery plus exact historical arXiv materialization.
-        + (2 * ARXIV_OPERATION_SECONDS)
+        + ARXIV_DISCOVERY_SECONDS
+        + ARXIV_OPERATION_SECONDS
         + backfill_timeout_seconds
         + (selected_papers * search_timeout_seconds)
         + (selected_papers * comparisons_per_paper * LLM_OPERATION_SECONDS)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Protocol
 
 from paper_harness.domain.errors import DomainInvariantError
@@ -33,6 +33,37 @@ class ArxivResultLimitError(ArxivPortError):
     """The bounded result window was saturated and cannot advance safely."""
 
     error_code = "ARXIV_RESULT_LIMIT"
+
+
+class ArxivTokenExpiredError(ArxivPortError):
+    error_code = "ARXIV_RESUMPTION_TOKEN_EXPIRED"
+
+
+class ArxivDiscoveryIncompleteError(ArxivPortError):
+    """A bounded harvest has durable work remaining in its original window."""
+
+    error_code = "ARXIV_DISCOVERY_INCOMPLETE"
+    retryable = True
+
+
+@dataclass(frozen=True, slots=True)
+class ArxivIdentifierPage:
+    canonical_arxiv_ids: tuple[str, ...]
+    resumption_token: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ArxivDiscoveryProgress:
+    """Run-owned OAI continuation, including identifiers awaiting metadata lookup."""
+
+    query: str
+    categories: tuple[str, ...]
+    day: date
+    category_index: int = 0
+    resumption_token: str | None = None
+    pending_ids: tuple[str, ...] = ()
+    page_exhausted: bool = False
+    complete: bool = False
 
 
 class ArxivPdfError(ArxivPortError):
@@ -87,6 +118,18 @@ class ArxivPaperRecord:
 
 
 class ArxivPort(Protocol):
+    def list_updated_identifiers(
+        self,
+        *,
+        day: date,
+        category: str,
+        resumption_token: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> ArxivIdentifierPage:
+        """Harvest one official OAI-PMH update page for an exact UTC day/category."""
+
+        ...
+
     def search(
         self,
         *,
@@ -103,6 +146,7 @@ class ArxivPort(Protocol):
         self,
         *,
         canonical_arxiv_ids: tuple[str, ...],
+        timeout_seconds: float | None = None,
     ) -> tuple[ArxivPaperRecord, ...]:
         """Return available latest explicit versions for requested canonical IDs."""
 

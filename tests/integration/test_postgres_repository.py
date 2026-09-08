@@ -21,6 +21,7 @@ from tests.integration.test_m3_postgres_repository import (
 )
 
 from paper_harness.adapters.postgres import PostgresRepository
+from paper_harness.adapters.postgres.repository import EXPECTED_DATABASE_REVISION
 from paper_harness.application.analyze_papers import AnalyzePapers
 from paper_harness.application.ingest_arxiv import IngestArxiv
 from paper_harness.domain.analysis import (
@@ -233,7 +234,7 @@ def test_migration_readiness_and_versioned_idempotent_ingestion(
     )
     second_time = first_time + timedelta(days=1)
     second_arxiv = FakeArxiv((arxiv_record_v1, v2))
-    IngestArxiv(
+    second_run = IngestArxiv(
         arxiv=second_arxiv, repository=postgres_repository, clock=lambda: second_time
     ).execute(topic_config, logical_date=date(2026, 1, 11))
 
@@ -245,7 +246,7 @@ def test_migration_readiness_and_versioned_idempotent_ingestion(
     detail = postgres_repository.get_paper(papers[0].id)
     assert detail is not None
     assert [version.version for version in detail.versions] == [2, 1]
-    assert second_arxiv.calls[0][1] == first_time - timedelta(hours=topic_config.overlap_hours)
+    assert second_run.cursor_from == first_time - timedelta(hours=topic_config.overlap_hours)
     client = TestClient(create_app(postgres_repository))
     assert client.get("/health/ready").status_code == 200
     api_papers = client.get(f"/api/v1/papers?topic={topic_config.slug}").json()
@@ -272,7 +273,7 @@ def test_same_version_metadata_drift_preserves_first_snapshot_and_author_project
     drift_records = (
         replace(
             arxiv_record_v1,
-            title="Same version with reordered authors",
+            title="Same LLM agent version with reordered authors",
             abstract="This replay must not replace the first explicit-version snapshot.",
             updated_at=arxiv_record_v1.updated_at + timedelta(days=1),
             primary_category="cs.CL",
@@ -282,13 +283,13 @@ def test_same_version_metadata_drift_preserves_first_snapshot_and_author_project
         ),
         replace(
             arxiv_record_v1,
-            title="Same version with an inserted author",
+            title="Same LLM agent version with an inserted author",
             updated_at=arxiv_record_v1.updated_at + timedelta(days=2),
             authors=("Ada Lovelace", "Barbara Liskov", "Alan Turing"),
         ),
         replace(
             arxiv_record_v1,
-            title="Same version with a removed author",
+            title="Same LLM agent version with a removed author",
             updated_at=arxiv_record_v1.updated_at + timedelta(days=3),
             authors=("Ada Lovelace",),
         ),
@@ -415,7 +416,7 @@ def test_arxiv_batch_database_rejection_is_sanitized_failed_and_replayable(
     )
     with pytest.raises(
         RepositoryIntegrityError,
-        match="^PostgreSQL rejected arXiv batch persistence$",
+        match="^PostgreSQL rejected discovery checkpoint$",
     ) as caught:
         use_case.execute(
             topic_config,
@@ -434,7 +435,7 @@ def test_arxiv_batch_database_rejection_is_sanitized_failed_and_replayable(
     assert failed is not None
     assert failed.status is RunStatus.FAILED
     assert failed.error_code == "PERSISTENCE_INTEGRITY_FAILED"
-    assert failed.error_detail == "PostgreSQL rejected arXiv batch persistence"
+    assert failed.error_detail == "PostgreSQL rejected discovery checkpoint"
     assert postgres_repository.get_ingestion_cursor(topic_config.id) is None
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT count(*) FROM papers")).scalar_one() == 0
@@ -782,7 +783,7 @@ def test_search_session_rejects_cross_topic_execution_and_duplicate_source_analy
         )
 
 
-def test_restart_ingestion_refuses_persisted_items_and_rolls_back_run_reset(
+def test_restart_ingestion_refuses_changed_checkpoint_window_and_rolls_back_run_reset(
     postgres_repository: PostgresRepository,
     postgres_engine: Engine,
     topic_config: TopicConfig,
@@ -811,7 +812,7 @@ def test_restart_ingestion_refuses_persisted_items_and_rolls_back_run_reset(
     assert len(before.items) == 1
     retry_at = now + timedelta(days=1)
 
-    with pytest.raises(RepositoryError, match="persisted batch cannot be restarted"):
+    with pytest.raises(RepositoryIntegrityError, match="retain its fixed cursor window"):
         postgres_repository.restart_ingestion_run(
             completed.id,
             started_at=retry_at,
@@ -1398,9 +1399,10 @@ def test_database_upgrades_from_m1_revision_to_current_head(
             ).scalar_one() == ("0001_m1_ingestion")
         command.upgrade(config, "head")
         with postgres_engine.connect() as connection:
-            assert connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == ("0006_topic_reprocessing")
+            assert (
+                connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                == EXPECTED_DATABASE_REVISION
+            )
     finally:
         command.upgrade(config, "head")
 
@@ -1419,9 +1421,10 @@ def test_database_upgrades_from_m2_revision_to_current_head(
             ).scalar_one() == ("0002_m2_structured_analysis")
         command.upgrade(config, "head")
         with postgres_engine.connect() as connection:
-            assert connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == ("0006_topic_reprocessing")
+            assert (
+                connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                == EXPECTED_DATABASE_REVISION
+            )
     finally:
         command.upgrade(config, "head")
 
@@ -1479,7 +1482,7 @@ def test_database_upgrades_from_m3_and_backfills_analysis_reports(
         with postgres_engine.connect() as connection:
             assert (
                 connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-                == "0006_topic_reprocessing"
+                == EXPECTED_DATABASE_REVISION
             )
             assert connection.execute(
                 text(
@@ -1548,9 +1551,10 @@ def test_database_upgrades_populated_m4_to_m5_pipeline_provenance(
 
         command.upgrade(config, "head")
         with postgres_engine.connect() as connection:
-            assert connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == ("0006_topic_reprocessing")
+            assert (
+                connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                == EXPECTED_DATABASE_REVISION
+            )
             assert connection.execute(
                 text(
                     "SELECT pipeline_execution_mode, pipeline_selection_limit "
@@ -1584,7 +1588,7 @@ def test_m5_downgrade_refuses_persisted_pipeline_provenance_without_guard(
 
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0006_topic_reprocessing"
+            EXPECTED_DATABASE_REVISION
         )
 
 
@@ -1674,7 +1678,7 @@ def test_m5_downgrade_refuses_standalone_comparison_target_decisions(
 
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0006_topic_reprocessing"
+            EXPECTED_DATABASE_REVISION
         )
 
 
@@ -1709,7 +1713,7 @@ def test_m2_downgrade_refuses_existing_analysis_without_explicit_data_loss_guard
         command.downgrade(config, "0001_m1_ingestion")
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0006_topic_reprocessing"
+            EXPECTED_DATABASE_REVISION
         )
 
 
@@ -1757,7 +1761,7 @@ def test_m3_downgrade_refuses_existing_historical_data_without_explicit_guard(
         command.downgrade(config, "0002_m2_structured_analysis")
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0006_topic_reprocessing"
+            EXPECTED_DATABASE_REVISION
         )
 
 
@@ -1791,5 +1795,5 @@ def test_m4_downgrade_refuses_existing_graph_data_without_explicit_guard(
         command.downgrade(config, "0003_m3_pasa_semantic_scholar")
     with postgres_engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0006_topic_reprocessing"
+            EXPECTED_DATABASE_REVISION
         )
