@@ -8,6 +8,7 @@ from datetime import date, datetime
 from typing import cast
 from uuid import UUID
 
+from psycopg.errors import UniqueViolation
 from sqlalchemy import String, and_, case, delete, exists, func, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -278,6 +279,10 @@ class HistoricalRepositoryMixin:
                 "PostgreSQL historical page persistence is unavailable"
             ) from error
         except IntegrityError as error:
+            if _is_external_identifier_conflict(error):
+                raise ExternalPaperIdentifierConflictError(
+                    "external paper identifier conflict"
+                ) from error
             raise RepositoryIntegrityError(
                 "PostgreSQL rejected the historical page, embedding, or cursor"
             ) from error
@@ -695,6 +700,10 @@ class HistoricalRepositoryMixin:
                 "PostgreSQL search action result persistence is unavailable"
             ) from error
         except IntegrityError as error:
+            if _is_external_identifier_conflict(error):
+                raise ExternalPaperIdentifierConflictError(
+                    "external paper identifier conflict"
+                ) from error
             raise RepositoryIntegrityError(
                 "PostgreSQL rejected the search action result"
             ) from error
@@ -727,6 +736,10 @@ class HistoricalRepositoryMixin:
                 "PostgreSQL local candidate persistence is unavailable"
             ) from error
         except IntegrityError as error:
+            if _is_external_identifier_conflict(error):
+                raise ExternalPaperIdentifierConflictError(
+                    "external paper identifier conflict"
+                ) from error
             raise RepositoryIntegrityError("PostgreSQL rejected local search candidates") from error
 
     def update_search_candidate_decisions(
@@ -1860,6 +1873,13 @@ def _discovery_from_row(row: SearchCandidateDiscoveryRow) -> SearchCandidateDisc
     )
 
 
+def _is_external_identifier_conflict(error: IntegrityError) -> bool:
+    return isinstance(error.orig, UniqueViolation) and error.orig.diag.constraint_name in {
+        "uq_external_paper_identifiers_normalized",
+        "uq_external_paper_identifiers_external",
+    }
+
+
 def _upsert_external_paper(session: Session, paper: ExternalPaperStub) -> None:
     identity_matches = [
         ExternalPaperStubRow.id == paper.id,
@@ -1907,6 +1927,11 @@ def _upsert_external_paper(session: Session, paper: ExternalPaperStub) -> None:
         )
         if survivor is None:
             survivor = next((row for row in matching_rows if row.id == paper.id), matching_rows[0])
+        rekey_dependents = (
+            survivor.id != paper.id
+            or survivor.semantic_scholar_id != paper.semantic_scholar_id
+            or len(matching_rows) > 1
+        )
         for duplicate in matching_rows:
             if duplicate is not survivor:
                 _merge_external_paper_rows(session, survivor=survivor, duplicate=duplicate)
@@ -1921,7 +1946,8 @@ def _upsert_external_paper(session: Session, paper: ExternalPaperStub) -> None:
         survivor.created_at = created_at
         survivor.updated_at = updated_at
         session.flush()
-        _rekey_external_dependents(session, survivor)
+        if rekey_dependents:
+            _rekey_external_dependents(session, survivor)
     else:
         survivor = ExternalPaperStubRow(**values)
         session.add(survivor)
@@ -1932,11 +1958,18 @@ def _upsert_external_paper(session: Session, paper: ExternalPaperStub) -> None:
         )
     )
     for identifier_type, identifier_value in identifiers:
+        normalized_type = identifier_type.casefold()
         session.add(
             ExternalPaperIdentifierRow(
                 external_paper_id=survivor.id,
                 identifier_type=identifier_type,
                 identifier_value=identifier_value,
+                normalized_type=normalized_type,
+                normalized_value=(
+                    identifier_value.casefold()
+                    if normalized_type in {"arxiv", "doi"}
+                    else identifier_value
+                ),
             )
         )
 
@@ -1989,23 +2022,28 @@ def _merge_external_identifier_metadata(
         add(identifier_type, identifier_value)
 
     if merged:
-        possible_conflicts = tuple(
-            session.scalars(
-                select(ExternalPaperIdentifierRow)
-                .where(func.lower(ExternalPaperIdentifierRow.identifier_type).in_(set(merged)))
-                .with_for_update()
+        identity_matches = [
+            and_(
+                ExternalPaperIdentifierRow.normalized_type == normalized_type,
+                ExternalPaperIdentifierRow.normalized_value
+                == (value.casefold() if normalized_type in {"arxiv", "doi"} else value),
             )
+            for normalized_type, (_, value) in sorted(merged.items())
+        ]
+        conflict_type = session.scalar(
+            select(ExternalPaperIdentifierRow.identifier_type)
+            .where(
+                ExternalPaperIdentifierRow.external_paper_id.not_in(matching_ids),
+                or_(*identity_matches),
+            )
+            .order_by(ExternalPaperIdentifierRow.normalized_type)
+            .limit(1)
+            .with_for_update()
         )
-        for identifier in possible_conflicts:
-            expected = merged[identifier.identifier_type.casefold()]
-            if identifier.external_paper_id not in matching_ids and _same_external_identifier_value(
-                identifier.identifier_type.casefold(),
-                identifier.identifier_value,
-                expected[1],
-            ):
-                raise ExternalPaperIdentifierConflictError(
-                    f"external paper identifier conflict for {identifier.identifier_type}"
-                )
+        if conflict_type is not None:
+            raise ExternalPaperIdentifierConflictError(
+                f"external paper identifier conflict for {conflict_type}"
+            )
 
     return tuple(merged[key] for key in sorted(merged))
 

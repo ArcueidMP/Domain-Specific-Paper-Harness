@@ -254,6 +254,7 @@ Web/API 不需要 DeepSeek 或 Semantic Scholar 凭据。浏览器绝不会接�
 
 - 此源码 release 不包含托管的公开 Demo，也不提供对维护者任何生产环境的访问权限。
 - 本项目不会配置兼容的托管 PostgreSQL 数据库。
+- 数据库出站流量与已存储数据分别受供应商配额限制。删除数据无法退回已累计的出站流量；保留的论文文本、证据、索引和报告历史仍会持续占用数据库容量。
 - 全文分析需要 GROBID；不存在解析器 fallback。
 - DeepSeek、通过认证的 Semantic Scholar、已准备的 SPECTER2 和 PostgreSQL 都没有隐式生产替代项。
 - 受支持的本地开发路径是 Windows PowerShell。所提供的 Linux 手动命令与 CI 一致；macOS 尚未验证。

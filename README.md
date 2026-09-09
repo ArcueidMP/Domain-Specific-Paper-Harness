@@ -346,6 +346,9 @@ deployment command grants a public endpoint by default.
 - This source release does not include a hosted public Demo or access to any
   maintainer production environment.
 - A compatible managed PostgreSQL database is not provisioned by the project.
+- Database egress and stored data have separate provider quotas. Accumulated
+  egress cannot be reclaimed by deleting data; retained paper text, evidence,
+  indexes, and report history continue to require database capacity.
 - Full-text analysis requires GROBID; there is no parser fallback.
 - DeepSeek, authenticated Semantic Scholar, prepared SPECTER2, and PostgreSQL
   have no implicit production substitutes.

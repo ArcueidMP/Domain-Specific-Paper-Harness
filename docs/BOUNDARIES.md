@@ -61,6 +61,14 @@ surplus candidates are normalized through stable local sorting, deduplication,
 and capping. Required identity, timestamps, and field types remain strict;
 invalid values fail the narrowest identifiable item without fabricated data.
 
+Historical identifier conflict checks use indexed normalized type/value pairs
+inside PostgreSQL and return at most one conflicting type. Source spellings
+remain intact. Types and arXiv/DOI values use Python Unicode casefold; other
+identifier values remain case-sensitive. A database unique constraint protects
+the same normalized identity during concurrent writes. Ordinary metadata
+refreshes preserve dependent identities without reloading their records;
+actual identity promotion or alias merging still rekeys those records atomically.
+
 ## Daily execution boundary
 
 FastAPI never starts the Daily pipeline. There is no public run endpoint,

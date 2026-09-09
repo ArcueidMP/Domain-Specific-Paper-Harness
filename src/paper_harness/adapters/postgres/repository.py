@@ -110,7 +110,7 @@ from .models import (
 )
 from .product_repository import ProductRepositoryMixin
 
-EXPECTED_DATABASE_REVISION = "0008_enrichment_failures"
+EXPECTED_DATABASE_REVISION = "0009_identifier_lookup"
 
 
 class PostgresRepository(ProductRepositoryMixin, HistoricalRepositoryMixin):

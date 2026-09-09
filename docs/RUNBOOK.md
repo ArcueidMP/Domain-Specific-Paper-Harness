@@ -61,6 +61,17 @@ gcloud secrets list --project=$Project
 The active `gcloud` project must exactly match `$Project`. Interactive login or
 consent is a user action; stop if it is required.
 
+If Docker Desktop fails while initializing `dockerInference` or
+`docker-secrets-engine/engine.sock`, inspect the current backend log before
+repeating startup. Inaccessible stale Windows AF_UNIX socket files are a
+[reported Docker Desktop failure](https://github.com/docker/desktop-feedback/issues/460).
+After confirming the backend has stopped, preserve and rename only the affected
+runtime socket directories under `%LOCALAPPDATA%`, then let Docker recreate
+them. Check directory contents and resolved paths first. Preserve Docker's WSL
+disks, volumes, images, and settings; factory reset is not a startup repair.
+Verify `docker version` reaches the server. This recovers a stale-socket startup;
+it does not establish that the upstream recurrence has been fixed.
+
 ## Terraform state
 
 The backend bucket is a one-time cloud resource. First inspect whether it
@@ -103,6 +114,31 @@ database. Recreate required extension namespaces, including `extensions.vector`
 when used by the source, and compare restored application table counts. Test the
 new migration against that restored database before changing production. Never
 restore over production as a test or introduce paid backup resources implicitly.
+
+For the additive `0008` to `0009` identifier lookup migration, a scoped archive
+of `external_paper_stubs`, `external_paper_identifiers`, and `alembic_version`
+is sufficient to restore and verify the changed boundary. Restore those tables
+into a fresh local database, compare every raw identifier, and run the migration
+there before production. The migration changes only derived lookup columns and
+their unique constraint; it does not delete or rewrite source identifiers.
+
+### Provider quota restrictions
+
+Supabase counts database results sent through its shared pooler as egress, even
+when the only client is a Cloud Run Job. Diagnose high-result queries through
+`pg_stat_statements`; internal scanned rows are not the same as returned rows
+or billed bytes. Record the statistics reset time alongside cumulative counts.
+Do not download the full corpus repeatedly to investigate bandwidth.
+
+Egress accumulates over the organization's billing cycle. Deleting records does
+not undo consumed egress. Supabase documents restriction removal at the next
+billing cycle, with possible delay, or after an approved plan upgrade. Database
+size is a separate quota and does not reset with the billing cycle. Inspect
+current PostgreSQL size, table/index sizes, and the provider's reported period
+before deciding whether storage maintenance would help. Preserve research
+records; a retention change or paid capacity increase requires an explicit
+owner decision. See [egress](https://supabase.com/docs/guides/platform/manage-your-usage/egress)
+and [database size](https://supabase.com/docs/guides/platform/database-size).
 
 ## Optional Demo schema bootstrap and synchronization
 
@@ -310,7 +346,7 @@ After completion, connect through an authorized database channel and run:
 SELECT version_num FROM alembic_version;
 ```
 
-The expected current revision is `0008_enrichment_failures`.
+The expected current revision is `0009_identifier_lookup`.
 
 For an existing deployment upgrading from `0006`, keep all `deploy_*` resource
 flags enabled. First pause Scheduler through Terraform and update only the
@@ -326,6 +362,16 @@ the database/application cutover includes a maintenance interval. An image-only
 rollback does not restore old readiness after a schema upgrade. The new downgrade
 guards refuse to discard incomplete discovery or diagnostics without the declared
 recovery procedure; prefer fixing forward once new production records exist.
+
+The `0008` to `0009` upgrade uses the same pause/migrate/image-cutover sequence.
+Both Web/API and all Daily Jobs require the new head; an old Daily image cannot
+write the new required lookup columns. For this query-only maintenance change,
+verify bounded identifier reads and a rolled-back metadata refresh using the
+production image, plus authenticated readiness and existing reports. A full
+provider pipeline replay is unnecessary. If rollback is needed, keep Scheduler
+paused, downgrade to `0008_enrichment_failures`, and restore the prior runtime
+digests. That downgrade removes only reproducible lookup keys and preserves
+all original identifiers and research records.
 
 ## Private runtime verification
 
