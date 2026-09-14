@@ -429,7 +429,7 @@ The only initial production LLM provider is DeepSeek:
 
 ~~~text
 LLM_PROVIDER=deepseek
-LLM_MODEL=deepseek-v4-flash
+LLM_MODEL=deepseek-flash
 DEEPSEEK_API_KEY=<secret>
 ~~~
 

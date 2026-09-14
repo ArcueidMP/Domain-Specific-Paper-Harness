@@ -187,7 +187,7 @@ def test_deepseek_product_publication_fails_before_database_work_without_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-flash")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
@@ -218,6 +218,9 @@ def test_daily_pipeline_preflights_every_dependency_before_ingestion_mutation(
 ) -> None:
     events: list[str] = []
     repository = MagicMock()
+    engine = MagicMock()
+    request_gate = object()
+    gate_constructor = MagicMock(return_value=request_gate)
 
     def start_execution_stub(execution: PipelineExecution) -> PipelineExecution:
         return execution
@@ -230,7 +233,7 @@ def test_daily_pipeline_preflights_every_dependency_before_ingestion_mutation(
 
     def deepseek_settings_stub() -> object:
         events.append("deepseek-settings")
-        return SimpleNamespace(provider="deepseek", model="deepseek-v4-flash")
+        return SimpleNamespace(provider="deepseek", model="deepseek-flash")
 
     def scholarly_settings_stub() -> object:
         events.append("scholarly-settings")
@@ -240,15 +243,16 @@ def test_daily_pipeline_preflights_every_dependency_before_ingestion_mutation(
         events.append("parser")
         return object()
 
-    def repository_stub(_operation: str) -> MagicMock:
+    def repository_stub(_operation: str) -> tuple[MagicMock, MagicMock]:
         events.append("repository-ready")
-        return repository
+        return repository, engine
 
     def embeddings_stub() -> SimpleNamespace:
         events.append("embeddings")
         return _embedding_stub()
 
-    def arxiv_stub() -> object:
+    def arxiv_stub(*, request_gate: object) -> object:
+        assert request_gate is gate_constructor.return_value
         events.append("arxiv-client")
         return object()
 
@@ -299,7 +303,8 @@ def test_daily_pipeline_preflights_every_dependency_before_ingestion_mutation(
         staticmethod(scholarly_settings_stub),
     )
     monkeypatch.setattr(runtime_module, "_grobid_parser", parser_stub)
-    monkeypatch.setattr(runtime_module, "_ready_repository", repository_stub)
+    monkeypatch.setattr(runtime_module, "_ready_repository_with_engine", repository_stub)
+    monkeypatch.setattr(runtime_module, "PostgresArxivRequestGate", gate_constructor)
     monkeypatch.setattr(runtime_module, "_specter2_embeddings", embeddings_stub)
     monkeypatch.setattr(runtime_module, "ArxivClient", arxiv_stub)
     monkeypatch.setattr(runtime_module, "DeepSeekClient", deepseek_stub)
@@ -333,6 +338,7 @@ def test_daily_pipeline_preflights_every_dependency_before_ingestion_mutation(
     repository.daily_pipeline_lock.assert_called_once_with(PIPELINE_EXECUTION_ID)
     assert events.count("persist-ingestion") == 1
     repository.persist_ingestion_selection.assert_not_called()
+    gate_constructor.assert_called_once_with(engine)
 
 
 @pytest.mark.parametrize("analysis_status", [RunStatus.COMPLETE, RunStatus.PARTIAL])
@@ -351,6 +357,10 @@ def test_daily_pipeline_reuses_compatible_terminal_ingestion_and_analysis_runs(
     assert harness.ingest_execute.call_args.kwargs["resume_existing"] is True
     harness.analyze_execute.assert_called_once()
     assert harness.analyze_execute.call_args.kwargs["resume_existing"] is True
+    assert (
+        harness.analyze_execute.call_args.kwargs["reuse_contract"].configured_model
+        == "deepseek-flash"
+    )
     assert harness.analyze_execute.call_args.kwargs["paper_version_ids"] == tuple(
         candidate.paper_version_id for candidate in harness.candidates
     )
@@ -1909,8 +1919,10 @@ def _configure_reused_pipeline(
     def parser_stub(_scope: AnalysisScope) -> object:
         return object()
 
-    def repository_stub(_operation: str) -> MagicMock:
-        return repository
+    engine = MagicMock()
+
+    def repository_stub(_operation: str) -> tuple[MagicMock, MagicMock]:
+        return repository, engine
 
     def selection_candidates_stub(
         _repository: object,
@@ -1922,7 +1934,7 @@ def _configure_reused_pipeline(
     monkeypatch.setattr(
         runtime_module.DeepSeekSettings,
         "from_environment",
-        staticmethod(lambda: SimpleNamespace(provider="deepseek", model="deepseek-v4-flash")),
+        staticmethod(lambda: SimpleNamespace(provider="deepseek", model="deepseek-flash")),
     )
     monkeypatch.setattr(
         runtime_module.SemanticScholarSettings,
@@ -1930,7 +1942,7 @@ def _configure_reused_pipeline(
         staticmethod(lambda: object()),
     )
     monkeypatch.setattr(runtime_module, "_grobid_parser", parser_stub)
-    monkeypatch.setattr(runtime_module, "_ready_repository", repository_stub)
+    monkeypatch.setattr(runtime_module, "_ready_repository_with_engine", repository_stub)
     monkeypatch.setattr(runtime_module, "_specter2_embeddings", embedding_loader)
     arxiv = MagicMock()
     monkeypatch.setattr(runtime_module, "ArxivClient", MagicMock(return_value=arxiv))

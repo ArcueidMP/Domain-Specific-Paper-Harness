@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -20,6 +21,7 @@ from tests.integration.test_m3_postgres_repository import (
     _search_session,
 )
 
+from paper_harness.adapters.arxiv.client import map_arxiv_result
 from paper_harness.adapters.postgres import PostgresRepository
 from paper_harness.adapters.postgres.repository import EXPECTED_DATABASE_REVISION
 from paper_harness.application.analyze_papers import AnalyzePapers
@@ -50,6 +52,8 @@ from paper_harness.domain.historical import (
     HistoricalBackfillRun,
 )
 from paper_harness.domain.identity import (
+    stable_author_id,
+    stable_paper_id,
     stable_parsed_paper_id,
     stable_parsed_passage_id,
     stable_parsed_section_id,
@@ -464,6 +468,84 @@ def test_arxiv_batch_database_rejection_is_sanitized_failed_and_replayable(
             ).scalar_one()
             == 1
         )
+
+
+def test_duplicate_provider_authors_persist_ordered_version_specific_identities(
+    postgres_repository: PostgresRepository,
+    postgres_engine: Engine,
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+) -> None:
+    now = datetime(2026, 1, 10, 5, tzinfo=UTC)
+
+    def provider_record(version: int, authors: tuple[str, ...]) -> ArxivPaperRecord:
+        short_id = f"{arxiv_record_v1.canonical_arxiv_id}v{version}"
+        return map_arxiv_result(
+            SimpleNamespace(
+                get_short_id=lambda: short_id,
+                title=arxiv_record_v1.title,
+                summary=arxiv_record_v1.abstract,
+                published=arxiv_record_v1.submitted_at,
+                updated=arxiv_record_v1.updated_at + timedelta(days=version - 1),
+                primary_category=arxiv_record_v1.primary_category,
+                categories=arxiv_record_v1.categories,
+                authors=[SimpleNamespace(name=name) for name in authors],
+                pdf_url=f"https://arxiv.org/pdf/{short_id}",
+                entry_id=f"https://arxiv.org/abs/{short_id}",
+            )
+        )
+
+    first = provider_record(
+        1,
+        (
+            " Grace Hopper ",
+            "Ada  Lovelace",
+            "GRACE HOPPER",
+            "Alan Turing",
+            "ada lovelace",
+            "Alan\tTuring",
+        ),
+    )
+    second = provider_record(
+        2,
+        ("Ada Lovelace", "Grace Hopper", "ADA\tLOVELACE", "Alan Turing"),
+    )
+    for offset, record in enumerate((first, second, second)):
+        observed_at = now + timedelta(days=offset)
+        run = IngestArxiv(
+            arxiv=FakeArxiv((record,)),
+            repository=postgres_repository,
+            clock=lambda observed_at=observed_at: observed_at,
+        ).execute(topic_config, logical_date=observed_at.date())
+        assert run.status is RunStatus.COMPLETE
+        assert run.normalized_count == 1
+
+    expected_authors = {
+        1: ("Grace Hopper", "Ada Lovelace", "Alan Turing"),
+        2: ("Ada Lovelace", "Grace Hopper", "Alan Turing"),
+    }
+    paper_id = stable_paper_id(arxiv_record_v1.canonical_arxiv_id)
+    detail = postgres_repository.get_paper(paper_id)
+    assert detail is not None
+    assert detail.paper.authors == expected_authors[2]
+    assert {version.version: version.authors for version in detail.versions} == expected_authors
+    with postgres_engine.connect() as connection:
+        links = connection.execute(
+            text(
+                "SELECT pv.version, pva.position, a.id, a.normalized_name, a.display_name "
+                "FROM paper_version_authors pva "
+                "JOIN paper_versions pv ON pv.id = pva.paper_version_id "
+                "JOIN authors a ON a.id = pva.author_id "
+                "WHERE pv.paper_id = :paper_id ORDER BY pv.version, pva.position"
+            ),
+            {"paper_id": paper_id},
+        ).all()
+        assert connection.execute(text("SELECT count(*) FROM authors")).scalar_one() == 3
+    assert links == [
+        (version, position, stable_author_id(name), name.casefold(), name)
+        for version, authors in expected_authors.items()
+        for position, name in enumerate(authors)
+    ]
 
 
 def test_new_version_rejects_duplicate_normalized_authors_atomically(

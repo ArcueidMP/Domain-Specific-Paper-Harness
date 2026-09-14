@@ -64,7 +64,7 @@ from paper_harness.ports.llm import (
 )
 
 DEEPSEEK_PROVIDER = "deepseek"
-DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEEPSEEK_MODEL = "deepseek-flash"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 PROMPT_VERSION = "m2-analysis-v1"
 SELECTOR_PROMPT_VERSION = M3_SELECTOR_PROMPT_VERSION
@@ -80,12 +80,13 @@ MAX_COMPARISON_DIMENSIONS = 50
 MAX_COMPARISON_RELATIONS = 20
 MAX_REPORT_SECTIONS = 20
 
-# Official DeepSeek V4 Flash USD prices observed 2026-08-08 at
-# https://api-docs.deepseek.com/quick_start/pricing. Persisted costs are
-# estimates from returned usage, never an invented execution cap.
-INPUT_CACHE_HIT_PER_MILLION = Decimal("0.0028")
-INPUT_CACHE_MISS_PER_MILLION = Decimal("0.14")
-OUTPUT_PER_MILLION = Decimal("0.28")
+# Official DeepSeek V4.1 Flash off-peak USD prices observed 2026-09-14 at
+# https://api-docs.deepseek.com/quick_start/pricing/. Weekday 01:00-04:00 and
+# 06:00-10:00 UTC prices are twice these rates. Costs use returned token usage
+# and recorded generation time; they are estimates, not invoices or caps.
+INPUT_CACHE_HIT_PER_MILLION = Decimal("0.003")
+INPUT_CACHE_MISS_PER_MILLION = Decimal("0.15")
+OUTPUT_PER_MILLION = Decimal("0.60")
 
 
 def _trim_text(value: object) -> object:
@@ -182,7 +183,7 @@ class DeepSeekSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     provider: Literal["deepseek"]
-    model: Literal["deepseek-v4-flash"]
+    model: Literal["deepseek-flash"]
     api_key: str = Field(min_length=1)
     base_url: Literal["https://api.deepseek.com"] = DEEPSEEK_BASE_URL
 
@@ -211,7 +212,7 @@ class DeepSeekSettings(BaseModel):
         except ValidationError as error:
             raise LLMConfigurationError(
                 "DeepSeek operations require LLM_PROVIDER=deepseek, "
-                "LLM_MODEL=deepseek-v4-flash, and a non-empty DEEPSEEK_API_KEY"
+                "LLM_MODEL=deepseek-flash, and a non-empty DEEPSEEK_API_KEY"
             ) from error
 
 
@@ -898,6 +899,7 @@ class DeepSeekClient:
             envelope.usage,
             call_count=call_count,
             duration_ms=max(0, round((self._monotonic() - started) * 1000)),
+            generated_at=generated_at,
         )
         return _StructuredCompletion(
             decoded=decoded,
@@ -1274,16 +1276,31 @@ def _report_request_body(request: ReportNarrativeRequest, *, model: str) -> dict
     }
 
 
-def _usage(value: _Usage, *, call_count: int, duration_ms: int) -> ModelUsage:
+def _usage(
+    value: _Usage,
+    *,
+    call_count: int,
+    duration_ms: int,
+    generated_at: datetime,
+) -> ModelUsage:
     cache_hit = min(value.prompt_cache_hit_tokens, value.prompt_tokens)
     cache_miss = value.prompt_tokens - cache_hit
     total_tokens = value.prompt_tokens + value.completion_tokens
+    generated_utc = generated_at.astimezone(UTC)
+    is_peak = generated_utc.weekday() < 5 and (
+        1 <= generated_utc.hour < 4 or 6 <= generated_utc.hour < 10
+    )
+    price_multiplier = Decimal(2 if is_peak else 1)
     million = Decimal(1_000_000)
     estimated_cost = (
-        Decimal(cache_hit) * INPUT_CACHE_HIT_PER_MILLION
-        + Decimal(cache_miss) * INPUT_CACHE_MISS_PER_MILLION
-        + Decimal(value.completion_tokens) * OUTPUT_PER_MILLION
-    ) / million
+        (
+            Decimal(cache_hit) * INPUT_CACHE_HIT_PER_MILLION
+            + Decimal(cache_miss) * INPUT_CACHE_MISS_PER_MILLION
+            + Decimal(value.completion_tokens) * OUTPUT_PER_MILLION
+        )
+        * price_multiplier
+        / million
+    )
     return ModelUsage(
         prompt_tokens=value.prompt_tokens,
         completion_tokens=value.completion_tokens,

@@ -152,7 +152,7 @@ docker compose --profile analysis up --detach --wait db grobid
 $env:APP_ENV = "development"
 $env:DATABASE_URL = "postgresql+psycopg://paper_harness:paper_harness_local@localhost:5432/paper_harness"
 $env:LLM_PROVIDER = "deepseek"
-$env:LLM_MODEL = "deepseek-v4-flash"
+$env:LLM_MODEL = "deepseek-flash"
 $env:DEEPSEEK_API_KEY = "<your-deepseek-api-key>"
 $env:SEMANTIC_SCHOLAR_API_KEY = "<your-semantic-scholar-api-key>"
 $env:GROBID_URL = "http://127.0.0.1:8070"
@@ -177,7 +177,7 @@ docker compose --profile analysis up --detach --wait db grobid
 export APP_ENV=development
 export DATABASE_URL='postgresql+psycopg://paper_harness:paper_harness_local@localhost:5432/paper_harness'
 export LLM_PROVIDER=deepseek
-export LLM_MODEL=deepseek-v4-flash
+export LLM_MODEL=deepseek-flash
 export DEEPSEEK_API_KEY='<your-deepseek-api-key>'
 export SEMANTIC_SCHOLAR_API_KEY='<your-semantic-scholar-api-key>'
 export GROBID_URL='http://127.0.0.1:8070'
@@ -197,7 +197,7 @@ uv run --frozen --python 3.13.13 --extra specter2 paper-harness-daily run-pipeli
 | --- | --- | --- |
 | `DATABASE_URL` | Web/API 和 Daily | 使用 psycopg 3 driver 的 PostgreSQL 15+ 连接 |
 | `LLM_PROVIDER=deepseek` | Daily | 选择唯一受支持的生产 LLM provider |
-| `LLM_MODEL=deepseek-v4-flash` | Daily | 选择必需的 DeepSeek model |
+| `LLM_MODEL=deepseek-flash` | Daily | 通过规范 API 名称选择 DeepSeek V4.1 Flash |
 | `DEEPSEEK_API_KEY` | Daily | 用户自行持有的凭据，用于生成分析和叙述 |
 | `SEMANTIC_SCHOLAR_API_KEY` | Daily | 用户自行持有的凭据，用于历史及 related-work 操作 |
 | `GROBID_URL` | Daily | 唯一全文解析器的 URL |
@@ -206,7 +206,7 @@ uv run --frozen --python 3.13.13 --extra specter2 paper-harness-daily run-pipeli
 
 Web/API 不需要 DeepSeek 或 Semantic Scholar 凭据。浏览器绝不会接收到任何数据库或供应商密钥。
 
-生产模型仍为 `deepseek-v4-flash`；[V4.1 Flash 兼容性评估](docs/MODEL_COMPATIBILITY.md) 记录了为何未将 9 月 8 日的临时测试版本用于无人值守的 Job。
+配置的模型为 `deepseek-flash`，即 DeepSeek V4.1 Flash 的规范 API 名称。[兼容性评估](docs/MODEL_COMPATIBILITY.md) 记录了受支持的请求契约与验证结果。既有分析保留其原始配置模型标识与供应商返回的模型标识。
 
 ## 发布状态
 

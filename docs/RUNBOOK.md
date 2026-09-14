@@ -510,6 +510,15 @@ Published graph, trend, and lineage failures appear in the report's
 scope instead of treating them as insufficient data or counting them as core
 analysis failures. Their details are not model input and are redacted in Demo.
 
+For `ARXIV_UNAVAILABLE`, inspect whether the exhausted operation returned HTTP
+429 or timed out. OAI-PMH, Atom metadata, PDF downloads, and retries now share
+one database-coordinated request slot across topics, with a three-second gap.
+The request timeout is 60 seconds and the operation budget is at most 240
+seconds with two transient retries; a caller can impose a shorter deadline.
+A Supabase plan upgrade does not clear an arXiv provider restriction. After
+deploying an ingestion correction, respect an operator's request to await the
+next normal schedule instead of starting a manual Daily or REPROCESS execution.
+
 - Global configuration, authentication, migration, database, and publication
   failures stop the run. Candidate schema or domain failures stay scoped to the
   narrowest identifiable item or provider operation and produce `PARTIAL` when
