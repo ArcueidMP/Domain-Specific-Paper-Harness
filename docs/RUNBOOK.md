@@ -400,6 +400,21 @@ scripts/run-production-daily.ps1 -ProjectId $Project -Region $Region `
   -JobName paper-harness-daily-world-models
 ```
 
+To resume a failed, unpublished `NORMAL` pipeline after deploying its fix,
+execute the same topic Job with its original logical date and omit `-Reprocess`:
+
+```powershell
+scripts/run-production-daily.ps1 -ProjectId $Project -Region $Region `
+  -JobName paper-harness-daily -LogicalDate <original-YYYY-MM-DD>
+```
+
+The existing pipeline identity and completed ingestion/analysis stages are
+reused. Failed publication staging is rebuilt from valid persisted inputs;
+unfinished historical enrichment may run again. Confirm the original pipeline
+and its product run become terminal `COMPLETE` or honest `PARTIAL`, and verify
+the report through the private API/UI. A terminal successful publication remains
+immutable and requires the explicit reprocess mode below for a new revision.
+
 To create a fresh same-date publication revision without changing the Job's
 scheduled defaults, use per-execution environment overrides:
 

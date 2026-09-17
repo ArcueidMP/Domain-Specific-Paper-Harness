@@ -5058,13 +5058,13 @@ def _insert_normalized_report(session: Session, report: Report) -> None:
                 created_at=failure.created_at,
             )
         )
-    for position, item in enumerate(report.sections):
+    for item in report.sections:
         session.add(
             ReportSectionRow(
                 id=item.id,
                 report_id=report.id,
                 kind=item.kind.value,
-                position=position,
+                position=tuple(ReportSectionKind).index(item.kind),
                 narrative=item.narrative,
                 schema_version=item.schema_version,
                 created_at=item.created_at,

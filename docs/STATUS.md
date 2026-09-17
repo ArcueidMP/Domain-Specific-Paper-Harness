@@ -1,10 +1,12 @@
 # Current Status
 ## Current milestone
 
-Recovery maintenance is deployed on 2026-09-14 following the owner's Supabase
-upgrade. All three Daily Jobs are ready with coordinated arXiv requests and
-DeepSeek V4.1 Flash. Ubuntu migration and storage cleanup are deferred. The
-owner requested normal scheduled operation without a manual Daily/REPROCESS run.
+The September 17 report-section persistence fix is deployed to all three Daily
+Jobs. Recovery execution `paper-harness-daily-gk69k` completed successfully;
+Broad LLM Agents now has a verified PARTIAL report with eight completed papers
+and two retained analysis failures. World Models also published PARTIAL; BCI
+remains blocked on OAI transport. Ubuntu migration and storage cleanup remain
+deferred.
 
 ## Completed capabilities
 
@@ -36,7 +38,62 @@ model provenance. Existing research records are not rewritten.
 
 ## Verification
 
-301 combined focused unit/contract tests passed for arXiv transport, response
+The new PostgreSQL regression reproduced the production constraint failure
+before the fix in three partial-outline cases. All five outline variants now
+publish and round-trip through the daily and weekly report paths. All 34 product
+repository integration tests and 32 report unit tests passed, together with
+Ruff, full Pyright, repository hygiene, and diff checks. PostgreSQL constraints
+and migrations remain unchanged. No canonical milestone rerun was needed.
+
+The production Daily image built successfully, contains the corrected section
+mapping, and passed CLI/runtime checks with networking disabled. It runs CPython
+3.13.13 and `deepseek-flash` and loads the pinned 768-dimensional SPECTER2 artifact
+at revision `3447645e1def9117997203454fa4495937bfbd83`. The reviewed Terraform plan
+changed only the images of the three existing Daily Jobs; apply completed and
+the final plan found no drift.
+
+September 17 Cloud Run logs and read-only database queries agree on all three
+topic results. PostgreSQL remains reachable at version 17.6, migration
+`0009_identifier_lookup`, with `default_transaction_read_only=off`. Broad LLM
+Agents ingested 419 papers and retained eight successful core analyses plus
+two `LLM_OUTPUT_INVALID` items. Its publication failure marked the eight ready
+items failed at `PUBLISHED`; it did not erase their source analyses or evidence.
+
+Supabase's original PostgreSQL error at 20:28:38 Asia/Singapore is SQLSTATE
+`23514`: an inserted `report_sections` row had `kind=COMPARISONS, position=1`,
+violating `ck_report_sections_canonical_order`, which requires position 2.
+The domain permits a canonically ordered subset of sections, but
+`_insert_normalized_report` previously used `enumerate(report.sections)` and
+compressed positions when an earlier section was absent. The constraint definition
+was verified directly. Persistence now assigns each section its canonical
+enum position, preserving omitted sections and the strict database check.
+The recovery execution completed the original pipeline
+`c34abef7-1a5e-59cf-bae9-02c350fb8b8b` and publication run
+`8ff6ffaa-94b0-464d-a353-78f6c4d43fe7` as PARTIAL at 23:19:53 Asia/Singapore.
+The eight successful source analyses retain their original 20:19 completion
+time. Cloud logs record zero arXiv and zero GROBID operations during recovery.
+The report contains ten paper cards, 118 evidence links, three trend links, and
+eight lineage highlights. Direct database reads, the authenticated Chrome report
+view, and HTTP 200 from the private report API agree on eight completed and two
+failed items. Both unavailable analyses remain visibly marked
+`LLM_OUTPUT_INVALID`; no unavailable analysis is presented as evidence.
+
+World Models ingested 139 papers and published four successful analyses with six
+explicit `LLM_OUTPUT_INVALID` failures. Its historical backfill also recorded an
+integrity failure, while usable inputs supported partial publication. BCI saved
+ten ingestion records before `bounded arXiv OAI transport failed with
+ConnectionError`. The latest DAILY reports are September 17 for Broad LLM Agents
+and World Models, and September 11 for BCI.
+
+The additional IAP accessor passed Terraform format/validation and a reviewed
+plan containing one IAM binding update. Apply completed with zero resources
+added or destroyed; a fresh Google IAP policy read confirmed the added account
+and both existing accessors. The production tfvars allowlist is synchronized
+outside Git. Cloud Run IAP remains enabled with the IAP service identity as
+the only service invoker.
+
+The September 14 rollout passed 301 combined focused unit/contract tests for
+arXiv transport, response
 normalization, runtime coordination, model configuration, provenance, cost
 estimates, and Terraform topology. Seven PostgreSQL integration tests passed for
 cross-runtime locking, timeout/release behavior, pool capacity, and author
@@ -84,38 +141,47 @@ The September 9 migration execution `paper-harness-migration-b2rtn` succeeded.
 No production migration is required for this recovery change.
 
 All three Daily Jobs use
-`sha256:79c0008f915cab5e22696e07df3ff4f4b33fc375270a738e9334a975851613f5`
+`sha256:b3f403edf91a953e122354a6fa5e52b952bbacaa12600e27e79e62bca93e01d7`
 and `LLM_MODEL=deepseek-flash`; all three report Ready.
 Their original schedules are enabled at 20:00/20:20/20:40 in `Asia/Kuala_Lumpur`.
-The latest September 14 scheduled executions failed at the arXiv dependency:
-Broad LLM Agents exhausted HTTP 429 retries; Brain-Computer Interfaces and World
-Models exhausted read timeouts. These historical failures do not establish a
-failure of the subsequently upgraded Supabase plan. No manual execution was
-added. The next scheduled invocations are September 15 at the same local times.
+September 17 scheduled results (Asia/Kuala_Lumpur):
+
+- `paper-harness-daily-ch8v6`: initial publication failed at 20:28:38 on the
+  section-order constraint. Recovery `paper-harness-daily-gk69k` resumed the same
+  logical-date pipeline and published PARTIAL at 23:19:53 (eight completed, two
+  failed); the Cloud Run execution completed successfully at 23:19:58.
+- `paper-harness-daily-brain-computer-interfaces-g8rvd`: OAI transport failed at
+  20:25:15; its incomplete discovery cursor was retained.
+- `paper-harness-daily-world-models-vqqfj`: PARTIAL publication completed at
+  21:05:10 with four completed and six failed items.
+
 Private GROBID remains unchanged.
 
-The deployed Daily image tag is `recovery-20260914-flash-arxiv-1`. Terraform
-changed only the image and `LLM_MODEL` of the three existing Daily Jobs:
-zero resources added or destroyed. The final plan reported no infrastructure
-drift. Web/API, Migration, and GROBID retain their current images; the existing
-read API accepts the new model identity.
+The deployed Daily image tag is `report-sections-20260917`. Registry identity
+matches the verified local manifest. Terraform changed only the image of the
+three existing Daily Jobs: zero resources added or destroyed, all three Ready.
+Web/API, Migration, GROBID, secrets, schedules, and IAP retain their configuration.
 
 Demo schema/roles, Demo secrets, GitHub OIDC, and public Demo resources remain
-unprovisioned. Production secret versions and the IAP allowlist are unchanged.
+unprovisioned. Production secret versions are unchanged. The IAP allowlist now
+contains the owner and two additional approved Google accounts.
 
 ## Current blockers
 
-No infrastructure or credential blocker remains. The owner reports that Supabase
-has been upgraded, and current database/API reads succeed; the old free-plan
-quota notice is no longer treated as the active recovery blocker.
+The section-order publication blocker is resolved and production acceptance
+passed. No migration was needed.
 
-A bounded official arXiv metadata probe still returned HTTP 429 on September 14.
-The pacing and timeout corrections do not guarantee upstream recovery. No new
-production Daily run has been executed to establish end-to-end acceptance of
-the deployed changes; the owner requested waiting for the next normal schedules.
+BCI remains blocked on arXiv OAI transport. The September 15 Atom 429 failure is
+historical; two topics completed ingestion on September 17. Item-level DeepSeek
+schema/domain failures remain explicit in persisted analysis results and require
+separate investigation if their frequency is unacceptable. Historical-backfill
+integrity failures for Broad LLM Agents and World Models remain separate
+diagnostic follow-ups.
+
+No current Supabase connectivity, read-only, or authentication blocker was found.
 
 ## Next milestone
 
-Review the results of the September 15 normal 20:00/20:20/20:40 schedules when
-available, including arXiv availability and publication status. Ubuntu migration,
-storage cleanup, and public Demo remain separate later work.
+Verify BCI discovery recovery and investigate the remaining typed DeepSeek
+item failures and historical-backfill integrity diagnostics. Ubuntu migration,
+storage cleanup, and public Demo remain later work.
