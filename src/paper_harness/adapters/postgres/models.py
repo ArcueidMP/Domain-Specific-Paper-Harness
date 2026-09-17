@@ -1199,6 +1199,11 @@ class ExternalPaperIdentifierRow(Base):
             "identifier_value",
             name="uq_external_paper_identifiers_external",
         ),
+        UniqueConstraint(
+            "normalized_type",
+            "normalized_value",
+            name="uq_external_paper_identifiers_normalized",
+        ),
     )
 
     external_paper_id: Mapped[UUID] = mapped_column(
@@ -1208,6 +1213,8 @@ class ExternalPaperIdentifierRow(Base):
     )
     identifier_type: Mapped[str] = mapped_column(String(40), primary_key=True)
     identifier_value: Mapped[str] = mapped_column(String(512), nullable=False)
+    normalized_type: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_value: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class HistoricalBackfillRunRow(Base):

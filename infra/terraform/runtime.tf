@@ -400,7 +400,7 @@ resource "google_cloud_run_v2_job" "daily" {
             GROBID_AUDIENCE  = google_cloud_run_v2_service.grobid[0].uri
             GROBID_AUTH_MODE = "google_identity"
             GROBID_URL       = google_cloud_run_v2_service.grobid[0].uri
-            LLM_MODEL        = "deepseek-v4-flash"
+            LLM_MODEL        = "deepseek-flash"
             LLM_PROVIDER     = "deepseek"
           }) : tomap({})
 

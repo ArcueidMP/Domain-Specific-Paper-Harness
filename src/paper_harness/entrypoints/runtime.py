@@ -11,6 +11,8 @@ from pathlib import Path
 from time import monotonic
 from uuid import UUID, uuid4
 
+from sqlalchemy import Engine
+
 from paper_harness.adapters.arxiv import ArxivClient
 from paper_harness.adapters.config import load_topic_config
 from paper_harness.adapters.deepseek import DeepSeekClient, DeepSeekSettings
@@ -19,6 +21,7 @@ from paper_harness.adapters.gcp_identity import CloudRunIdTokenProvider
 from paper_harness.adapters.grobid import GROBID_PARSER_NAME, GROBID_PARSER_VERSION, GrobidClient
 from paper_harness.adapters.http_retry import HttpRetryPolicy
 from paper_harness.adapters.postgres import PostgresRepository, create_postgres_engine
+from paper_harness.adapters.postgres.arxiv_request_gate import PostgresArxivRequestGate
 from paper_harness.adapters.semantic_scholar import (
     SemanticScholarClient,
     SemanticScholarSettings,
@@ -285,9 +288,13 @@ def execute_arxiv_ingestion(
     if not database_url:
         raise ValueError("DATABASE_URL is required for arXiv ingestion")
     topic = load_topic_config(topic_config)
-    repository = PostgresRepository(create_postgres_engine(database_url))
+    engine = create_postgres_engine(database_url)
+    repository = PostgresRepository(engine)
     repository.check_ready()
-    use_case = IngestArxiv(arxiv=ArxivClient(), repository=repository)
+    use_case = IngestArxiv(
+        arxiv=ArxivClient(request_gate=PostgresArxivRequestGate(engine)),
+        repository=repository,
+    )
     return use_case.execute(
         topic,
         logical_date=logical_date,
@@ -313,10 +320,11 @@ def execute_structured_analysis(
     if not database_url:
         raise ValueError("DATABASE_URL is required for structured analysis")
     topic = load_topic_config(topic_config)
-    repository = PostgresRepository(create_postgres_engine(database_url))
+    engine = create_postgres_engine(database_url)
+    repository = PostgresRepository(engine)
     repository.check_ready()
     use_case = AnalyzePapers(
-        arxiv=ArxivClient(),
+        arxiv=ArxivClient(request_gate=PostgresArxivRequestGate(engine)),
         parser=parser,
         llm=DeepSeekClient(llm_settings),
         repository=repository,
@@ -381,7 +389,7 @@ def execute_daily_pipeline(
     llm_settings = DeepSeekSettings.from_environment()
     scholarly_settings = SemanticScholarSettings.from_environment()
     raw_parser = _grobid_parser(analysis_scope)
-    repository = _ready_repository("daily pipeline")
+    repository, engine = _ready_repository_with_engine("daily pipeline")
     if resume_execution_id is not None:
         resumed = repository.get_pipeline_execution(resume_execution_id)
         if (
@@ -397,7 +405,7 @@ def execute_daily_pipeline(
             )
     embeddings = _specter2_embeddings()
     accounting = PipelineAccounting()
-    arxiv = AccountingArxiv(ArxivClient(), accounting)
+    arxiv = AccountingArxiv(ArxivClient(request_gate=PostgresArxivRequestGate(engine)), accounting)
     llm = AccountingLLM(DeepSeekClient(llm_settings), accounting)
     parser = None if raw_parser is None else AccountingPdfParser(raw_parser, accounting)
     scholarly_search = AccountingScholarlySearch(
@@ -1397,12 +1405,18 @@ def _specter2_embeddings():
 
 
 def _ready_repository(operation: str) -> PostgresRepository:
+    repository, _engine = _ready_repository_with_engine(operation)
+    return repository
+
+
+def _ready_repository_with_engine(operation: str) -> tuple[PostgresRepository, Engine]:
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         raise ValueError(f"DATABASE_URL is required for {operation}")
-    repository = PostgresRepository(create_postgres_engine(database_url))
+    engine = create_postgres_engine(database_url)
+    repository = PostgresRepository(engine)
     repository.check_ready()
-    return repository
+    return repository, engine
 
 
 def _scholarly_retry_policy(operation_timeout_seconds: float) -> HttpRetryPolicy:

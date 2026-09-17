@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import cast
 from uuid import UUID
 
@@ -96,10 +97,14 @@ def _response(
     }
 
 
-def _client(handler: httpx.MockTransport) -> DeepSeekClient:
+def _client(
+    handler: httpx.MockTransport,
+    *,
+    generated_at: datetime | None = None,
+) -> DeepSeekClient:
     settings = DeepSeekSettings(
         provider="deepseek",
-        model="deepseek-v4-flash",
+        model="deepseek-flash",
         api_key="test-only-key",
     )
     return DeepSeekClient(
@@ -112,7 +117,7 @@ def _client(handler: httpx.MockTransport) -> DeepSeekClient:
             backoff_seconds=0,
             max_retry_after_seconds=5,
         ),
-        clock=lambda: datetime(2026, 8, 8, 5, tzinfo=UTC),
+        clock=lambda: generated_at or datetime(2026, 8, 8, 5, tzinfo=UTC),
         sleep=lambda _delay: None,
     )
 
@@ -128,13 +133,14 @@ def test_deepseek_validates_and_maps_strict_json_without_exposing_reasoning() ->
 
     result = _client(httpx.MockTransport(handler)).analyze(_request())
 
-    assert result.configured_model == "deepseek-v4-flash"
+    assert result.configured_model == "deepseek-flash"
     assert result.model_version == "DeepSeek-V4-Flash-2026-04-24"
     assert result.prompt_version == "m2-analysis-v1"
     assert result.claims[0].key == "result_1"
     assert result.usage.total_tokens == 120
     assert result.usage.estimated_cost_usd is not None
     body = cast(dict[str, object], observed["body"])
+    assert body["model"] == "deepseek-flash"
     assert body["thinking"] == {"type": "disabled"}
     assert body["response_format"] == {"type": "json_object"}
     messages = cast(list[object], body["messages"])
@@ -334,10 +340,65 @@ def test_status_mapping_is_explicit(status_code: int, exception_type: type[Excep
 
 def test_operation_scoped_settings_reject_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
-    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-flash")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     with pytest.raises(LLMConfigurationError, match="non-empty DEEPSEEK_API_KEY"):
         DeepSeekSettings.from_environment()
+
+
+def test_settings_require_the_canonical_flash_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-flash")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-only-key")
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+
+    settings = DeepSeekSettings.from_environment()
+
+    assert settings.provider == "deepseek"
+    assert settings.model == "deepseek-flash"
+    assert settings.base_url == "https://api.deepseek.com"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "",
+        "deepseek-v4-flash",
+        "deepseek-v4-flash-vision-exp",
+        "deepseek-v4.1-flash",
+        "deepseek-v4.1-flash-expires-on-0910",
+        "deepseek-v4-pro",
+    ],
+)
+def test_settings_reject_unselected_models_without_alias_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_MODEL", model)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-only-key")
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+
+    with pytest.raises(LLMConfigurationError, match="LLM_MODEL=deepseek-flash"):
+        DeepSeekSettings.from_environment()
+
+
+@pytest.mark.parametrize(
+    "response_model",
+    ["deepseek-flash", "DeepSeek-V4.1-Flash-provider-revision", "DeepSeek-V4-Flash-2026-04-24"],
+)
+def test_configured_model_does_not_rewrite_the_provider_response_identity(
+    response_model: str,
+) -> None:
+    response = _response(_payload())
+    response["model"] = response_model
+
+    result = _client(
+        httpx.MockTransport(lambda _request: httpx.Response(200, json=response))
+    ).analyze(_request())
+
+    assert result.configured_model == "deepseek-flash"
+    assert result.model_version == response_model
 
 
 @pytest.mark.parametrize(
@@ -348,7 +409,7 @@ def test_settings_reject_unsafe_api_key_characters(api_key: str) -> None:
     with pytest.raises(ValueError, match="printable ASCII"):
         DeepSeekSettings(
             provider="deepseek",
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             api_key=api_key,
         )
 
@@ -388,6 +449,47 @@ def test_inconsistent_usage_cache_counts_are_normalized_deterministically(
     assert (result.usage.prompt_tokens, result.usage.completion_tokens) == (100, 20)
     assert result.usage.total_tokens == 120
     assert result.usage.estimated_cost_usd == expected.usage.estimated_cost_usd
+
+
+@pytest.mark.parametrize(
+    ("generated_at", "expected_cost"),
+    [
+        ("2026-09-14T00:59:59+00:00", "0.00023325"),
+        ("2026-09-14T01:00:00+00:00", "0.00046650"),
+        ("2026-09-14T03:59:59+00:00", "0.00046650"),
+        ("2026-09-14T04:00:00+00:00", "0.00023325"),
+        ("2026-09-14T05:59:59+00:00", "0.00023325"),
+        ("2026-09-14T06:00:00+00:00", "0.00046650"),
+        ("2026-09-14T09:59:59+00:00", "0.00046650"),
+        ("2026-09-14T10:00:00+00:00", "0.00023325"),
+        ("2026-09-18T02:00:00+00:00", "0.00046650"),
+        ("2026-09-19T02:00:00+00:00", "0.00023325"),
+        ("2026-09-20T07:00:00+00:00", "0.00023325"),
+        ("2026-09-14T09:00:00+08:00", "0.00046650"),
+        ("2026-09-19T09:00:00+08:00", "0.00023325"),
+    ],
+)
+def test_flash_cost_estimates_follow_verified_usd_weekday_pricing(
+    generated_at: str,
+    expected_cost: str,
+) -> None:
+    response = _response(_payload())
+    response["model"] = "deepseek-flash"
+    response["usage"] = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 200,
+        "total_tokens": 1200,
+        "prompt_cache_hit_tokens": 250,
+        "prompt_cache_miss_tokens": 750,
+    }
+
+    result = _client(
+        httpx.MockTransport(lambda _request: httpx.Response(200, json=response)),
+        generated_at=datetime.fromisoformat(generated_at),
+    ).analyze(_request())
+
+    assert result.usage.estimated_cost_usd == Decimal(expected_cost)
+    assert result.usage.total_tokens == 1200
 
 
 @pytest.mark.parametrize("prompt_tokens", ["100", MAX_MODEL_TOKEN_COUNT + 1])
@@ -480,7 +582,7 @@ def test_slow_streaming_response_cannot_exceed_the_total_operation_deadline() ->
 
     settings = DeepSeekSettings(
         provider="deepseek",
-        model="deepseek-v4-flash",
+        model="deepseek-flash",
         api_key="test-only-key",
     )
     client = DeepSeekClient(

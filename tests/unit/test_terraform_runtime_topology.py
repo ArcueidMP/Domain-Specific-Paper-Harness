@@ -296,6 +296,9 @@ def test_daily_is_the_only_consumer_gate_for_complete_pipeline_inputs() -> None:
         "SEMANTIC_SCHOLAR_API_KEY",
     ):
         assert required_environment_name in daily
+    assert 'LLM_MODEL        = "deepseek-flash"' in daily
+    assert 'LLM_PROVIDER     = "deepseek"' in daily
+    assert "deepseek-v4-flash" not in daily
 
     for binding_name in ("deepseek_accessors", "semantic_scholar_accessors"):
         binding = _resource_block(iam, "google_secret_manager_secret_iam_binding", binding_name)

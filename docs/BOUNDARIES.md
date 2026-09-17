@@ -23,6 +23,20 @@ Provider ordering, top-N caps, and filtered record counts cannot prove discovery
 complete. Persisted continuation and metadata writes are atomic; an incomplete
 harvest cannot advance the shared watermark or become a successful empty day.
 
+Production OAI-PMH, Atom metadata, and PDF requests share a PostgreSQL advisory
+lock across all runtimes using the same database. The lock covers one complete
+HTTP response and a three-second gap before the next request, including retries.
+It uses the existing session-affine connection pool and holds no open database
+transaction during HTTP work. Requests remain bounded to a 60-second network
+timeout, two transient retries, and a 240-second operation budget, reduced by
+any shorter caller deadline. Coordination and pacing consume that same budget.
+This follows the [arXiv API usage policy](https://info.arxiv.org/help/api/tou.html);
+it does not guarantee that an upstream HTTP 429 or outage has cleared.
+
+Repeated normalized author names are deduplicated at the arXiv response boundary,
+preserving the first spelling and source order. Repository uniqueness remains
+strict, and existing paper-version author snapshots are not rewritten.
+
 Historical inputs may come only from:
 
 - authenticated Semantic Scholar paper search, metadata, references, citations,
@@ -60,6 +74,14 @@ Provider order, duplicates, equal timestamps, partial selector coverage, and
 surplus candidates are normalized through stable local sorting, deduplication,
 and capping. Required identity, timestamps, and field types remain strict;
 invalid values fail the narrowest identifiable item without fabricated data.
+
+Historical identifier conflict checks use indexed normalized type/value pairs
+inside PostgreSQL and return at most one conflicting type. Source spellings
+remain intact. Types and arXiv/DOI values use Python Unicode casefold; other
+identifier values remain case-sensitive. A database unique constraint protects
+the same normalized identity during concurrent writes. Ordinary metadata
+refreshes preserve dependent identities without reloading their records;
+actual identity promotion or alias merging still rekeys those records atomically.
 
 ## Daily execution boundary
 

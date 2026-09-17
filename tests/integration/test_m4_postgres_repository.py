@@ -30,6 +30,7 @@ from paper_harness.adapters.postgres.models import (
     PaperAnalysisRow,
     ReportEnrichmentFailureRow,
     ReportRow,
+    ReportSectionRow,
     RunItemRow,
 )
 from paper_harness.application import publish_product as publication_module
@@ -37,6 +38,7 @@ from paper_harness.application.analyze_papers import AnalyzePapers
 from paper_harness.application.ingest_arxiv import IngestArxiv
 from paper_harness.application.publish_product import PublishProduct
 from paper_harness.application.read_models import GraphView
+from paper_harness.application.reporting import build_structured_report_sections
 from paper_harness.domain.analysis import AnalysisScope, ModelUsage, VerificationStatus
 from paper_harness.domain.errors import DomainInvariantError
 from paper_harness.domain.historical import (
@@ -94,6 +96,7 @@ from paper_harness.domain.reports import (
     Report,
     ReportNarrativeMode,
     ReportNarrativeRequest,
+    ReportSectionKind,
     ReportType,
 )
 from paper_harness.entrypoints.api import create_app
@@ -1408,6 +1411,112 @@ def test_graph_data_error_is_mapped_without_leaving_partial_rows(
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    "section_kinds",
+    [
+        tuple(ReportSectionKind),
+        tuple(kind for kind in ReportSectionKind if kind is not ReportSectionKind.TRENDS),
+        (ReportSectionKind.COMPARISONS,),
+        (ReportSectionKind.OVERVIEW, ReportSectionKind.LIMITATIONS),
+        (),
+    ],
+    ids=[
+        "complete-outline",
+        "missing-trends",
+        "comparison-only",
+        "sparse-outline",
+        "empty-outline",
+    ],
+)
+def test_partial_report_outline_publishes_with_canonical_section_positions(
+    postgres_repository: PostgresRepository,
+    topic_config: TopicConfig,
+    arxiv_record_v1: ArxivPaperRecord,
+    section_kinds: tuple[ReportSectionKind, ...],
+) -> None:
+    class PartialReportLLM(GroundedAnalysisLLM):
+        def generate_report(self, request: ReportNarrativeRequest) -> GeneratedReportNarrative:
+            return GeneratedReportNarrative(
+                provider="deepseek",
+                configured_model="deepseek-flash",
+                model_version="deepseek-flash",
+                prompt_version="m4-report-v1",
+                generated_at=NOW + timedelta(days=1, minutes=10),
+                summary="A grounded report with an intentionally partial outline.",
+                sections=tuple(
+                    section
+                    for section in build_structured_report_sections(request)
+                    if section.kind in section_kinds
+                ),
+                usage=ModelUsage(
+                    prompt_tokens=100,
+                    completion_tokens=50,
+                    total_tokens=150,
+                    call_count=1,
+                    duration_ms=500,
+                    estimated_cost_usd=None,
+                ),
+            )
+
+    _, logical_date = _prepare_complete_source(postgres_repository, topic_config, arxiv_record_v1)
+    run = PublishProduct(
+        repository=postgres_repository,
+        llm=PartialReportLLM(),
+        clock=lambda: NOW + timedelta(days=1, minutes=10),
+    ).execute(
+        topic_config,
+        narrative_mode=ReportNarrativeMode.DEEPSEEK,
+        logical_date=logical_date,
+    )
+    assert run.status is RunStatus.COMPLETE
+    assert run.completed_count == 1
+    published = postgres_repository.get_product_run(
+        logical_date=logical_date, topic_slug=topic_config.slug
+    )
+    assert published is not None and published.report is not None
+    report = published.report.report
+    assert report.narrative_mode is ReportNarrativeMode.DEEPSEEK
+    assert tuple(section.kind for section in report.sections) == section_kinds
+    assert published.items[0].item.stage is PaperStage.PUBLISHED
+    with postgres_repository._sessions() as session:
+        stored = session.execute(
+            select(ReportSectionRow.kind, ReportSectionRow.position)
+            .where(ReportSectionRow.report_id == report.id)
+            .order_by(ReportSectionRow.position)
+        ).all()
+    canonical_positions = {
+        "OVERVIEW": 0,
+        "TRENDS": 1,
+        "COMPARISONS": 2,
+        "LINEAGE": 3,
+        "LIMITATIONS": 4,
+    }
+    assert stored == [(kind.value, canonical_positions[kind.value]) for kind in section_kinds]
+
+    periodic_id = uuid5(report.id, "partial-outline-weekly")
+    weekly = replace(
+        report,
+        id=periodic_id,
+        run_id=None,
+        report_type=ReportType.WEEKLY,
+        period_start=logical_date - timedelta(days=6),
+        period_end=logical_date,
+        sections=tuple(
+            replace(section, id=uuid5(periodic_id, section.kind.value), report_id=periodic_id)
+            for section in report.sections
+        ),
+    )
+    postgres_repository.persist_periodic_report(weekly)
+    reloaded = postgres_repository.get_report(
+        report_type=ReportType.WEEKLY,
+        period_start=logical_date - timedelta(days=6),
+        period_end=logical_date,
+        topic_slug=topic_config.slug,
+    )
+    assert reloaded is not None
+    assert tuple(section.kind for section in reloaded.report.sections) == section_kinds
 
 
 def test_report_generation_failure_publishes_structured_data(

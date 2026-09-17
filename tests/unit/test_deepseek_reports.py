@@ -156,7 +156,7 @@ def _client(handler: httpx.MockTransport) -> DeepSeekClient:
     return DeepSeekClient(
         DeepSeekSettings(
             provider="deepseek",
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             api_key="test-only-key",
         ),
         client=httpx.Client(
@@ -185,10 +185,12 @@ def test_report_maps_strict_sections_provenance_and_bounded_structured_input() -
     result = _client(httpx.MockTransport(handler)).generate_report(_request())
 
     assert result.prompt_version == "m4-report-v1"
+    assert result.configured_model == "deepseek-flash"
     assert result.model_version == "DeepSeek-V4-Flash-2026-04-24"
     assert tuple(section.kind for section in result.sections) == tuple(ReportSectionKind)
     assert result.sections[0].evidence_ids == (EVIDENCE_ID,)
     body = cast(dict[str, object], observed["body"])
+    assert body["model"] == "deepseek-flash"
     assert body["thinking"] == {"type": "disabled"}
     assert body["response_format"] == {"type": "json_object"}
     messages = cast(list[dict[str, str]], body["messages"])

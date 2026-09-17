@@ -450,7 +450,7 @@ def test_exact_analysis_reuse_skips_a_new_model_call_only_for_matching_provenanc
 @pytest.mark.parametrize(
     ("configured_model", "prompt_version"),
     [
-        ("deepseek-v4-flash-next", "m2-analysis-v1"),
+        ("deepseek-flash", "m2-analysis-v1"),
         ("deepseek-v4-flash", "m2-analysis-v2"),
     ],
 )
@@ -1352,7 +1352,18 @@ def test_duplicate_model_claim_references_are_rejected_before_persistence() -> N
         )
 
 
-def test_analysis_identity_distinguishes_provider_model_revisions() -> None:
+@pytest.mark.parametrize(
+    ("configured_model", "model_version"),
+    [
+        ("deepseek-v4-flash", "DeepSeek-V4-Flash-2026-08-01"),
+        ("deepseek-flash", "deepseek-flash"),
+        ("deepseek-flash", "DeepSeek-V4-Flash-2026-04-24"),
+    ],
+)
+def test_analysis_identity_distinguishes_provider_model_revisions(
+    configured_model: str,
+    model_version: str,
+) -> None:
     version_id = UUID("8dc68364-70a2-47da-ac5c-4d9af4e3a9d8")
     parsed_id = UUID("bd35a33c-c99a-43c6-a1d6-cd41811ed6a9")
     first = stable_analysis_id(
@@ -1369,8 +1380,8 @@ def test_analysis_identity_distinguishes_provider_model_revisions() -> None:
         AnalysisScope.FULL_TEXT.value,
         parsed_id,
         "deepseek",
-        "deepseek-v4-flash",
-        "DeepSeek-V4-Flash-2026-08-01",
+        configured_model,
+        model_version,
         "m2-analysis-v1",
     )
 

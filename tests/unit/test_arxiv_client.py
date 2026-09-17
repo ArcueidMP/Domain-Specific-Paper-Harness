@@ -905,7 +905,7 @@ def test_atom_entry_accepts_legacy_http_id_and_normalizes_source_url(
             "headers": {"user-agent": f"arxiv.py/{arxiv.__version__}"},
             "allow_redirects": False,
             "stream": True,
-            "timeout": 20.0,
+            "timeout": 60.0,
         }
     ]
 
@@ -1382,6 +1382,7 @@ def test_download_pdf_retries_a_timeout_while_streaming_the_response_body(
 
     monkeypatch.setattr(requests.Session, "request", request)
     result = ArxivClient(
+        delay_seconds=0,
         max_retries=1,
         retry_backoff_seconds=1,
         sleep=sleeps.append,

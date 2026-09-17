@@ -69,7 +69,7 @@ def _client(payload: object, observed: dict[str, object] | None = None) -> DeepS
     return DeepSeekClient(
         DeepSeekSettings(
             provider="deepseek",
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             api_key="test-only-key",
         ),
         client=httpx.Client(
@@ -100,7 +100,7 @@ def _deadline_client(
     return DeepSeekClient(
         DeepSeekSettings(
             provider="deepseek",
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             api_key="test-only-key",
         ),
         client=httpx.Client(
@@ -275,8 +275,11 @@ def test_selector_validates_complete_bounded_decisions_and_disables_reasoning() 
         SelectionDecision.REJECTED,
     ]
     assert result.prompt_version == "m3-selector-v1"
+    assert result.configured_model == "deepseek-flash"
+    assert result.model_version == "DeepSeek-V4-Flash-2026-04-24"
     body = observed["body"]
     assert isinstance(body, dict)
+    assert body["model"] == "deepseek-flash"
     assert body["thinking"] == {"type": "disabled"}
 
 
@@ -293,8 +296,11 @@ def test_crawler_returns_only_strict_bounded_plan_controls() -> None:
     assert result.expand_references is True
     assert result.expand_citations is False
     assert result.prompt_version == "m3-crawler-v2"
+    assert result.configured_model == "deepseek-flash"
+    assert result.model_version == "DeepSeek-V4-Flash-2026-04-24"
     body = observed["body"]
     assert isinstance(body, dict)
+    assert body["model"] == "deepseek-flash"
     assert body["thinking"] == {"type": "disabled"}
     messages = cast(list[dict[str, str]], body["messages"])
     source = json.loads(messages[1]["content"].split("\n", maxsplit=1)[1])
@@ -411,13 +417,21 @@ def test_selector_rejects_output_with_no_usable_requested_decision() -> None:
 
 
 def test_comparison_maps_fixed_dimensions_evidence_and_provenance() -> None:
-    result = _client(_comparison_payload()).compare_papers(_comparison_request())
+    observed: dict[str, object] = {}
+    result = _client(_comparison_payload(), observed).compare_papers(_comparison_request())
 
     assert result.comparability_status is ComparabilityStatus.PARTIALLY_COMPARABLE
     assert tuple(item.name for item in result.dimensions) == COMPARISON_DIMENSION_ORDER
     assert result.dimensions[0].source_evidence_ids == (SOURCE_EVIDENCE_ID,)
     assert result.relations[0].confidence == 0.8
     assert result.prompt_version == "m3-comparison-v1"
+    assert result.configured_model == "deepseek-flash"
+    assert result.model_version == "DeepSeek-V4-Flash-2026-04-24"
+    body = observed["body"]
+    assert isinstance(body, dict)
+    assert body["model"] == "deepseek-flash"
+    assert body["thinking"] == {"type": "disabled"}
+    assert body["response_format"] == {"type": "json_object"}
 
 
 def test_comparison_normalizes_order_deduplicates_and_keeps_honest_partial_dimensions() -> None:

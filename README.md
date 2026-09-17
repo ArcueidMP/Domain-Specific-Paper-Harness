@@ -195,7 +195,7 @@ docker compose --profile analysis up --detach --wait db grobid
 $env:APP_ENV = "development"
 $env:DATABASE_URL = "postgresql+psycopg://paper_harness:paper_harness_local@localhost:5432/paper_harness"
 $env:LLM_PROVIDER = "deepseek"
-$env:LLM_MODEL = "deepseek-v4-flash"
+$env:LLM_MODEL = "deepseek-flash"
 $env:DEEPSEEK_API_KEY = "<your-deepseek-api-key>"
 $env:SEMANTIC_SCHOLAR_API_KEY = "<your-semantic-scholar-api-key>"
 $env:GROBID_URL = "http://127.0.0.1:8070"
@@ -222,7 +222,7 @@ docker compose --profile analysis up --detach --wait db grobid
 export APP_ENV=development
 export DATABASE_URL='postgresql+psycopg://paper_harness:paper_harness_local@localhost:5432/paper_harness'
 export LLM_PROVIDER=deepseek
-export LLM_MODEL=deepseek-v4-flash
+export LLM_MODEL=deepseek-flash
 export DEEPSEEK_API_KEY='<your-deepseek-api-key>'
 export SEMANTIC_SCHOLAR_API_KEY='<your-semantic-scholar-api-key>'
 export GROBID_URL='http://127.0.0.1:8070'
@@ -245,7 +245,7 @@ tracked file.
 | --- | --- | --- |
 | `DATABASE_URL` | Web/API and Daily | PostgreSQL 15+ connection using the psycopg 3 driver |
 | `LLM_PROVIDER=deepseek` | Daily | Selects the only supported production LLM provider |
-| `LLM_MODEL=deepseek-v4-flash` | Daily | Selects the required DeepSeek model |
+| `LLM_MODEL=deepseek-flash` | Daily | Selects DeepSeek V4.1 Flash through its canonical API name |
 | `DEEPSEEK_API_KEY` | Daily | User-owned credential for generated analysis and narrative |
 | `SEMANTIC_SCHOLAR_API_KEY` | Daily | User-owned credential for historical and related-work operations |
 | `GROBID_URL` | Daily | URL of the sole full-text parser |
@@ -255,9 +255,10 @@ tracked file.
 The Web/API requires no DeepSeek or Semantic Scholar credential. The browser
 never receives any database or provider secret.
 
-The production model remains `deepseek-v4-flash`; the
-[V4.1 Flash compatibility assessment](docs/MODEL_COMPATIBILITY.md) records why
-the temporary September 8 beta was not selected for unattended Jobs.
+The configured model is `deepseek-flash`, the canonical API name for DeepSeek
+V4.1 Flash. The [compatibility assessment](docs/MODEL_COMPATIBILITY.md) records
+the supported request contract and verification. Existing analyses retain their
+original configured and provider-returned model identities.
 
 ## Publication states
 
@@ -346,6 +347,9 @@ deployment command grants a public endpoint by default.
 - This source release does not include a hosted public Demo or access to any
   maintainer production environment.
 - A compatible managed PostgreSQL database is not provisioned by the project.
+- Database egress and stored data have separate provider quotas. Accumulated
+  egress cannot be reclaimed by deleting data; retained paper text, evidence,
+  indexes, and report history continue to require database capacity.
 - Full-text analysis requires GROBID; there is no parser fallback.
 - DeepSeek, authenticated Semantic Scholar, prepared SPECTER2, and PostgreSQL
   have no implicit production substitutes.

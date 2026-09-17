@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import UTC, date, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, TypeVar, cast
@@ -54,14 +54,15 @@ class ArxivClient:
         max_pages: int = 50,
         delay_seconds: float = 3.0,
         max_retries: int = 2,
-        request_timeout_seconds: float = 20.0,
-        retry_backoff_seconds: float = 1.0,
-        max_retry_after_seconds: float = 30.0,
-        max_total_seconds: float = 90.0,
+        request_timeout_seconds: float = 60.0,
+        retry_backoff_seconds: float = 3.0,
+        max_retry_after_seconds: float = 60.0,
+        max_total_seconds: float = 240.0,
         atom_max_bytes: int = 16 * 1024 * 1024,
         pdf_max_bytes: int = 30 * 1024 * 1024,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        request_gate: Callable[[float], AbstractContextManager[None]] | None = None,
     ) -> None:
         if not 1 <= page_size <= 2000:
             raise ValueError("arXiv page_size must be between 1 and 2000")
@@ -84,12 +85,13 @@ class ArxivClient:
         if not 1024 <= pdf_max_bytes <= 100 * 1024 * 1024:
             raise ValueError("arXiv PDF size bound must be between 1 KiB and 100 MiB")
 
-        # arxiv.py owns query encoding, pagination, Atom parsing, and pacing. Its
+        # arxiv.py owns query encoding, pagination, and Atom parsing. Its
         # broad built-in retry loop is disabled so only the explicit policy below
-        # retries timeouts and the approved transient HTTP statuses.
+        # retries timeouts and the approved transient HTTP statuses. The session
+        # paces every wire attempt across Atom, OAI, PDF, and retries.
         self._client = ValidatedArxivClient(
             page_size=page_size,
-            delay_seconds=delay_seconds,
+            delay_seconds=0.0,
             num_retries=0,
             max_pages=max_pages,
         )
@@ -102,14 +104,13 @@ class ArxivClient:
             atom_max_bytes=atom_max_bytes,
             sleep=sleep,
             monotonic=monotonic,
+            delay_seconds=delay_seconds,
+            request_gate=request_gate,
         )
         self._client._session = self._session  # pyright: ignore[reportPrivateUsage]
         self._candidate_lookahead = page_size
         self._pdf_max_bytes = pdf_max_bytes
-        self._sleep = sleep
         self._monotonic = monotonic
-        self._delay_seconds = delay_seconds
-        self._last_oai_request: float | None = None
 
     def list_updated_identifiers(
         self,
@@ -138,13 +139,6 @@ class ArxivClient:
 
         try:
             with self._session.operation(timeout_seconds=timeout_seconds):
-                if self._last_oai_request is not None:
-                    remaining_delay = self._delay_seconds - (
-                        self._monotonic() - self._last_oai_request
-                    )
-                    if remaining_delay > 0:
-                        self._sleep(remaining_delay)
-                self._last_oai_request = self._monotonic()
                 return self._session.consume_stream(url, consume=consume, allow_redirects=False)
         except requests.exceptions.RequestException as error:
             raise ArxivUnavailableError(
@@ -406,6 +400,8 @@ class BoundedArxivSession(requests.Session):
         atom_max_bytes: int = 16 * 1024 * 1024,
         sleep: Callable[[float], None],
         monotonic: Callable[[], float],
+        delay_seconds: float = 0.0,
+        request_gate: Callable[[float], AbstractContextManager[None]] | None = None,
     ) -> None:
         super().__init__()
         self._request_timeout_seconds = request_timeout_seconds
@@ -417,6 +413,9 @@ class BoundedArxivSession(requests.Session):
         self._sleep = sleep
         self._monotonic = monotonic
         self._deadline: float | None = None
+        self._delay_seconds = delay_seconds
+        self._last_request_started: float | None = None
+        self._request_gate = request_gate
         self.headers["Accept-Encoding"] = "identity"
 
     @property
@@ -480,40 +479,47 @@ class BoundedArxivSession(requests.Session):
 
         kwargs["stream"] = True
         for attempt in range(self._max_retries + 1):
-            kwargs["timeout"] = min(self._request_timeout_seconds, self._remaining_seconds())
+            retry_delay: float | None = None
+            gate = (
+                self._request_gate(self._remaining_seconds())
+                if self._request_gate is not None
+                else nullcontext()
+            )
             try:
-                response = super().get(url, **kwargs)
+                with gate:
+                    if self._last_request_started is not None:
+                        remaining_delay = self._delay_seconds - (
+                            self._monotonic() - self._last_request_started
+                        )
+                        if remaining_delay > 0:
+                            self._bounded_sleep(remaining_delay)
+                    kwargs["timeout"] = min(
+                        self._request_timeout_seconds, self._remaining_seconds()
+                    )
+                    self._last_request_started = self._monotonic()
+                    with super().get(url, **kwargs) as response:
+                        if (
+                            response.status_code in _RETRYABLE_HTTP_STATUSES
+                            and attempt < self._max_retries
+                        ):
+                            retry_delay = _retry_delay_seconds(
+                                response,
+                                attempt=attempt,
+                                backoff_seconds=self._retry_backoff_seconds,
+                                max_retry_after_seconds=self._max_retry_after_seconds,
+                            )
+                        if retry_delay is None:
+                            result = consume(response)
+                            self.check_deadline()
+                            return result
             except requests.exceptions.RequestException as error:
                 if not _is_retryable_stream_timeout(error):
                     raise
                 if attempt == self._max_retries:
                     raise
-                self._bounded_sleep(self._retry_backoff_seconds * (2**attempt))
-                continue
-
-            if response.status_code in _RETRYABLE_HTTP_STATUSES and attempt < self._max_retries:
-                delay = _retry_delay_seconds(
-                    response,
-                    attempt=attempt,
-                    backoff_seconds=self._retry_backoff_seconds,
-                    max_retry_after_seconds=self._max_retry_after_seconds,
-                )
-                if delay is not None:
-                    response.close()
-                    self._bounded_sleep(delay)
-                    continue
-
-            try:
-                with response:
-                    result = consume(response)
-                    self.check_deadline()
-                    return result
-            except requests.exceptions.RequestException as error:
-                if not _is_retryable_stream_timeout(error):
-                    raise
-                if attempt == self._max_retries:
-                    raise
-                self._bounded_sleep(self._retry_backoff_seconds * (2**attempt))
+                retry_delay = self._retry_backoff_seconds * (2**attempt)
+            assert retry_delay is not None, "arXiv request gate suppressed a failed attempt"
+            self._bounded_sleep(retry_delay)
         raise AssertionError("bounded streamed retry loop must return or raise")
 
     def check_deadline(self) -> None:
@@ -754,9 +760,14 @@ def _normalize_authors(value: object) -> tuple[str, ...]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         raise DomainInvariantError("arXiv authors must be a sequence")
     names: list[str] = []
+    seen: set[str] = set()
     for author in cast(Sequence[object], value):
         author_name: object = getattr(author, "name", None)
-        names.append(_normalize_required_text(author_name, field_name="author"))
+        display_name = _normalize_required_text(author_name, field_name="author")
+        identity = display_name.casefold()
+        if identity not in seen:
+            seen.add(identity)
+            names.append(display_name)
     return tuple(names)
 
 
