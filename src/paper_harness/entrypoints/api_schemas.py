@@ -447,6 +447,20 @@ class GraphEdgeResponse(ApiModel):
     created_at: datetime
 
 
+class GraphNodeMatchResponse(ApiModel):
+    id: UUID
+    entity_type: GraphEntityType
+    display_label: str
+    paper_id: UUID | None
+
+
+class GraphNodeSearchResponse(ApiModel):
+    items: list[GraphNodeMatchResponse]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+
+
 class KnowledgeGraphResponse(ApiModel):
     topic_id: UUID
     as_of: date | None

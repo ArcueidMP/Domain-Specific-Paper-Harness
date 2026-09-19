@@ -3,6 +3,7 @@
 # pyright: reportUnusedFunction=false
 
 import os
+import unicodedata
 from calendar import monthrange
 from collections.abc import Callable
 from datetime import date, timedelta
@@ -100,7 +101,9 @@ from paper_harness.entrypoints.api_schemas import (
     GraphEdgeResponse,
     GraphEntityMentionResponse,
     GraphModelProvenanceResponse,
+    GraphNodeMatchResponse,
     GraphNodeResponse,
+    GraphNodeSearchResponse,
     KnowledgeGraphResponse,
     LineageNodeResponse,
     LineageResponse,
@@ -388,6 +391,44 @@ def create_app(repository: RepositoryPort | None = None) -> FastAPI:
                 },
             )
         return _comparison_response(detail)
+
+    @app.get(
+        "/api/v1/graph/search",
+        response_model=GraphNodeSearchResponse,
+        operation_id="searchGraphNodes",
+    )
+    def _search_graph_nodes(
+        repo: Annotated[RepositoryPort, Depends(get_repository)],
+        topic: Annotated[str, Query(min_length=1, max_length=80)],
+        q: Annotated[str, Query(min_length=1, max_length=200)],
+        entity_type: GraphEntityType | None = None,
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+        offset: Annotated[int, Query(ge=0, le=100000)] = 0,
+    ) -> GraphNodeSearchResponse:
+        query = " ".join(unicodedata.normalize("NFKC", q).split())
+        if not query:
+            raise HTTPException(status_code=422, detail="Search text must not be blank")
+        items, total = repo.search_graph_nodes(
+            topic_slug=topic,
+            query=query,
+            entity_type=entity_type,
+            limit=limit,
+            offset=offset,
+        )
+        return GraphNodeSearchResponse(
+            items=[
+                GraphNodeMatchResponse(
+                    id=item.id,
+                    entity_type=item.entity_type,
+                    display_label=item.display_label,
+                    paper_id=item.paper_id,
+                )
+                for item in items
+            ],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
 
     @app.get(
         "/api/v1/graph",

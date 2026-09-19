@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 
 import {
+  searchGraphNodes,
   getComparison,
   getDaily,
   getDailyReports,
@@ -105,6 +106,13 @@ export type GraphFilters = {
   entityId?: string;
 };
 
+export const graphNodeSearchQuery = (topic: string, q: string, offset = 0) =>
+  queryOptions({
+    queryKey: ["graph-search", { topic, q, offset }],
+    queryFn: () => searchGraphNodes({ topic, q, offset, limit: 20 }),
+    enabled: q.length > 0,
+  });
+
 export const knowledgeGraphQuery = (topic: string, filters: GraphFilters = {}) =>
   queryOptions({
     queryKey: ["graph", { topic, ...filters }],
@@ -116,8 +124,8 @@ export const knowledgeGraphQuery = (topic: string, filters: GraphFilters = {}) =
         provenance: filters.provenance,
         paper_id: filters.paperId,
         entity_id: filters.entityId,
-        max_nodes: 200,
-        max_edges: 400,
+        max_nodes: 60,
+        max_edges: 120,
       }),
   });
 

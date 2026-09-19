@@ -32,7 +32,7 @@ describe("TrendsPage", () => {
       "href",
       "/papers/00511b3e-1303-4e03-b846-d29fd641942d?topic=broad-llm-agents",
     );
-    expect(screen.getByRole("link", { name: "Source-grounded memory verification" }))
+    expect(screen.getAllByRole("link", { name: "Source-grounded memory verification" })[0])
       .toHaveAttribute(
         "href",
         `/graph?entity_id=${sevenDayTrend.entity_counts[0]?.entity_id}&topic=broad-llm-agents`,

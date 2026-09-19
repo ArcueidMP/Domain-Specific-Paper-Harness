@@ -162,6 +162,18 @@ export type RelatedWorkItem = components["schemas"]["RelatedWorkItemResponse"];
 
 export type ComparisonEvidence = components["schemas"]["ComparisonEvidenceResponse"];
 
+type GraphSearchQuery = paths["/api/v1/graph/search"]["get"]["parameters"]["query"];
+
+export async function searchGraphNodes(query: GraphSearchQuery) {
+  const { data, error, response } = await api.GET("/api/v1/graph/search", {
+    params: { query },
+  });
+  if (!response.ok || data === undefined) {
+    throw requestError(response.status, error);
+  }
+  return data;
+}
+
 export async function getComparison(comparisonId: string) {
   const { data, error, response } = await api.GET("/api/v1/comparisons/{comparison_id}", {
     params: { path: { comparison_id: comparisonId } },

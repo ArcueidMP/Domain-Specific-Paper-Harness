@@ -5,7 +5,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -15,6 +14,7 @@ import {
 import type { TrendSnapshot, TrendWindow } from "../api/client";
 import { trendsQuery } from "../api/queries";
 import { RunStatusBadge } from "../components/RunStatusBadge";
+import { EntityActivityChart } from "../components/EntityActivityChart";
 import { StateNotice } from "../components/StateNotice";
 import { TopicLink } from "../components/TopicLink";
 import { useTopicSlug } from "../lib/topic";
@@ -65,11 +65,6 @@ export function TrendsPage() {
     ? [...snapshot.entity_counts]
         .sort((left, right) => right.change.current_count - left.change.current_count)
         .slice(0, 10)
-        .map((entity) => ({
-          name: entity.label,
-          current: entity.change.current_count,
-          preceding: entity.change.preceding_count,
-        }))
     : [];
 
   return (
@@ -199,23 +194,7 @@ export function TrendsPage() {
                   detail="No graph entity mentions fall inside this persisted window."
                 />
               ) : (
-                <div className="chart-frame" aria-label="Entity counts by trend window">
-                  <ResponsiveContainer width="100%" height={320}>
-                    <BarChart
-                      data={entityCounts}
-                      layout="vertical"
-                      margin={{ top: 10, right: 10, bottom: 10, left: 24 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} />
-                      <YAxis type="category" dataKey="name" width={112} tick={{ fontSize: 10 }} />
-                      <Tooltip />
-                      <Legend />
-                      <Bar dataKey="preceding" fill="#aeb5ad" />
-                      <Bar dataKey="current" fill="#e76d3e" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                <EntityActivityChart entities={entityCounts} />
               )}
             </section>
           </div>

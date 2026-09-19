@@ -18,6 +18,7 @@ from paper_harness.application.read_models import (
     AnalysisDetail,
     AnalysisTarget,
     ComparisonDetail,
+    GraphNodeMatch,
     GraphView,
     HistoricalRetrievalMatch,
     LineageDetail,
@@ -244,6 +245,16 @@ class RepositoryPort(Protocol):
     def get_latest_run(self, *, topic_slug: str | None) -> RunDetail | None: ...
 
     def get_run(self, run_id: UUID) -> RunDetail | None: ...
+
+    def search_graph_nodes(
+        self,
+        *,
+        topic_slug: str,
+        query: str,
+        entity_type: GraphEntityType | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[tuple[GraphNodeMatch, ...], int]: ...
 
     def get_graph(
         self,
