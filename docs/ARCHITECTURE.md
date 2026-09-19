@@ -213,6 +213,14 @@ Public reads admit only terminal complete or partial owners. Failed staging data
 cannot leak into canonical product views. Deterministic 7/30/90-day aggregates
 come only from persisted structured data and expose insufficient-data windows.
 
+The graph read adapter samples complete published edge endpoints before filling
+the node bound, preserving visible relationships in a truncated overview.
+Node-type filters select seeds and retain their connected endpoints. The
+read-only `/api/v1/graph/search` endpoint searches the latest published labels
+and canonical arXiv IDs within one topic before applying pagination. It returns
+lightweight node matches; the existing graph endpoint supplies the selected
+neighborhood and evidence. Search never reads unpublished graph staging.
+
 ## Optional public Demo data boundary
 
 The optional public Demo reuses the same normalized PostgreSQL model without

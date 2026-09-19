@@ -86,9 +86,18 @@ model's interpretation.
 ![Provenance-aware knowledge graph](images/paper-harness-graph.png)
 
 The Graph connects papers, research problems, methods, tasks, datasets, and
-benchmarks. Filters narrow node type, relation type, and provenance. Selecting a
-node opens its details and available mentions; paper-scoped graph links reduce
-the view to a published neighborhood.
+benchmarks. Search by name, paper title, or arXiv ID across all published nodes
+in the active topic, including nodes outside the displayed overview. Results
+are paginated. Choosing a result opens that node's published neighborhood.
+
+The overview displays at most 60 nodes and 120 relations and admits complete
+edge endpoints before filling remaining slots. Node-type filters include
+connected nodes of other types; relation and provenance filters constrain the
+displayed relations. Selecting a visible node opens its details without
+resetting the canvas. Use **Explore connections** to open a new neighborhood,
+**Focus selected** to zoom to a node, **Fit graph** to fit the visible graph,
+and **Return to overview** to clear the neighborhood and filters. Labels appear
+as zoom permits, with full names available in the detail panel and node index.
 
 Visual style preserves provenance. Explicit or deterministically derived edges
 are distinct from AI-inferred edges, and inference never implies human
@@ -102,6 +111,11 @@ behind it.
 Trends compare persisted structured records across equal 7-, 30-, or 90-day
 windows. The page shows current and preceding counts, absolute change, growth
 status, paper activity, and top-entity activity.
+
+Top-entity activity uses one row per entity with a shared scale for current and
+preceding counts. Names occupy at most two lines; hover over a name or focus its
+link with the keyboard to read the complete label. Each name links to its Graph
+neighborhood. On narrow screens, counts appear below the label.
 
 Trend values are deterministic calculations, not model-generated statistics.
 Zero denominators, small samples, and insufficient preceding windows stay

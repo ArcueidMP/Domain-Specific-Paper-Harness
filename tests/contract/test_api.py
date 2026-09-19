@@ -1376,6 +1376,33 @@ def test_m4_graph_trend_and_lineage_contracts_are_bounded_and_provenance_aware(
     analysis = _analysis_detail(arxiv_record_v1, paper)
     graph, trends, lineage, _, _ = _m4_read_fixture(paper, version, analysis)
     repository.graph_view = graph
+    search_client = TestClient(create_app(repository))
+    label = graph.nodes[0].entity.display_label
+    search = search_client.get(
+        "/api/v1/graph/search",
+        params={
+            "topic": "broad-llm-agents",
+            "q": f"  {label[:100]}  ",
+            "limit": 1,
+        },
+    )
+    assert search.status_code == 200
+    assert search.json()["items"][0]["display_label"] == label
+    assert search.json()["limit"] == 1
+    assert search.json()["offset"] == 0
+    assert "mentions" not in search.json()["items"][0]
+    for invalid in ({"q": "   "}, {"q": "x" * 201}, {"limit": 51}, {"offset": -1}):
+        assert (
+            search_client.get(
+                "/api/v1/graph/search",
+                params={
+                    "topic": "broad-llm-agents",
+                    "q": "agent",
+                    **invalid,
+                },
+            ).status_code
+            == 422
+        )
     repository.trends = trends
     paper_entity_id = next(
         item.entity.id

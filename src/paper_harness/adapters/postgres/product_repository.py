@@ -28,6 +28,7 @@ from paper_harness.application.read_models import (
     GraphEdgeEvidenceReference,
     GraphEvidenceRole,
     GraphNodeDetail,
+    GraphNodeMatch,
     GraphView,
     LineageDetail,
     ProductRunDetail,
@@ -396,6 +397,88 @@ class ProductRepositoryMixin:
                 "stored publication artifacts violate domain invariants"
             ) from error
 
+    def search_graph_nodes(
+        self,
+        *,
+        topic_slug: str,
+        query: str,
+        entity_type: GraphEntityType | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[tuple[GraphNodeMatch, ...], int]:
+        """Search published labels before pagination, independently of the canvas bound."""
+        try:
+            with self._sessions() as session:
+                topic_id = _resolve_graph_topic(session, topic_slug, as_of=None)
+                if topic_id is None:
+                    return (), 0
+                published_runs = _published_product_run_ids(topic_id=topic_id, as_of=None)
+                latest_labels = (
+                    select(
+                        GraphEntityMentionRow.entity_id,
+                        GraphEntityMentionRow.observed_label.label("label"),
+                        func.row_number()
+                        .over(
+                            partition_by=GraphEntityMentionRow.entity_id,
+                            order_by=(
+                                DailyRunRow.logical_date.desc(),
+                                GraphEntityMentionRow.generated_at.desc(),
+                                GraphEntityMentionRow.id,
+                            ),
+                        )
+                        .label("position"),
+                    )
+                    .join(DailyRunRow, DailyRunRow.id == GraphEntityMentionRow.publication_run_id)
+                    .where(GraphEntityMentionRow.publication_run_id.in_(published_runs))
+                    .subquery()
+                )
+                label = latest_labels.c.label
+                normalized_query = query.lower()
+                statement = (
+                    select(
+                        GraphEntityRow.id,
+                        GraphEntityRow.entity_type,
+                        label,
+                        GraphEntityRow.paper_id,
+                    )
+                    .join(latest_labels, latest_labels.c.entity_id == GraphEntityRow.id)
+                    .outerjoin(PaperRow, PaperRow.id == GraphEntityRow.paper_id)
+                    .where(
+                        GraphEntityRow.topic_id == topic_id,
+                        latest_labels.c.position == 1,
+                        or_(
+                            func.lower(label).contains(normalized_query, autoescape=True),
+                            PaperRow.canonical_arxiv_id.contains(query, autoescape=True),
+                        ),
+                    )
+                )
+                if entity_type is not None:
+                    statement = statement.where(GraphEntityRow.entity_type == entity_type.value)
+                total = int(
+                    session.scalar(select(func.count()).select_from(statement.subquery())) or 0
+                )
+                rows = session.execute(
+                    statement.order_by(
+                        case((func.lower(label) == normalized_query, 0), else_=1),
+                        func.lower(label),
+                        GraphEntityRow.entity_type,
+                        GraphEntityRow.id,
+                    )
+                    .limit(limit)
+                    .offset(offset)
+                )
+                return tuple(
+                    GraphNodeMatch(
+                        id=row.id,
+                        entity_type=GraphEntityType(row.entity_type),
+                        display_label=row.label,
+                        paper_id=row.paper_id,
+                    )
+                    for row in rows
+                ), total
+        except OperationalError as error:
+            raise RepositoryUnavailableError("graph search storage is unavailable") from error
+
     def get_graph(
         self,
         *,
@@ -480,7 +563,7 @@ class ProductRepositoryMixin:
                 has_edge_filter = any(
                     value is not None for value in (relation_type, provenance, verification_status)
                 )
-                if entity_id is not None or (entity_type is not None and has_edge_filter):
+                if entity_id is not None or entity_type is not None:
                     edge_statement = edge_statement.where(
                         or_(
                             GraphEdgeRow.source_entity_id.in_(seed_statement),
@@ -497,7 +580,7 @@ class ProductRepositoryMixin:
                     candidate_selects = endpoint_selects
                     if entity_id is not None:
                         candidate_selects = (seed_statement, *candidate_selects)
-                elif paper_id is not None or entity_id is not None:
+                elif paper_id is not None or entity_id is not None or entity_type is not None:
                     candidate_selects = (seed_statement, *endpoint_selects)
                 else:
                     candidate_selects = (seed_statement,)
@@ -526,6 +609,20 @@ class ProductRepositoryMixin:
                 entity_order: list[Any] = []
                 if entity_id is not None:
                     entity_order.append(case((GraphEntityRow.id == entity_id, 0), else_=1))
+                # Admit complete edge endpoints before filling remaining slots. A
+                # label-sorted prefix can otherwise contain only disconnected leaves.
+                edge_budget = max_nodes - 1 if entity_id is not None else max_nodes // 2
+                sampled_edges = tuple(
+                    session.execute(
+                        select(GraphEdgeRow.source_entity_id, GraphEdgeRow.target_entity_id)
+                        .join(qualifying_edge_ids, qualifying_edge_ids.c.id == GraphEdgeRow.id)
+                        .order_by(GraphEdgeRow.generated_at.desc(), GraphEdgeRow.id)
+                        .limit(min(max_edges, edge_budget))
+                    )
+                )
+                sampled_ids = {value for edge in sampled_edges for value in edge}
+                if sampled_ids:
+                    entity_order.append(case((GraphEntityRow.id.in_(sampled_ids), 0), else_=1))
                 latest_visible_label = (
                     select(GraphEntityMentionRow.observed_label)
                     .join(

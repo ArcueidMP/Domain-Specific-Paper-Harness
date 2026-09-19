@@ -640,3 +640,107 @@ test("M4 reports, graph, trends, lineage, and run failures remain traceable", as
   await expect(page.getByText("GROBID_INVALID_TEI").last()).toBeVisible();
   await expect(page.getByText("parsed").last()).toBeVisible();
 });
+
+test("graph search reaches nodes outside the overview and selection preserves the canvas", async ({ page }) => {
+  await installApiFixtures(page);
+  const outsideId = "916f7b0f-aad0-4cda-bd8b-1d8cff02d119";
+  const outside = { ...knowledgeGraph.nodes[0]!, id: outsideId, display_label: "ALFWorld search result outside overview" };
+  let graphReads = 0;
+  await page.route("**/api/v1/graph?*", async (route) => {
+    graphReads += 1;
+    const focused = new URL(route.request().url()).searchParams.get("entity_id") === outsideId;
+    await route.fulfill({ json: focused ? {
+      ...knowledgeGraph, nodes: [outside, ...knowledgeGraph.nodes], edges: knowledgeGraph.edges,
+    } : knowledgeGraph });
+  });
+  await page.route("**/api/v1/graph/search?*", async (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    expect(params.get("topic")).toBe(defaultTopic);
+    expect(params.get("q")).toBe("ALFWorld");
+    await route.fulfill({ json: { items: [outside], total: 1, limit: 20, offset: 0 } });
+  });
+  await page.goto(`/graph?topic=${defaultTopic}`);
+  await expect(page.getByRole("img", { name: /3 visible nodes/ })).toBeVisible();
+  const reads = graphReads;
+  const canvas = await page.locator(".knowledge-graph-canvas canvas").first().elementHandle();
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await page.getByTitle("Source-grounded memory verification", { exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Source-grounded memory verification" })).toBeVisible();
+  expect(graphReads).toBe(reads);
+  expect(await canvas?.evaluate((element) => element.isConnected)).toBe(true);
+  await page.getByRole("button", { name: "Focus selected" }).click();
+  await page.getByRole("button", { name: "Fit graph" }).click();
+  await page.getByRole("searchbox", { name: "Search nodes" }).fill("ALFWorld");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await page.getByTitle(outside.display_label, { exact: true }).click();
+  await expect(page.getByRole("heading", { name: outside.display_label })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`entity_id=${outsideId}`));
+  await page.getByRole("button", { name: "Return to overview" }).click();
+  await expect(page.getByRole("img", { name: /3 visible nodes/ })).toBeVisible();
+  await expect(page).not.toHaveURL(/entity_id=/);
+  await page.screenshot({ path: "test-results/graph-explorer.png", fullPage: true, animations: "disabled" });
+});
+
+test("long trend labels remain readable in every window on desktop and mobile", async ({ page }) => {
+  await installApiFixtures(page);
+  const labels = Array.from({ length: 10 }, (_, index) => ({
+    ...sevenDayTrend.entity_counts[0]!,
+    entity_id: `11111111-1111-4111-8111-${String(index).padStart(12, "0")}`,
+    label: `Entity ${index + 1}: ` + "A long evidence-grounded method description covering agent planning, evaluation benchmarks, repeated tool use, and research limitations. ".repeat(4),
+    change: { ...sevenDayTrend.entity_counts[0]!.change, current_count: 10 - index, preceding_count: index },
+  }));
+  await page.route("**/api/v1/trends*", async (route) => {
+    const window = new URL(route.request().url()).searchParams.get("window");
+    const original = window === "30D" ? thirtyDayTrend : window === "90D" ? ninetyDayTrend : sevenDayTrend;
+    await route.fulfill({ json: { items: [{ ...original, entity_counts: labels, total_entities: 10, truncated: false }], total: 1 } });
+  });
+  await page.goto(`/trends?topic=${defaultTopic}`);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const days of [7, 30, 90]) {
+      await page.getByRole("button", { name: `${days} days` }).click();
+      await expect(page.locator(".entity-activity-row")).toHaveCount(10);
+      const boxes = await page.locator(".entity-activity-row").evaluateAll((rows) => rows.map((row) => {
+        const label = row.querySelector(".entity-short-label")!.getBoundingClientRect();
+        const box = row.getBoundingClientRect();
+        return { top: box.top, bottom: box.bottom, labelHeight: label.height, labelBottom: label.bottom };
+      }));
+      for (let index = 0; index < boxes.length; index++) {
+        expect(boxes[index]!.labelHeight).toBeLessThanOrEqual(37);
+        expect(boxes[index]!.labelBottom).toBeLessThanOrEqual(boxes[index]!.bottom);
+        if (index) expect(boxes[index]!.top).toBeGreaterThanOrEqual(boxes[index - 1]!.bottom);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    const firstName = page.locator(".entity-activity-name a").first();
+    await firstName.focus();
+    await expect(page.locator(".entity-full-label").first()).toBeVisible();
+    await expect(page.locator(".entity-full-label").first()).toHaveText(labels[0]!.label);
+    await expect(firstName).toHaveAttribute("href", new RegExp(`entity_id=${labels[0]!.entity_id}`));
+    await page.screenshot({ path: `test-results/trends-${width}.png`, fullPage: true, animations: "disabled" });
+    await firstName.press("Escape");
+    await expect(page.locator(".entity-full-label").first()).toBeHidden();
+    await page.locator(".entity-activity-chart").screenshot({ path: `test-results/trends-chart-${width}.png` });
+  }
+});
+
+test("connected graph overview stays usable with sixty nodes", async ({ page }) => {
+  await installApiFixtures(page);
+  const nodes = Array.from({ length: 20 }, (_, group) => knowledgeGraph.nodes.map((node) => ({
+    ...node, id: `${node.id}-${group}`, display_label: `${group + 1}. ${node.display_label}`,
+  }))).flat();
+  const edges = Array.from({ length: 20 }, (_, group) => knowledgeGraph.edges.map((edge) => ({
+    ...edge, id: `${edge.id}-${group}`, source_entity_id: `${edge.source_entity_id}-${group}`,
+    target_entity_id: `${edge.target_entity_id}-${group}`,
+  }))).flat();
+  await page.route("**/api/v1/graph?*", async (route) => {
+    await route.fulfill({ json: { ...knowledgeGraph, nodes, edges, total_nodes: 2581, total_edges: 2557, truncated: true } });
+  });
+  await page.goto(`/graph?topic=${defaultTopic}`);
+  await expect(page.getByRole("img", { name: /60 visible nodes and 40 visible relations/ })).toBeVisible();
+  await page.getByRole("button", { name: "Fit graph" }).click();
+  await page.locator(".graph-visual").screenshot({ path: "test-results/graph-sixty-nodes.png", animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("button", { name: "Fit graph" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

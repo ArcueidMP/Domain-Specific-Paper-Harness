@@ -32,6 +32,7 @@ from paper_harness.domain.knowledge import (
     GraphEdge,
     GraphEntity,
     GraphEntityMention,
+    GraphEntityType,
     LineageSnapshot,
     TrendPaperRecord,
     TrendSnapshot,
@@ -189,6 +190,14 @@ class PublicationArtifactSummary:
             raise DomainInvariantError("publication trend windows must be unique")
         if len(set(self.lineage_snapshot_ids)) != len(self.lineage_snapshot_ids):
             raise DomainInvariantError("publication lineage snapshot IDs must be unique")
+
+
+@dataclass(frozen=True, slots=True)
+class GraphNodeMatch:
+    id: UUID
+    entity_type: GraphEntityType
+    display_label: str
+    paper_id: UUID | None
 
 
 @dataclass(frozen=True, slots=True)

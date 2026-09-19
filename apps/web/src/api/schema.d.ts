@@ -72,6 +72,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/graph/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search Graph Nodes */
+        get: operations["searchGraphNodes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/lineages/{entity_or_paper_id}": {
         parameters: {
             query?: never;
@@ -911,6 +928,19 @@ export interface components {
             /** Provider */
             provider: string;
         };
+        /** GraphNodeMatchResponse */
+        GraphNodeMatchResponse: {
+            /** Display Label */
+            display_label: string;
+            entity_type: components["schemas"]["GraphEntityType"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Paper Id */
+            paper_id: string | null;
+        };
         /** GraphNodeResponse */
         GraphNodeResponse: {
             /** Aliases */
@@ -955,6 +985,17 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** GraphNodeSearchResponse */
+        GraphNodeSearchResponse: {
+            /** Items */
+            items: components["schemas"]["GraphNodeMatchResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
         };
         /**
          * GraphRelationType
@@ -2733,6 +2774,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    searchGraphNodes: {
+        parameters: {
+            query: {
+                topic: string;
+                q: string;
+                entity_type?: components["schemas"]["GraphEntityType"] | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphNodeSearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

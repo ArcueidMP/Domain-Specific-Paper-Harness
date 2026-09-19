@@ -10,6 +10,7 @@ import type {
 } from "../api/client";
 import { knowledgeGraphQuery } from "../api/queries";
 import { KnowledgeGraphCanvas } from "../components/KnowledgeGraphCanvas";
+import { GraphNodeSearch } from "../components/GraphNodeSearch";
 import { StateNotice } from "../components/StateNotice";
 import { TopicLink } from "../components/TopicLink";
 import { useTopicSlug } from "../lib/topic";
@@ -55,13 +56,18 @@ function evidencePaperId(node: GraphNode | undefined): string | undefined {
 
 export function KnowledgeGraphPage() {
   const topicSlug = useTopicSlug();
+  return <TopicKnowledgeGraph key={topicSlug} topicSlug={topicSlug} />;
+}
+
+function TopicKnowledgeGraph({ topicSlug }: { topicSlug: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const scopedPaperId = searchParams.get("paper_id") || undefined;
   const requestedNodeId = searchParams.get("entity_id") || undefined;
   const [entityType, setEntityType] = useState<GraphEntityType | undefined>();
   const [relationType, setRelationType] = useState<GraphRelationType | undefined>();
   const [provenance, setProvenance] = useState<RelationProvenance | undefined>();
-  const [selectedNodeId, setSelectedNodeId] = useState<string>();
+  const selectionScope = requestedNodeId ?? scopedPaperId ?? "overview";
+  const [selection, setSelection] = useState<{ id: string; scope: string }>();
   const graph = useQuery(
     knowledgeGraphQuery(topicSlug, {
       entityType,
@@ -71,19 +77,26 @@ export function KnowledgeGraphPage() {
       entityId: requestedNodeId,
     }),
   );
-  const selectNode = useCallback(
+  const selectNode = useCallback((nodeId: string) => {
+    setSelection({ id: nodeId, scope: selectionScope });
+  }, [selectionScope, setSelection]);
+  const exploreNode = useCallback(
     (nodeId: string) => {
-      setSelectedNodeId(nodeId);
+      setSelection(undefined);
       const next = new URLSearchParams(searchParams);
       next.set("entity_id", nodeId);
-      setSearchParams(next, { replace: true });
+      next.delete("paper_id");
+      setEntityType(undefined);
+      setRelationType(undefined);
+      setProvenance(undefined);
+      setSearchParams(next);
     },
-    [searchParams, setSearchParams, setSelectedNodeId],
+    [searchParams, setSearchParams, setSelection, setEntityType, setRelationType, setProvenance],
   );
   const graphData = graph.data;
 
   const selectedNode =
-    graphData?.nodes.find((node) => node.id === selectedNodeId) ??
+    graphData?.nodes.find((node) => selection?.scope === selectionScope && node.id === selection.id) ??
     graphData?.nodes.find((node) => node.id === requestedNodeId) ??
     graphData?.nodes[0];
   const selectedEdges =
@@ -95,20 +108,33 @@ export function KnowledgeGraphPage() {
       : [];
   const lineagePaperId = evidencePaperId(selectedNode);
 
+  function returnToOverview() {
+    const next = new URLSearchParams(searchParams);
+    next.delete("entity_id");
+    next.delete("paper_id");
+    setSelection(undefined);
+    setEntityType(undefined);
+    setRelationType(undefined);
+    setProvenance(undefined);
+    setSearchParams(next);
+  }
+
   return (
-    <section className="page-section">
+    <section className="page-section graph-page">
       <header className="page-heading">
         <div>
           <p className="eyebrow">Provenance-aware knowledge graph</p>
           <h1>Research connections</h1>
           <p className="lede">
-            Bounded paper, problem, method, task, dataset, and benchmark relationships. Dashed
-            orange marks AI-inferred records; it never implies human verification.
+            Find a paper, method, or benchmark and explore its connections. Dashed orange
+            marks AI-inferred records; it never implies human verification.
           </p>
         </div>
       </header>
 
-      <form className="graph-filters" aria-label="Knowledge graph filters">
+      <GraphNodeSearch topic={topicSlug} onSelect={exploreNode} />
+
+      <form className="graph-filters" aria-label="Knowledge graph filters" onSubmit={(event) => event.preventDefault()}>
         <label>
           Node type
           <select
@@ -159,11 +185,11 @@ export function KnowledgeGraphPage() {
         </label>
       </form>
 
-      {scopedPaperId ? (
+      {scopedPaperId || requestedNodeId ? (
         <div className="bounded-data-banner" role="status">
-          <strong>Paper-scoped graph</strong>
-          <span>Showing the bounded published neighborhood for paper {scopedPaperId}.</span>
-          <TopicLink to="/graph">Clear paper scope</TopicLink>
+          <strong>{requestedNodeId ? "Node neighborhood" : "Paper-scoped graph"}</strong>
+          <span>Showing the selected {requestedNodeId ? "node" : "paper"} and its published connections.</span>
+          <button type="button" className="section-link" onClick={returnToOverview}>Return to overview</button>
         </div>
       ) : null}
 
@@ -187,17 +213,19 @@ export function KnowledgeGraphPage() {
         <>
           {graphData.truncated ? (
             <div className="bounded-data-banner" role="status">
-              <strong>Bounded graph payload</strong>
+                <strong>Graph overview is limited</strong>
               <span>
                 Showing {graphData.nodes.length} of {graphData.total_nodes} nodes and{" "}
-                {graphData.edges.length} of {graphData.total_edges} relations, with{" "}
-                {graphData.nodes.reduce((total, node) => total + node.mentions.length, 0)} of{" "}
-                {graphData.total_mentions} mentions. Apply filters for a narrower, complete view.
+                {graphData.edges.length} of {graphData.total_edges} relations. Search the entire
+                topic above, or explore a node’s connections for a closer view.
               </span>
             </div>
           ) : null}
           <div className="graph-layout">
             <div className="graph-visual card">
+              <div className="graph-node-key" aria-label="Node colors">
+                {entityTypes.map((type) => <span key={type}><i data-type={type} />{readable(type)}</span>)}
+              </div>
               <div className="graph-legend" aria-label="Graph legend">
                 <span><i className="legend-explicit" /> Explicit or derived</span>
                 <span><i className="legend-inferred" /> AI-inferred</span>
@@ -229,6 +257,9 @@ export function KnowledgeGraphPage() {
                   </div>
                 </dl>
                 <div className="graph-detail-actions">
+                  <button type="button" className="primary-button" onClick={() => exploreNode(selectedNode.id)}>
+                    Explore connections
+                  </button>
                   {selectedNode.paper_id ? (
                     <TopicLink className="primary-button" to={`/papers/${selectedNode.paper_id}`}>
                       Open paper
@@ -259,7 +290,9 @@ export function KnowledgeGraphPage() {
                               <strong>{readable(edge.relation_type)}</strong>
                               {edge.inferred ? <span>AI-inferred</span> : null}
                             </div>
-                            <p>{peer?.display_label ?? "Node outside display details"}</p>
+                            <button type="button" className="graph-peer" onClick={() => selectNode(peerId)}>
+                              {peer?.display_label ?? "Node outside display details"}
+                            </button>
                             <small>
                               {readable(edge.provenance)} / {readable(edge.verification_status)}
                             </small>
@@ -306,7 +339,7 @@ export function KnowledgeGraphPage() {
             <ul>
               {graphData.nodes.map((node) => (
                 <li key={node.id}>
-                  <button
+                  <button title={node.display_label}
                     className={node.id === selectedNode?.id ? "active" : ""}
                     type="button"
                     onClick={() => selectNode(node.id)}

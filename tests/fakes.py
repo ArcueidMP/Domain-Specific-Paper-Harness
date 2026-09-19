@@ -19,6 +19,7 @@ from paper_harness.application.read_models import (
     AnalysisDetail,
     AnalysisTarget,
     ComparisonDetail,
+    GraphNodeMatch,
     GraphView,
     HistoricalRetrievalMatch,
     LineageDetail,
@@ -720,6 +721,30 @@ class FakeRepository:
     def get_run(self, run_id: UUID) -> RunDetail | None:
         detail = self.get_latest_run(topic_slug=None)
         return detail if detail is not None and detail.run.id == run_id else None
+
+    def search_graph_nodes(
+        self,
+        *,
+        topic_slug: str,
+        query: str,
+        entity_type: GraphEntityType | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[tuple[GraphNodeMatch, ...], int]:
+        if self.graph_view is None:
+            return (), 0
+        nodes = [
+            GraphNodeMatch(
+                id=node.entity.id,
+                entity_type=node.entity.entity_type,
+                display_label=node.entity.display_label,
+                paper_id=node.entity.paper_id,
+            )
+            for node in self.graph_view.nodes
+            if query.lower() in node.entity.display_label.lower()
+            and (entity_type is None or node.entity.entity_type is entity_type)
+        ]
+        return tuple(nodes[offset : offset + limit]), len(nodes)
 
     def get_graph(
         self,
